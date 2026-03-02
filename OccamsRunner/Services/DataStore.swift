@@ -1,0 +1,117 @@
+import Foundation
+
+/// Persists routes, quests, and run sessions to disk using JSON files.
+class DataStore: ObservableObject {
+    @Published var routes: [RecordedRoute] = []
+    @Published var quests: [Quest] = []
+    @Published var runSessions: [RunSession] = []
+
+    private let fileManager = FileManager.default
+
+    private var documentsDirectory: URL {
+        fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
+    }
+
+    private var routesURL: URL { documentsDirectory.appendingPathComponent("routes.json") }
+    private var questsURL: URL { documentsDirectory.appendingPathComponent("quests.json") }
+    private var sessionsURL: URL { documentsDirectory.appendingPathComponent("sessions.json") }
+
+    init() {
+        loadAll()
+    }
+
+    // MARK: - Routes
+
+    func saveRoute(_ route: RecordedRoute) {
+        routes.append(route)
+        persist(routes, to: routesURL)
+    }
+
+    func deleteRoute(_ route: RecordedRoute) {
+        routes.removeAll { $0.id == route.id }
+        // Also delete associated quests
+        quests.removeAll { $0.routeId == route.id }
+        persist(routes, to: routesURL)
+        persist(quests, to: questsURL)
+    }
+
+    func route(for id: UUID) -> RecordedRoute? {
+        routes.first { $0.id == id }
+    }
+
+    // MARK: - Quests
+
+    func saveQuest(_ quest: Quest) {
+        if let index = quests.firstIndex(where: { $0.id == quest.id }) {
+            quests[index] = quest
+        } else {
+            quests.append(quest)
+        }
+        persist(quests, to: questsURL)
+    }
+
+    func deleteQuest(_ quest: Quest) {
+        quests.removeAll { $0.id == quest.id }
+        persist(quests, to: questsURL)
+    }
+
+    func quests(for routeId: UUID) -> [Quest] {
+        quests.filter { $0.routeId == routeId }
+    }
+
+    func updateQuestItem(questId: UUID, itemId: UUID, collected: Bool) {
+        guard let qi = quests.firstIndex(where: { $0.id == questId }),
+              let ii = quests[qi].items.firstIndex(where: { $0.id == itemId }) else { return }
+        quests[qi].items[ii].collected = collected
+        persist(quests, to: questsURL)
+    }
+
+    func resetQuestProgress(questId: UUID) {
+        guard let qi = quests.firstIndex(where: { $0.id == questId }) else { return }
+        quests[qi].resetProgress()
+        persist(quests, to: questsURL)
+    }
+
+    // MARK: - Run Sessions
+
+    func saveSession(_ session: RunSession) {
+        if let index = runSessions.firstIndex(where: { $0.id == session.id }) {
+            runSessions[index] = session
+        } else {
+            runSessions.append(session)
+        }
+        persist(runSessions, to: sessionsURL)
+    }
+
+    // MARK: - Persistence
+
+    private func loadAll() {
+        routes = load(from: routesURL) ?? []
+        quests = load(from: questsURL) ?? []
+        runSessions = load(from: sessionsURL) ?? []
+    }
+
+    private func persist<T: Encodable>(_ data: T, to url: URL) {
+        do {
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .iso8601
+            let jsonData = try encoder.encode(data)
+            try jsonData.write(to: url, options: .atomic)
+        } catch {
+            print("Failed to save data to \(url.lastPathComponent): \(error)")
+        }
+    }
+
+    private func load<T: Decodable>(from url: URL) -> T? {
+        guard fileManager.fileExists(atPath: url.path) else { return nil }
+        do {
+            let data = try Data(contentsOf: url)
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            return try decoder.decode(T.self, from: data)
+        } catch {
+            print("Failed to load data from \(url.lastPathComponent): \(error)")
+            return nil
+        }
+    }
+}
