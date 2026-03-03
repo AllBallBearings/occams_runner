@@ -7,22 +7,22 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		A10001 /* OccamsRunnerApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20001; };
-		A10002 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20002; };
-		A10003 /* RouteModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20003; };
-		A10004 /* LocationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20004; };
-		A10005 /* DataStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20005; };
-		A10006 /* QuestGenerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20006; };
-		A10007 /* RecordRunView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20007; };
-		A10008 /* RoutesListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20008; };
-		A10009 /* RouteDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20009; };
-		A10010 /* Route3DView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20010; };
-		A10011 /* QuestEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20011; };
-		A10012 /* QuestsListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20012; };
-		A10013 /* QuestDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20013; };
-		A10014 /* ARRunnerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20014; };
-		A10015 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A20015; };
-		A10016 /* Preview Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A20016; };
+		A10001 /* OccamsRunnerApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20001 /* OccamsRunnerApp.swift */; };
+		A10002 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20002 /* ContentView.swift */; };
+		A10003 /* RouteModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20003 /* RouteModels.swift */; };
+		A10004 /* LocationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20004 /* LocationService.swift */; };
+		A10005 /* DataStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20005 /* DataStore.swift */; };
+		A10006 /* QuestGenerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20006 /* QuestGenerator.swift */; };
+		A10007 /* RecordRunView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20007 /* RecordRunView.swift */; };
+		A10008 /* RoutesListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20008 /* RoutesListView.swift */; };
+		A10009 /* RouteDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20009 /* RouteDetailView.swift */; };
+		A10010 /* Route3DView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20010 /* Route3DView.swift */; };
+		A10011 /* QuestEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20011 /* QuestEditorView.swift */; };
+		A10012 /* QuestsListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20012 /* QuestsListView.swift */; };
+		A10013 /* QuestDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20013 /* QuestDetailView.swift */; };
+		A10014 /* ARRunnerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20014 /* ARRunnerView.swift */; };
+		A10015 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A20015 /* Assets.xcassets */; };
+		A10016 /* Preview Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A20016 /* Preview Assets.xcassets */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -344,6 +344,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "\"OccamsRunner/Preview Content\"";
+				DEVELOPMENT_TEAM = 8XHKTX9X49;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = OccamsRunner/Info.plist;
@@ -377,6 +378,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "\"OccamsRunner/Preview Content\"";
+				DEVELOPMENT_TEAM = 8XHKTX9X49;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = OccamsRunner/Info.plist;
@@ -424,7 +426,6 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
-
 	};
 	rootObject = A90001 /* Project object */;
 }

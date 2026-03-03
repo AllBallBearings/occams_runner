@@ -12,7 +12,7 @@ struct QuestGenerator {
     /// - Returns: Array of QuestItems placed along the route.
     static func generateItems(
         along route: RecordedRoute,
-        intervalFeet: Double = 10.0,
+        intervalFeet: Double = 5.0,
         itemType: QuestItemType = .coin
     ) -> [QuestItem] {
         guard route.points.count >= 2 else { return [] }

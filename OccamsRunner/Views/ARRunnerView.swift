@@ -171,6 +171,14 @@ class ARCoordinator: NSObject, ARSCNViewDelegate {
     private var coinNodes: [UUID: SCNNode] = [:]
     private var collectionTimer: Timer?
     private var placedItems = false
+    private var pendingCollectionIds: Set<UUID> = []
+
+    /// Best (most accurate) GPS fix seen this session.
+    /// All coin positions are calculated relative to this point so that AR
+    /// world coordinates stay consistent — a single better GPS reading
+    /// causes everything to be re-placed with the improved reference.
+    private var sessionOriginFix: CLLocation?
+
 
     init(quest: Quest, dataStore: DataStore, locationService: LocationService, onItemCollected: @escaping (UUID) -> Void) {
         self.quest = quest
@@ -194,12 +202,33 @@ class ARCoordinator: NSObject, ARSCNViewDelegate {
 
         guard let arView = arView, let currentLocation = locationService.currentLocation else { return }
 
+        // Accept up to 50 m horizontal accuracy — indoors GPS/WiFi can't do better,
+        // and we still need to place coins for multi-floor house routes.
+        guard currentLocation.horizontalAccuracy > 0,
+              currentLocation.horizontalAccuracy < 50 else { return }
+
+        // Update the session origin fix when we get a meaningfully better GPS reading.
+        // "Better" = at least 2 m improvement so noise doesn't trigger constant re-placement.
+        let needsNewOrigin: Bool
+        if let existing = sessionOriginFix {
+            needsNewOrigin = currentLocation.horizontalAccuracy < existing.horizontalAccuracy - 2.0
+        } else {
+            needsNewOrigin = true
+        }
+
+        if needsNewOrigin {
+            sessionOriginFix = currentLocation
+            // Re-place all coins against the improved horizontal reference
+            for node in coinNodes.values { node.removeFromParentNode() }
+            coinNodes.removeAll()
+        }
+
+        guard let reference = sessionOriginFix else { return }
+
         let currentQuest = dataStore.quests.first(where: { $0.id == quest.id }) ?? quest
 
-        // Place or update coin nodes
         for item in currentQuest.items {
             if item.collected {
-                // Remove collected coins
                 if let node = coinNodes[item.id] {
                     node.removeFromParentNode()
                     coinNodes.removeValue(forKey: item.id)
@@ -208,20 +237,20 @@ class ARCoordinator: NSObject, ARSCNViewDelegate {
             }
 
             if coinNodes[item.id] == nil {
-                // Calculate position relative to user
                 let itemLocation = item.location
-                let distance = currentLocation.distance(from: itemLocation)
+                let distance = reference.distance(from: itemLocation)
 
-                // Only render items within 100 meters for performance
                 guard distance < 100 else { continue }
 
-                let bearing = currentLocation.bearing(to: itemLocation)
-                let altDiff = item.altitude - currentLocation.altitude
+                let bearing = reference.bearing(to: itemLocation)
 
-                // Convert GPS offset to AR scene coordinates
-                // ARKit: x = east, y = up, z = south (with gravityAndHeading alignment)
+                // ARKit with gravityAndHeading: +X = east, +Y = up, -Z = north
                 let dx = Float(distance * sin(bearing))
-                let dy = Float(altDiff) + 1.5 // Float coins 1.5m above ground
+                // Both item.altitude (recorded) and absoluteAltitude (current) are
+                // GPS-anchored absolute metres. Their difference is the coin's height
+                // above or below the device right now — correct regardless of which
+                // floor the AR session started on.
+                let dy = Float(item.altitude - locationService.absoluteAltitude)
                 let dz = Float(-distance * cos(bearing))
 
                 let coinNode = createCoinNode()
@@ -233,7 +262,11 @@ class ARCoordinator: NSObject, ARSCNViewDelegate {
     }
 
     private func createCoinNode() -> SCNNode {
-        // Create a golden disc (coin)
+        // Container node owns the world position, spin, and bob animations.
+        // The actual disc is a child rotated 90° on X so it stands upright
+        // and the Y-axis spin produces the classic Mario coin flip.
+        let containerNode = SCNNode()
+
         let coin = SCNCylinder(radius: 0.15, height: 0.02)
 
         let goldMaterial = SCNMaterial()
@@ -242,59 +275,76 @@ class ARCoordinator: NSObject, ARSCNViewDelegate {
         goldMaterial.metalness.contents = 0.8
         goldMaterial.roughness.contents = 0.2
         goldMaterial.emission.contents = UIColor(red: 0.6, green: 0.45, blue: 0.0, alpha: 1.0)
+        goldMaterial.isDoubleSided = true  // visible from both sides during spin
 
         coin.materials = [goldMaterial]
 
-        let coinNode = SCNNode(geometry: coin)
+        let coinDisc = SCNNode(geometry: coin)
+        // Rotate 90° around X: cylinder axis (Y) now aligns with Z, flat face points forward.
+        // With the container spinning around world-Y, this produces the Mario coin flip.
+        coinDisc.eulerAngles = SCNVector3(Float.pi / 2, 0, 0)
+        containerNode.addChildNode(coinDisc)
 
-        // Add glow effect with a slightly larger transparent sphere
+        // Glow sphere
         let glow = SCNSphere(radius: 0.2)
         let glowMaterial = SCNMaterial()
         glowMaterial.diffuse.contents = UIColor(red: 1.0, green: 0.9, blue: 0.3, alpha: 0.15)
         glowMaterial.emission.contents = UIColor(red: 1.0, green: 0.84, blue: 0.0, alpha: 0.3)
         glowMaterial.isDoubleSided = true
         glow.materials = [glowMaterial]
-        let glowNode = SCNNode(geometry: glow)
-        coinNode.addChildNode(glowNode)
+        containerNode.addChildNode(SCNNode(geometry: glow))
 
-        // Spinning animation
+        // Spin the container around Y — flips the upright coin face-on like Mario
         let spin = CABasicAnimation(keyPath: "rotation")
         spin.toValue = NSValue(scnVector4: SCNVector4(0, 1, 0, Float.pi * 2))
         spin.duration = 2.0
         spin.repeatCount = .infinity
-        coinNode.addAnimation(spin, forKey: "spin")
+        containerNode.addAnimation(spin, forKey: "spin")
 
-        // Bobbing animation
+        // Bob the container up and down
         let bob = CABasicAnimation(keyPath: "position.y")
         bob.byValue = 0.1
         bob.duration = 1.0
         bob.autoreverses = true
         bob.repeatCount = .infinity
         bob.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-        coinNode.addAnimation(bob, forKey: "bob")
+        containerNode.addAnimation(bob, forKey: "bob")
 
-        return coinNode
+        return containerNode
     }
 
     private func checkCollections() {
-        guard let _ = locationService.currentLocation else { return }
+        // Use AR camera position vs coin node position for collection detection.
+        // ARKit tracks real-world movement much more precisely than GPS, so this
+        // gives consistent collection exactly when you physically reach the coin.
+        guard let arView = arView,
+              let cameraNode = arView.pointOfView else { return }
 
+        let cameraPos = cameraNode.worldPosition
         let currentQuest = dataStore.quests.first(where: { $0.id == quest.id }) ?? quest
 
         for item in currentQuest.items {
-            guard !item.collected else { continue }
+            // Skip already collected items and ones with an in-flight collection
+            guard !item.collected, !pendingCollectionIds.contains(item.id) else { continue }
+            guard let node = coinNodes[item.id] else { continue }
 
-            if locationService.isWithinCollectionRange(of: item) {
-                // Collect this item!
-                if let node = coinNodes[item.id] {
-                    // Collection animation
-                    let scaleUp = SCNAction.scale(to: 2.0, duration: 0.2)
-                    let fadeOut = SCNAction.fadeOut(duration: 0.3)
-                    let group = SCNAction.group([scaleUp, fadeOut])
-                    let remove = SCNAction.removeFromParentNode()
-                    node.runAction(SCNAction.sequence([group, remove]))
-                    coinNodes.removeValue(forKey: item.id)
-                }
+            let coinPos = node.worldPosition
+            let dx = cameraPos.x - coinPos.x
+            let dy = cameraPos.y - coinPos.y
+            let dz = cameraPos.z - coinPos.z
+            let distance = sqrt(dx * dx + dy * dy + dz * dz)
+
+            // 2 metres in AR scene space (~6.5 ft) — feels natural when the
+            // coin visually overlaps your position in the camera view
+            if distance < 2.0 {
+                pendingCollectionIds.insert(item.id)
+
+                let scaleUp = SCNAction.scale(to: 2.0, duration: 0.2)
+                let fadeOut = SCNAction.fadeOut(duration: 0.3)
+                let group = SCNAction.group([scaleUp, fadeOut])
+                let remove = SCNAction.removeFromParentNode()
+                node.runAction(SCNAction.sequence([group, remove]))
+                coinNodes.removeValue(forKey: item.id)
 
                 DispatchQueue.main.async {
                     self.onItemCollected(item.id)

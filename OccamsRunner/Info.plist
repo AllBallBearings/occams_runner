@@ -22,6 +22,8 @@
 	<true/>
 	<key>NSCameraUsageDescription</key>
 	<string>OccamsRunner needs camera access to display AR coins and objects along your running route.</string>
+	<key>NSMotionUsageDescription</key>
+	<string>OccamsRunner uses the barometric altimeter to precisely track elevation changes, enabling accurate multi-floor route recording and AR coin placement on stairs and across floors.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>OccamsRunner needs your location to record your running route and show AR objects at the correct positions.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>

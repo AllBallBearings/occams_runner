@@ -238,27 +238,34 @@ struct Route3DView: View {
             let y = Float((item.altitude - minAlt) * altScale) + 0.5
             let z = Float(-(item.latitude - minLat) * scale)
 
+            // Container holds position and spin; the disc child is rotated upright
+            let containerNode = SCNNode()
+            containerNode.position = SCNVector3(x, y, z)
+
             // Gold coin disc
             let coin = SCNCylinder(radius: 0.25, height: 0.05)
             coin.firstMaterial?.diffuse.contents = UIColor(red: 1.0, green: 0.84, blue: 0.0, alpha: 1.0)
             coin.firstMaterial?.emission.contents = UIColor(red: 0.8, green: 0.6, blue: 0.0, alpha: 0.5)
             coin.firstMaterial?.specular.contents = UIColor.white
+            coin.firstMaterial?.isDoubleSided = true
 
-            let coinNode = SCNNode(geometry: coin)
-            coinNode.position = SCNVector3(x, y, z)
+            let coinDisc = SCNNode(geometry: coin)
+            // 90° rotation on X makes the flat face point forward instead of up
+            coinDisc.eulerAngles = SCNVector3(Float.pi / 2, 0, 0)
+            containerNode.addChildNode(coinDisc)
 
-            // Rotate coin to face up and add spinning animation
+            // Spin the container on Y — produces the Mario coin flip on the upright disc
             let spin = CABasicAnimation(keyPath: "rotation")
             spin.toValue = NSValue(scnVector4: SCNVector4(0, 1, 0, Float.pi * 2))
             spin.duration = 2
             spin.repeatCount = .infinity
-            coinNode.addAnimation(spin, forKey: "spin")
+            containerNode.addAnimation(spin, forKey: "spin")
 
             if item.collected {
-                coinNode.opacity = 0.3
+                containerNode.opacity = 0.3
             }
 
-            scene.rootNode.addChildNode(coinNode)
+            scene.rootNode.addChildNode(containerNode)
         }
     }
 }
