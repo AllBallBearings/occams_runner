@@ -71,6 +71,7 @@ struct RecordedRoute: Codable, Identifiable {
         return last.timeIntervalSince(first)
     }
 
+    /// Cumulative ascent in metres — sum of all upward steps. Always ≥ 0.
     var elevationGainMeters: Double {
         guard points.count > 1 else { return 0 }
         var gain: Double = 0
@@ -79,6 +80,14 @@ struct RecordedRoute: Codable, Identifiable {
             if diff > 0 { gain += diff }
         }
         return gain
+    }
+
+    /// Net elevation change in metres: end altitude − start altitude.
+    /// Negative means you finished lower than you started (e.g., descending stairs).
+    var netElevationChangeMeters: Double {
+        guard let first = points.first?.altitude,
+              let last  = points.last?.altitude else { return 0 }
+        return last - first
     }
 
     var centerCoordinate: CLLocationCoordinate2D {

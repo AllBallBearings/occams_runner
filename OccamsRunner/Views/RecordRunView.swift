@@ -13,6 +13,7 @@ struct RecordRunView: View {
     @State private var routeName = ""
     @State private var elapsedTime: TimeInterval = 0
     @State private var timer: Timer?
+    @State private var selectedMode: RecordingMode = .vast
 
     var body: some View {
         NavigationView {
@@ -28,6 +29,12 @@ struct RecordRunView: View {
                     }
                 }
                 .ignoresSafeArea(edges: .top)
+                .onAppear {
+                    locationService.startUpdating()
+                    if let location = locationService.currentLocation {
+                        region.center = location.coordinate
+                    }
+                }
                 .onChange(of: locationService.currentLocation) { location in
                     if let location = location {
                         withAnimation {
@@ -43,6 +50,9 @@ struct RecordRunView: View {
                     }
 
                     Spacer()
+
+                    modePicker
+                        .padding(.bottom, 12)
 
                     recordButton
                         .padding(.bottom, 30)
@@ -92,6 +102,20 @@ struct RecordRunView: View {
                 .font(.system(.body, design: .monospaced))
                 .fontWeight(.semibold)
         }
+    }
+
+    // MARK: - Mode Picker
+
+    private var modePicker: some View {
+        Picker("Mode", selection: $selectedMode) {
+            Label("Tight", systemImage: "house.fill")
+                .tag(RecordingMode.tight)
+            Label("Vast", systemImage: "figure.run")
+                .tag(RecordingMode.vast)
+        }
+        .pickerStyle(.segmented)
+        .padding(.horizontal, 40)
+        .disabled(locationService.isRecording)
     }
 
     // MARK: - Record Button
@@ -188,7 +212,7 @@ struct RecordRunView: View {
         } else {
             // Start
             elapsedTime = 0
-            locationService.startRecording()
+            locationService.startRecording(mode: selectedMode)
             timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
                 elapsedTime += 1
             }

@@ -3,6 +3,37 @@ import CoreLocation
 import CoreMotion
 import Combine
 
+// MARK: - Recording Mode
+
+enum RecordingMode: String, CaseIterable {
+    case tight = "tight"
+    case vast  = "vast"
+
+    var displayName: String {
+        switch self {
+        case .tight: return "Tight"
+        case .vast:  return "Vast"
+        }
+    }
+
+    /// Minimum distance between recorded points (metres).
+    var minimumDistance: Double {
+        switch self {
+        case .tight: return 0.3    // ~1 foot — stairs, indoor hallways
+        case .vast:  return 4.877  // ~16 feet — outdoor runs
+        }
+    }
+
+    /// CLLocationManager distanceFilter (metres) — fire updates more often than
+    /// minimumDistance so we never skip past a recording threshold.
+    var distanceFilter: Double {
+        switch self {
+        case .tight: return 0.1
+        case .vast:  return 2.0
+        }
+    }
+}
+
 /// Manages GPS location tracking and altitude for recording runs and live quest sessions.
 class LocationService: NSObject, ObservableObject {
     private let locationManager = CLLocationManager()
@@ -37,9 +68,10 @@ class LocationService: NSObject, ObservableObject {
 
     // MARK: - Recording
 
+    @Published var recordingMode: RecordingMode = .vast
     private var lastRecordedLocation: CLLocation?
-    /// 5 feet in metres — enough resolution for stairs and tight indoor paths.
-    private let minimumRecordingDistance: Double = 1.524
+
+    private var minimumRecordingDistance: Double { recordingMode.minimumDistance }
 
     // MARK: - Init
 
@@ -48,8 +80,8 @@ class LocationService: NSObject, ObservableObject {
         locationManager.delegate = self
         // BestForNavigation activates all sensors including baro-assisted GPS.
         locationManager.desiredAccuracy = kCLLocationAccuracyBestForNavigation
-        // Fire every 0.5 m so we never skip past a 5-ft recording interval.
-        locationManager.distanceFilter = 0.5
+        // Default filter for non-recording updates; overridden per mode in startRecording().
+        locationManager.distanceFilter = RecordingMode.vast.distanceFilter
         locationManager.activityType = .fitness
         locationManager.allowsBackgroundLocationUpdates = false
         locationManager.showsBackgroundLocationIndicator = true
@@ -72,7 +104,9 @@ class LocationService: NSObject, ObservableObject {
         altimeter.stopRelativeAltitudeUpdates()
     }
 
-    func startRecording() {
+    func startRecording(mode: RecordingMode = .vast) {
+        recordingMode = mode
+        locationManager.distanceFilter = mode.distanceFilter
         recordedPoints = []
         lastRecordedLocation = nil
         isRecording = true
