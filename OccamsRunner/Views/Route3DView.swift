@@ -234,9 +234,11 @@ struct Route3DView: View {
         let altScale: Double = 10.0 / altRange
 
         for item in quest.items {
-            let x = Float((item.longitude - minLon) * scale)
-            let y = Float((item.altitude - minAlt) * altScale) + 0.5
-            let z = Float(-(item.latitude - minLat) * scale)
+            guard let geo = route.geoSample(atProgress: item.routeProgress) else { continue }
+
+            let x = Float((geo.longitude - minLon) * scale)
+            let y = Float(((geo.altitude + item.verticalOffset) - minAlt) * altScale) + 0.5
+            let z = Float(-(geo.latitude - minLat) * scale)
 
             // Container holds position and spin; the disc child is rotated upright
             let containerNode = SCNNode()

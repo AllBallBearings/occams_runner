@@ -16,7 +16,10 @@ class DataStore: ObservableObject {
     private var questsURL: URL { documentsDirectory.appendingPathComponent("quests.json") }
     private var sessionsURL: URL { documentsDirectory.appendingPathComponent("sessions.json") }
 
+    private let hardResetVersionKey = "didHardResetForDualTrackV2"
+
     init() {
+        performOneTimeHardResetIfNeeded()
         loadAll()
     }
 
@@ -84,6 +87,18 @@ class DataStore: ObservableObject {
     }
 
     // MARK: - Persistence
+
+    private func performOneTimeHardResetIfNeeded() {
+        let defaults = UserDefaults.standard
+        guard !defaults.bool(forKey: hardResetVersionKey) else { return }
+
+        let urls = [routesURL, questsURL, sessionsURL]
+        for url in urls where fileManager.fileExists(atPath: url.path) {
+            try? fileManager.removeItem(at: url)
+        }
+
+        defaults.set(true, forKey: hardResetVersionKey)
+    }
 
     private func loadAll() {
         routes = load(from: routesURL) ?? []
