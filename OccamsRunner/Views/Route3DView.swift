@@ -8,12 +8,14 @@ struct Route3DView: View {
     @EnvironmentObject var dataStore: DataStore
 
     @State private var showQuestItems = true
+    /// Incrementing this forces the SCNView wrapper to reset the camera.
+    @State private var resetToken = 0
 
     var body: some View {
         VStack(spacing: 0) {
-            SceneView(
+            Route3DSceneView(
                 scene: buildScene(),
-                options: [.allowsCameraControl, .autoenablesDefaultLighting]
+                resetToken: resetToken
             )
             .ignoresSafeArea(edges: .bottom)
 
@@ -26,6 +28,16 @@ struct Route3DView: View {
         }
         .navigationTitle("3D View")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button {
+                    resetToken += 1
+                } label: {
+                    Image(systemName: "arrow.counterclockwise")
+                }
+                .help("Reset Camera")
+            }
+        }
     }
 
     // MARK: - Scene Building
@@ -210,6 +222,16 @@ struct Route3DView: View {
         scene.rootNode.addChildNode(planeNode)
     }
 
+    // MARK: - Camera defaults
+
+    /// The initial camera position computed from normalized points, for reset.
+    private func defaultCameraTransform(for normalized: [NormalizedPoint]) -> (position: SCNVector3, lookAt: SCNVector3) {
+        let center = normalized[normalized.count / 2]
+        let pos = SCNVector3(center.x, center.y + 15, center.z + 20)
+        let target = SCNVector3(center.x, center.y, center.z)
+        return (pos, target)
+    }
+
     private func addQuestItems(to scene: SCNScene, points: [NormalizedPoint]) {
         let quests = dataStore.quests(for: route.id)
         guard let quest = quests.first else { return }
@@ -269,5 +291,29 @@ struct Route3DView: View {
 
             scene.rootNode.addChildNode(containerNode)
         }
+    }
+}
+
+// MARK: - SCNView wrapper with reset support
+
+/// Wraps SCNView so the parent can programmatically reset the camera by changing `resetToken`.
+private struct Route3DSceneView: UIViewRepresentable {
+    let scene: SCNScene
+    /// Changing this value triggers `updateUIView`, which resets the camera to its default position.
+    let resetToken: Int
+
+    func makeUIView(context: Context) -> SCNView {
+        let scnView = SCNView()
+        scnView.scene = scene
+        scnView.allowsCameraControl = true
+        scnView.autoenablesDefaultLighting = true
+        scnView.backgroundColor = UIColor(red: 0.05, green: 0.05, blue: 0.15, alpha: 1.0)
+        return scnView
+    }
+
+    func updateUIView(_ scnView: SCNView, context: Context) {
+        // When resetToken changes, restore the camera to the scene's built-in camera node.
+        // Replacing the scene also resets SceneKit's internal camera controller state.
+        scnView.scene = scene
     }
 }

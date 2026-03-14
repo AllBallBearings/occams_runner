@@ -95,11 +95,11 @@ struct RecordRunView: View {
             HStack(spacing: 10) {
                 qualityPill(
                     "Match \(Int(locationService.preciseCaptureQuality.matchedSampleRatio * 100))%",
-                    ok: locationService.preciseCaptureQuality.matchedSampleRatio >= 0.75
+                    ok: locationService.preciseCaptureQuality.matchedSampleRatio >= 0.65
                 )
                 qualityPill(
                     "Features \(Int(locationService.preciseCaptureQuality.averageFeaturePoints))",
-                    ok: locationService.preciseCaptureQuality.averageFeaturePoints >= 100
+                    ok: locationService.preciseCaptureQuality.averageFeaturePoints >= 75
                 )
                 qualityPill(
                     "Track \(Int(locationService.preciseCaptureQuality.averageTrackingScore * 100))%",
@@ -236,6 +236,15 @@ struct RecordRunView: View {
                         .font(.caption)
                         .foregroundColor(.secondary)
 
+                    // Show exactly which conditions are blocking the Save button.
+                    let blockers = locationService.saveBlockerDescription
+                    if !blockers.isEmpty {
+                        Text("Save blocked:\n\(blockers)")
+                            .font(.caption)
+                            .foregroundColor(.red)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
                     if let saveErrorMessage {
                         Text(saveErrorMessage)
                             .font(.caption)
@@ -285,12 +294,21 @@ struct RecordRunView: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
-                        saveRoute()
+                        let nameOk = !routeName.trimmingCharacters(in: .whitespaces).isEmpty
+                        let qualityOk = locationService.canSavePreciseRoute
+                        if nameOk && qualityOk {
+                            saveRoute()
+                        } else {
+                            // Log exactly what's blocking the save so it appears
+                            // in the debug log the user can copy and share.
+                            var reasons: [String] = []
+                            if !nameOk { reasons.append("route name is empty") }
+                            let blockers = locationService.saveBlockerDescription
+                            if !blockers.isEmpty { reasons.append(blockers) }
+                            locationService.logSaveAttemptBlocked(reasons: reasons)
+                            saveErrorMessage = "Cannot save — see blockers above."
+                        }
                     }
-                    .disabled(
-                        routeName.trimmingCharacters(in: .whitespaces).isEmpty
-                        || !locationService.canSavePreciseRoute
-                    )
                 }
             }
         }

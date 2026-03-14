@@ -2,6 +2,36 @@ import Foundation
 import CoreLocation
 import simd
 
+// MARK: - Recording Mode
+
+enum RecordingMode: String, Codable, CaseIterable {
+    case tight = "tight"
+    case vast  = "vast"
+
+    var displayName: String {
+        switch self {
+        case .tight: return "Tight"
+        case .vast:  return "Vast"
+        }
+    }
+
+    /// Minimum distance between recorded geographic points (metres).
+    var minimumDistance: Double {
+        switch self {
+        case .tight: return 0.3    // ~1 foot — stairs, indoor hallways
+        case .vast:  return 4.877  // ~16 feet — outdoor runs
+        }
+    }
+
+    /// CLLocationManager distanceFilter (metres).
+    var distanceFilter: Double {
+        switch self {
+        case .tight: return 0.1
+        case .vast:  return 2.0
+        }
+    }
+}
+
 // MARK: - Legacy-Friendly Route Point
 
 /// Lightweight geographic point used by map views and overlays.
@@ -108,9 +138,17 @@ struct RouteCaptureQuality: Codable {
     let hasEncryptedWorldMap: Bool
 
     /// Minimum quality bar for exact AR replay.
+    /// Match threshold is 0.65 (not 0.75) because iOS often delivers a burst of
+    /// cached GPS fixes at recording start — all with the same stale timestamp —
+    /// and only one of that burst can correlate to an AR frame, which unfairly
+    /// deflates the ratio. Feature density and tracking score are the stronger
+    /// quality signals for AR replay accuracy.
+    /// Feature density threshold is 75 (not 100) because outdoor environments have
+    /// less surface texture than indoors, so ARKit naturally produces fewer feature
+    /// points. 75 still ensures solid tracking while being achievable outdoors.
     var isReadyForPreciseReplay: Bool {
-        matchedSampleRatio >= 0.75
-        && averageFeaturePoints >= 100
+        matchedSampleRatio >= 0.65
+        && averageFeaturePoints >= 75
         && averageTrackingScore >= 0.65
         && hasEncryptedWorldMap
     }
@@ -129,6 +167,8 @@ struct RecordedRoute: Codable, Identifiable {
     var encryptedWorldMapData: Data?
     var preciseEnabled: Bool
     var captureQuality: RouteCaptureQuality
+    /// The mode used when this route was recorded — determines coin collection geometry.
+    var recordingMode: RecordingMode
 
     /// Convenience map points for existing map-driven views.
     var points: [RoutePoint] {
@@ -198,7 +238,8 @@ struct RecordedRoute: Codable, Identifiable {
         checkpoints: [RouteCheckpoint],
         encryptedWorldMapData: Data?,
         captureQuality: RouteCaptureQuality,
-        preciseEnabled: Bool = true
+        preciseEnabled: Bool = true,
+        recordingMode: RecordingMode = .vast
     ) {
         self.id = UUID()
         self.name = name
@@ -209,6 +250,24 @@ struct RecordedRoute: Codable, Identifiable {
         self.encryptedWorldMapData = encryptedWorldMapData
         self.captureQuality = captureQuality
         self.preciseEnabled = preciseEnabled
+        self.recordingMode = recordingMode
+    }
+
+    // Custom decoder so routes saved before `recordingMode` was added
+    // still load correctly — missing key defaults to .vast.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id                 = try c.decode(UUID.self,                  forKey: .id)
+        name               = try c.decode(String.self,                forKey: .name)
+        dateRecorded       = try c.decode(Date.self,                  forKey: .dateRecorded)
+        geoTrack           = try c.decode([GeoRouteSample].self,      forKey: .geoTrack)
+        localTrack         = try c.decode([LocalRouteSample].self,    forKey: .localTrack)
+        checkpoints        = try c.decode([RouteCheckpoint].self,     forKey: .checkpoints)
+        encryptedWorldMapData = try c.decodeIfPresent(Data.self,      forKey: .encryptedWorldMapData)
+        preciseEnabled     = try c.decode(Bool.self,                  forKey: .preciseEnabled)
+        captureQuality     = try c.decode(RouteCaptureQuality.self,   forKey: .captureQuality)
+        // Default to .vast for routes recorded before this field existed.
+        recordingMode      = try c.decodeIfPresent(RecordingMode.self, forKey: .recordingMode) ?? .vast
     }
 
     func geoSample(atProgress progress: Double) -> GeoRouteSample? {

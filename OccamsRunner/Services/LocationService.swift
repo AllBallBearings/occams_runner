@@ -7,36 +7,6 @@ import CryptoKit
 import Security
 import simd
 
-// MARK: - Recording Mode
-
-enum RecordingMode: String, CaseIterable {
-    case tight = "tight"
-    case vast  = "vast"
-
-    var displayName: String {
-        switch self {
-        case .tight: return "Tight"
-        case .vast:  return "Vast"
-        }
-    }
-
-    /// Minimum distance between recorded geographic points (metres).
-    var minimumDistance: Double {
-        switch self {
-        case .tight: return 0.3    // ~1 foot — stairs, indoor hallways
-        case .vast:  return 4.877  // ~16 feet — outdoor runs
-        }
-    }
-
-    /// CLLocationManager distanceFilter (metres).
-    var distanceFilter: Double {
-        switch self {
-        case .tight: return 0.1
-        case .vast:  return 2.0
-        }
-    }
-}
-
 // MARK: - Location Service
 
 /// Manages GPS + barometer + AR local-frame capture for dual-track route recording.
@@ -65,6 +35,46 @@ class LocationService: NSObject, ObservableObject {
 
     var canSavePreciseRoute: Bool {
         preciseCaptureQuality.isReadyForPreciseReplay
+    }
+
+    /// Human-readable list of unmet conditions blocking the Save button.
+    /// Empty string when save is allowed. Shown in the Save Route sheet and
+    /// written to the debug log whenever the user attempts to save.
+    var saveBlockerDescription: String {
+        let q = preciseCaptureQuality
+        var lines: [String] = []
+        if q.matchedSampleRatio < 0.65 {
+            lines.append("• Match \(Int(q.matchedSampleRatio * 100))% — needs ≥65% (GPS↔AR correlation too low)")
+        }
+        if q.averageFeaturePoints < 75 {
+            lines.append("• Features \(Int(q.averageFeaturePoints)) — needs ≥75 (scan more textured surfaces)")
+        }
+        if q.averageTrackingScore < 0.65 {
+            lines.append("• Tracking \(Int(q.averageTrackingScore * 100))% — needs ≥65% (move more slowly)")
+        }
+        if !q.hasEncryptedWorldMap {
+            lines.append("• No world map — AR session hasn't captured one yet (keep recording)")
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    /// Called by the Save button when quality or name validation fails.
+    /// Writes a timestamped entry to the debug log so the user can copy and share it.
+    func logSaveAttemptBlocked(reasons: [String]) {
+        logDebug("SAVE ATTEMPT BLOCKED:")
+        for reason in reasons {
+            // Log each line of a multi-line blocker description individually
+            for line in reason.components(separatedBy: "\n") where !line.isEmpty {
+                logDebug("  \(line)")
+            }
+        }
+    }
+
+    /// Public entry-point so AR run-time code (e.g. ARCoordinator) can write
+    /// to the same rolling debug log without needing access to the private
+    /// `logDebug` implementation.
+    func logRunEvent(_ message: String) {
+        logDebug(message)
     }
 
     var captureDebugLogText: String {
@@ -177,7 +187,7 @@ class LocationService: NSObject, ObservableObject {
         )
         preciseCaptureStatus = "Scanning environment for precise AR capture..."
         prepareCaptureLogSession(mode: mode)
-        logDebug("Thresholds: match>=75%, features>=100, tracking>=65%, worldMap=true")
+        logDebug("Thresholds: match>=65%, features>=75, tracking>=65%, worldMap=true")
 
         locationManager.startUpdatingLocation()
         altimeter.stopRelativeAltitudeUpdates()
@@ -189,6 +199,10 @@ class LocationService: NSObject, ObservableObject {
     /// Stops active capture streams. Route construction is done by `buildRecordedRoute(name:)`.
     func stopRecording() {
         isRecording = false
+        // Invalidate the periodic timer before taking the final snapshot so both
+        // don't call getCurrentWorldMap concurrently.
+        worldMapTimer?.invalidate()
+        worldMapTimer = nil
         logDebug("Recording stopped by user. geoSamples=\(geoDraftSamples.count), matchedLocal=\(localDraftBySampleId.count)")
         captureWorldMapSnapshot()
         stopPreciseCapture()
@@ -282,7 +296,8 @@ class LocationService: NSObject, ObservableObject {
             checkpoints: checkpoints,
             encryptedWorldMapData: lastEncryptedWorldMapData,
             captureQuality: quality,
-            preciseEnabled: true
+            preciseEnabled: true,
+            recordingMode: recordingMode
         )
     }
 
@@ -409,8 +424,8 @@ class LocationService: NSObject, ObservableObject {
         lastLoggedQualitySignature = signature
 
         var blockers: [String] = []
-        if q.matchedSampleRatio < 0.75 { blockers.append("low_match") }
-        if q.averageFeaturePoints < 100 { blockers.append("low_features") }
+        if q.matchedSampleRatio < 0.65 { blockers.append("low_match") }
+        if q.averageFeaturePoints < 75  { blockers.append("low_features") }
         if q.averageTrackingScore < 0.65 { blockers.append("low_tracking") }
         if !q.hasEncryptedWorldMap { blockers.append("missing_world_map") }
         if blockers.isEmpty { blockers = ["none"] }
@@ -576,6 +591,13 @@ extension LocationService: CLLocationManagerDelegate {
         }
 
         guard isRecording else { return }
+
+        // Discard stale cached fixes that iOS delivers as a burst when recording starts.
+        // A fix whose timestamp is more than 1 second old at the moment it arrives
+        // cannot be correlated to a current AR frame, which unfairly deflates the
+        // matched-sample ratio. Fresh fixes (age ≤ 1 s) are always accepted.
+        let fixAge = Date().timeIntervalSince(location.timestamp)
+        guard fixAge <= 1.0 else { return }
 
         let shouldRecord: Bool
         if let last = lastRecordedLocation {
