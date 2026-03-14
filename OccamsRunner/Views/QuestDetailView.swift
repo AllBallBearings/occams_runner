@@ -8,6 +8,12 @@ struct QuestDetailView: View {
 
     @State private var showingARView = false
 
+    private struct ResolvedMarker: Identifiable {
+        let id: UUID
+        let coordinate: CLLocationCoordinate2D
+        let collected: Bool
+    }
+
     private var currentQuest: Quest {
         dataStore.quests.first(where: { $0.id == quest.id }) ?? quest
     }
@@ -19,19 +25,13 @@ struct QuestDetailView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 20) {
-                // Map with items
                 questMap
                     .frame(height: 300)
                     .cornerRadius(12)
                     .padding(.horizontal)
 
-                // Progress
                 progressSection
-
-                // Stats
                 statsSection
-
-                // Action buttons
                 actionButtons
             }
             .padding(.vertical)
@@ -47,24 +47,36 @@ struct QuestDetailView: View {
 
     private var questMap: some View {
         Map(coordinateRegion: .constant(questRegion),
-            annotationItems: currentQuest.items) { item in
-            MapAnnotation(coordinate: item.coordinate) {
+            annotationItems: resolvedMarkers) { marker in
+            MapAnnotation(coordinate: marker.coordinate) {
                 Circle()
-                    .fill(item.collected ? Color.green.opacity(0.5) : Color.yellow)
+                    .fill(marker.collected ? Color.green.opacity(0.5) : Color.yellow)
                     .frame(width: 8, height: 8)
                     .overlay(
                         Circle()
-                            .stroke(item.collected ? Color.green : Color.orange, lineWidth: 1)
+                            .stroke(marker.collected ? Color.green : Color.orange, lineWidth: 1)
                     )
             }
         }
     }
 
+    private var resolvedMarkers: [ResolvedMarker] {
+        guard let route = associatedRoute else { return [] }
+        return currentQuest.items.compactMap { item in
+            guard let sample = route.geoSample(atProgress: item.routeProgress) else { return nil }
+            return ResolvedMarker(
+                id: item.id,
+                coordinate: sample.coordinate,
+                collected: item.collected
+            )
+        }
+    }
+
     private var questRegion: MKCoordinateRegion {
-        let items = currentQuest.items
-        guard !items.isEmpty else { return MKCoordinateRegion() }
-        let lats = items.map(\.latitude)
-        let lons = items.map(\.longitude)
+        let markers = resolvedMarkers
+        guard !markers.isEmpty else { return MKCoordinateRegion() }
+        let lats = markers.map { $0.coordinate.latitude }
+        let lons = markers.map { $0.coordinate.longitude }
         let center = CLLocationCoordinate2D(
             latitude: (lats.min()! + lats.max()!) / 2,
             longitude: (lons.min()! + lons.max()!) / 2

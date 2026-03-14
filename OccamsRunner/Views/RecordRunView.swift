@@ -1,5 +1,8 @@
 import SwiftUI
 import MapKit
+#if canImport(UIKit)
+import UIKit
+#endif
 
 struct RecordRunView: View {
     @EnvironmentObject var locationService: LocationService
@@ -13,11 +16,13 @@ struct RecordRunView: View {
     @State private var routeName = ""
     @State private var elapsedTime: TimeInterval = 0
     @State private var timer: Timer?
+    @State private var selectedMode: RecordingMode = .vast
+    @State private var saveErrorMessage: String?
+    @State private var didCopyDebugLog = false
 
     var body: some View {
         NavigationView {
             ZStack {
-                // Map
                 Map(coordinateRegion: $region,
                     showsUserLocation: true,
                     annotationItems: locationService.isRecording ? locationService.recordedPoints : []) { point in
@@ -28,6 +33,12 @@ struct RecordRunView: View {
                     }
                 }
                 .ignoresSafeArea(edges: .top)
+                .onAppear {
+                    locationService.startUpdating()
+                    if let location = locationService.currentLocation {
+                        region.center = location.coordinate
+                    }
+                }
                 .onChange(of: locationService.currentLocation) { location in
                     if let location = location {
                         withAnimation {
@@ -36,13 +47,15 @@ struct RecordRunView: View {
                     }
                 }
 
-                // Overlay stats
                 VStack {
                     if locationService.isRecording {
                         statsOverlay
                     }
 
                     Spacer()
+
+                    modePicker
+                        .padding(.bottom, 12)
 
                     recordButton
                         .padding(.bottom, 30)
@@ -59,23 +72,49 @@ struct RecordRunView: View {
     // MARK: - Stats Overlay
 
     private var statsOverlay: some View {
-        HStack(spacing: 20) {
-            statItem(
-                title: "Distance",
-                value: String(format: "%.2f mi", currentDistanceMiles)
-            )
-            statItem(
-                title: "Time",
-                value: formatTime(elapsedTime)
-            )
-            statItem(
-                title: "Altitude",
-                value: String(format: "%.0f ft", locationService.currentAltitude * 3.281)
-            )
-            statItem(
-                title: "Points",
-                value: "\(locationService.recordedPoints.count)"
-            )
+        VStack(spacing: 10) {
+            HStack(spacing: 20) {
+                statItem(
+                    title: "Distance",
+                    value: String(format: "%.2f mi", currentDistanceMiles)
+                )
+                statItem(
+                    title: "Time",
+                    value: formatTime(elapsedTime)
+                )
+                statItem(
+                    title: "Altitude",
+                    value: String(format: "%.0f ft", locationService.currentAltitude * 3.281)
+                )
+                statItem(
+                    title: "Points",
+                    value: "\(locationService.recordedPoints.count)"
+                )
+            }
+
+            HStack(spacing: 10) {
+                qualityPill(
+                    "Match \(Int(locationService.preciseCaptureQuality.matchedSampleRatio * 100))%",
+                    ok: locationService.preciseCaptureQuality.matchedSampleRatio >= 0.65
+                )
+                qualityPill(
+                    "Features \(Int(locationService.preciseCaptureQuality.averageFeaturePoints))",
+                    ok: locationService.preciseCaptureQuality.averageFeaturePoints >= 75
+                )
+                qualityPill(
+                    "Track \(Int(locationService.preciseCaptureQuality.averageTrackingScore * 100))%",
+                    ok: locationService.preciseCaptureQuality.averageTrackingScore >= 0.65
+                )
+                qualityPill(
+                    "Map",
+                    ok: locationService.preciseCaptureQuality.hasEncryptedWorldMap
+                )
+            }
+
+            Text(locationService.preciseCaptureStatus)
+                .font(.caption2)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
         }
         .padding()
         .background(.ultraThinMaterial)
@@ -92,6 +131,30 @@ struct RecordRunView: View {
                 .font(.system(.body, design: .monospaced))
                 .fontWeight(.semibold)
         }
+    }
+
+    private func qualityPill(_ label: String, ok: Bool) -> some View {
+        Text(label)
+            .font(.caption2)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(ok ? Color.green.opacity(0.2) : Color.orange.opacity(0.2))
+            .foregroundColor(ok ? .green : .orange)
+            .clipShape(Capsule())
+    }
+
+    // MARK: - Mode Picker
+
+    private var modePicker: some View {
+        Picker("Mode", selection: $selectedMode) {
+            Label("Tight", systemImage: "house.fill")
+                .tag(RecordingMode.tight)
+            Label("Vast", systemImage: "figure.run")
+                .tag(RecordingMode.vast)
+        }
+        .pickerStyle(.segmented)
+        .padding(.horizontal, 40)
+        .disabled(locationService.isRecording)
     }
 
     // MARK: - Record Button
@@ -136,10 +199,87 @@ struct RecordRunView: View {
                     }
 
                     HStack {
-                        Text("GPS Points")
+                        Text("Geo Samples")
                         Spacer()
                         Text("\(locationService.recordedPoints.count)")
                             .foregroundColor(.secondary)
+                    }
+                }
+
+                Section("Precise AR Quality") {
+                    HStack {
+                        Text("Matched Samples")
+                        Spacer()
+                        Text("\(Int(locationService.preciseCaptureQuality.matchedSampleRatio * 100))%")
+                            .foregroundColor(.secondary)
+                    }
+                    HStack {
+                        Text("Feature Density")
+                        Spacer()
+                        Text("\(Int(locationService.preciseCaptureQuality.averageFeaturePoints))")
+                            .foregroundColor(.secondary)
+                    }
+                    HStack {
+                        Text("Tracking Score")
+                        Spacer()
+                        Text("\(Int(locationService.preciseCaptureQuality.averageTrackingScore * 100))%")
+                            .foregroundColor(.secondary)
+                    }
+                    HStack {
+                        Text("Encrypted World Map")
+                        Spacer()
+                        Image(systemName: locationService.preciseCaptureQuality.hasEncryptedWorldMap ? "checkmark.circle.fill" : "xmark.circle")
+                            .foregroundColor(locationService.preciseCaptureQuality.hasEncryptedWorldMap ? .green : .orange)
+                    }
+
+                    Text(locationService.preciseCaptureStatus)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+
+                    // Show exactly which conditions are blocking the Save button.
+                    let blockers = locationService.saveBlockerDescription
+                    if !blockers.isEmpty {
+                        Text("Save blocked:\n\(blockers)")
+                            .font(.caption)
+                            .foregroundColor(.red)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    if let saveErrorMessage {
+                        Text(saveErrorMessage)
+                            .font(.caption)
+                            .foregroundColor(.red)
+                    }
+                }
+
+                Section("Debug Log") {
+                    if let path = locationService.currentCaptureLogPath {
+                        Text(path)
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                            .textSelection(.enabled)
+                    }
+
+                    Button(didCopyDebugLog ? "Copied" : "Copy Debug Log") {
+                        #if canImport(UIKit)
+                        UIPasteboard.general.string = locationService.captureDebugLogText
+                        #endif
+                        didCopyDebugLog = true
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                            didCopyDebugLog = false
+                        }
+                    }
+                    .disabled(locationService.captureDebugLogText.isEmpty)
+
+                    if !locationService.captureDebugLogLines.isEmpty {
+                        ScrollView {
+                            Text(locationService.captureDebugLogLines.suffix(20).joined(separator: "\n"))
+                                .font(.system(.caption2, design: .monospaced))
+                                .foregroundColor(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .textSelection(.enabled)
+                        }
+                        .frame(minHeight: 120, maxHeight: 220)
                     }
                 }
             }
@@ -154,9 +294,21 @@ struct RecordRunView: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
-                        saveRoute()
+                        let nameOk = !routeName.trimmingCharacters(in: .whitespaces).isEmpty
+                        let qualityOk = locationService.canSavePreciseRoute
+                        if nameOk && qualityOk {
+                            saveRoute()
+                        } else {
+                            // Log exactly what's blocking the save so it appears
+                            // in the debug log the user can copy and share.
+                            var reasons: [String] = []
+                            if !nameOk { reasons.append("route name is empty") }
+                            let blockers = locationService.saveBlockerDescription
+                            if !blockers.isEmpty { reasons.append(blockers) }
+                            locationService.logSaveAttemptBlocked(reasons: reasons)
+                            saveErrorMessage = "Cannot save — see blockers above."
+                        }
                     }
-                    .disabled(routeName.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
             }
         }
@@ -176,19 +328,19 @@ struct RecordRunView: View {
 
     private func toggleRecording() {
         if locationService.isRecording {
-            // Stop
-            _ = locationService.stopRecording()
+            locationService.stopRecording()
             timer?.invalidate()
             timer = nil
 
             if locationService.recordedPoints.count >= 2 {
                 routeName = "Run \(DateFormatter.localizedString(from: Date(), dateStyle: .short, timeStyle: .short))"
+                saveErrorMessage = nil
+                didCopyDebugLog = false
                 showingSaveSheet = true
             }
         } else {
-            // Start
             elapsedTime = 0
-            locationService.startRecording()
+            locationService.startRecording(mode: selectedMode)
             timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
                 elapsedTime += 1
             }
@@ -196,9 +348,17 @@ struct RecordRunView: View {
     }
 
     private func saveRoute() {
-        let route = RecordedRoute(name: routeName, points: locationService.recordedPoints)
+        let name = routeName.trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty else { return }
+
+        guard let route = locationService.buildRecordedRoute(name: name) else {
+            saveErrorMessage = "Route capture quality is below required threshold. Keep scanning and re-record."
+            return
+        }
+
         dataStore.saveRoute(route)
         locationService.recordedPoints = []
+        saveErrorMessage = nil
         showingSaveSheet = false
     }
 

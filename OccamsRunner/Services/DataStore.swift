@@ -16,27 +16,52 @@ class DataStore: ObservableObject {
     private var questsURL: URL { documentsDirectory.appendingPathComponent("quests.json") }
     private var sessionsURL: URL { documentsDirectory.appendingPathComponent("sessions.json") }
 
+    private let hardResetVersionKey = "didHardResetForDualTrackV2"
+
     init() {
+        performOneTimeHardResetIfNeeded()
         loadAll()
+    }
+
+    // MARK: - World Map Sidecar
+
+    /// Returns the path for a per-route encrypted world map binary file.
+    /// Storing the map separately keeps routes.json small (ARWorldMaps are 2–10 MB each).
+    private func worldMapURL(for routeId: UUID) -> URL {
+        documentsDirectory.appendingPathComponent("worldmap_\(routeId.uuidString).bin")
     }
 
     // MARK: - Routes
 
     func saveRoute(_ route: RecordedRoute) {
-        routes.append(route)
+        var routeToStore = route
+        if let mapData = route.encryptedWorldMapData {
+            do {
+                try mapData.write(to: worldMapURL(for: route.id), options: .atomic)
+            } catch {
+                print("Failed to write world map sidecar for \(route.id): \(error)")
+            }
+            routeToStore.encryptedWorldMapData = nil
+        }
+        routes.append(routeToStore)
         persist(routes, to: routesURL)
     }
 
     func deleteRoute(_ route: RecordedRoute) {
         routes.removeAll { $0.id == route.id }
-        // Also delete associated quests
+        // Also delete associated quests and world map sidecar
         quests.removeAll { $0.routeId == route.id }
+        try? fileManager.removeItem(at: worldMapURL(for: route.id))
         persist(routes, to: routesURL)
         persist(quests, to: questsURL)
     }
 
     func route(for id: UUID) -> RecordedRoute? {
-        routes.first { $0.id == id }
+        guard var r = routes.first(where: { $0.id == id }) else { return nil }
+        if let mapData = try? Data(contentsOf: worldMapURL(for: id)) {
+            r.encryptedWorldMapData = mapData
+        }
+        return r
     }
 
     // MARK: - Quests
@@ -85,6 +110,18 @@ class DataStore: ObservableObject {
 
     // MARK: - Persistence
 
+    private func performOneTimeHardResetIfNeeded() {
+        let defaults = UserDefaults.standard
+        guard !defaults.bool(forKey: hardResetVersionKey) else { return }
+
+        let urls = [routesURL, questsURL, sessionsURL]
+        for url in urls where fileManager.fileExists(atPath: url.path) {
+            try? fileManager.removeItem(at: url)
+        }
+
+        defaults.set(true, forKey: hardResetVersionKey)
+    }
+
     private func loadAll() {
         routes = load(from: routesURL) ?? []
         quests = load(from: questsURL) ?? []
@@ -110,7 +147,18 @@ class DataStore: ObservableObject {
             decoder.dateDecodingStrategy = .iso8601
             return try decoder.decode(T.self, from: data)
         } catch {
-            print("Failed to load data from \(url.lastPathComponent): \(error)")
+            // Log the full error so schema mismatches are immediately visible in Xcode console.
+            print("‼️ DataStore: failed to decode \(url.lastPathComponent): \(error)")
+            if let decodingError = error as? DecodingError {
+                switch decodingError {
+                case .keyNotFound(let key, let ctx):
+                    print("   Missing key '\(key.stringValue)' at \(ctx.codingPath.map(\.stringValue).joined(separator: "."))")
+                case .typeMismatch(let type, let ctx):
+                    print("   Type mismatch: expected \(type) at \(ctx.codingPath.map(\.stringValue).joined(separator: "."))")
+                default:
+                    break
+                }
+            }
             return nil
         }
     }

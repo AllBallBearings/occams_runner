@@ -55,8 +55,10 @@ struct RoutesListView: View {
                 .foregroundColor(.secondary)
 
                 Label(
-                    String(format: "%.0f ft gain", route.elevationGainMeters * 3.281),
-                    systemImage: "arrow.up.right"
+                    route.netElevationChangeMeters >= 0
+                        ? String(format: "%.0f ft gain", route.netElevationChangeMeters * 3.281)
+                        : String(format: "%.0f ft loss", abs(route.netElevationChangeMeters) * 3.281),
+                    systemImage: route.netElevationChangeMeters >= 0 ? "arrow.up.right" : "arrow.down.right"
                 )
                 .font(.caption)
                 .foregroundColor(.secondary)

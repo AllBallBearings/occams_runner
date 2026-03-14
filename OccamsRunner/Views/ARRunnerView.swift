@@ -1,11 +1,111 @@
 import SwiftUI
 import ARKit
-import RealityKit
+import SceneKit
 import CoreLocation
-import Combine
+import AVFoundation
 
-/// The AR running experience. Shows floating gold coins along the quest route.
-/// Coins are collected when the runner gets within ~5 feet of them.
+// MARK: - Coin Sound Player
+
+/// Generates a pleasant two-note chime entirely in software — no audio file needed.
+/// Two sine tones (E5 → G#5, a major third) with a fast attack and smooth exponential
+/// decay so it sounds warm rather than harsh. Safe to call from any thread.
+final class CoinSoundPlayer {
+    static let shared = CoinSoundPlayer()
+
+    private let engine = AVAudioEngine()
+    private let mixer: AVAudioMixerNode
+
+    private init() {
+        mixer = engine.mainMixerNode
+        mixer.outputVolume = 1.0
+        do {
+            try AVAudioSession.sharedInstance().setCategory(.ambient, options: .mixWithOthers)
+            try AVAudioSession.sharedInstance().setActive(true)
+            try engine.start()
+        } catch {
+            // Non-fatal — game continues without sound
+        }
+    }
+
+    func playCollect() {
+        // Two-note chime: E5 (659 Hz) → G#5 (830 Hz), major third interval
+        scheduleNote(frequency: 659.26, startOffset: 0.0,   duration: 0.18)
+        scheduleNote(frequency: 830.61, startOffset: 0.06,  duration: 0.22)
+    }
+
+    private func scheduleNote(frequency: Float, startOffset: TimeInterval, duration: TimeInterval) {
+        let sampleRate: Double = 44100
+        let totalFrames = AVAudioFrameCount(sampleRate * (duration + 0.1))
+
+        guard let buffer = AVAudioPCMBuffer(
+            pcmFormat: AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1)!,
+            frameCapacity: totalFrames
+        ) else { return }
+
+        buffer.frameLength = totalFrames
+
+        let channelData = buffer.floatChannelData![0]
+        let attackFrames = Int(sampleRate * 0.008)   // 8 ms attack
+        let sustainEnd   = Int(sampleRate * duration)
+        let totalInt     = Int(totalFrames)
+
+        for i in 0..<totalInt {
+            let t = Float(i) / Float(sampleRate)
+            let sine = sin(2 * Float.pi * frequency * t)
+
+            // Envelope: linear attack → exponential decay
+            let envelope: Float
+            if i < attackFrames {
+                envelope = Float(i) / Float(attackFrames)
+            } else {
+                let decayT = Float(i - attackFrames) / Float(max(1, sustainEnd - attackFrames))
+                envelope = exp(-4.5 * decayT)   // exponential decay → sounds natural
+            }
+
+            channelData[i] = sine * envelope * 0.35   // 0.35 keeps it gentle, not piercing
+        }
+
+        let player = AVAudioPlayerNode()
+        engine.attach(player)
+        engine.connect(player, to: mixer, format: buffer.format)
+
+        if !engine.isRunning {
+            try? engine.start()
+        }
+
+        let startTime = AVAudioTime(
+            hostTime: mach_absolute_time() + secondsToHostTime(startOffset)
+        )
+        player.scheduleBuffer(buffer, at: startTime, completionCallbackType: .dataPlayedBack) { [weak self] _ in
+            self?.engine.detach(player)
+        }
+        player.play()
+    }
+
+    private func secondsToHostTime(_ seconds: TimeInterval) -> UInt64 {
+        var info = mach_timebase_info_data_t()
+        mach_timebase_info(&info)
+        let nanos = UInt64(seconds * 1_000_000_000)
+        return nanos * UInt64(info.denom) / UInt64(info.numer)
+    }
+}
+
+// MARK: - Run Mode
+
+enum ARRunMode {
+    case aligning
+    case running
+}
+
+enum ARAlignmentState: String {
+    case moveToStart = "Move to route start"
+    case scanning = "Scanning for relocalization"
+    case locked = "Alignment locked"
+    case lowConfidence = "Low-confidence alignment"
+}
+
+// MARK: - AR Runner View
+
 struct ARRunnerView: View {
     @EnvironmentObject var dataStore: DataStore
     @EnvironmentObject var locationService: LocationService
@@ -17,25 +117,83 @@ struct ARRunnerView: View {
     @State private var totalPoints = 0
     @State private var showingCompletionAlert = false
     @State private var nearestItemDistance: Double?
+    @State private var runMode: ARRunMode = .aligning
+
+    @State private var alignmentState: ARAlignmentState = .moveToStart
+    @State private var alignmentConfidence: Double = 0
+    @State private var distanceToStart: Double?
+    @State private var alignmentReady = false
+
+    private var route: RecordedRoute? {
+        dataStore.route(for: quest.routeId)
+    }
 
     var body: some View {
         ZStack {
-            // AR View
-            ARRunnerContainerView(
-                quest: quest,
-                dataStore: dataStore,
-                locationService: locationService,
-                onItemCollected: { itemId in
-                    handleCollection(itemId: itemId)
+            if let route {
+                if route.encryptedWorldMapData == nil {
+                    Color.black.ignoresSafeArea()
+                    VStack(spacing: 16) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.system(size: 48))
+                            .foregroundColor(.orange)
+                        Text("AR Precision Data Missing")
+                            .font(.headline)
+                            .foregroundColor(.white)
+                        Text("This route was not recorded with AR precision data and cannot be replayed in AR.\nRe-record the route to enable precise AR placement.")
+                            .font(.caption)
+                            .multilineTextAlignment(.center)
+                            .foregroundColor(.white.opacity(0.75))
+                            .padding(.horizontal, 32)
+                        Button("Dismiss") { dismiss() }
+                            .padding(.horizontal, 32)
+                            .padding(.vertical, 12)
+                            .background(Color.orange)
+                            .foregroundColor(.white)
+                            .clipShape(Capsule())
+                    }
+                } else {
+                    ARRunnerContainerView(
+                        route: route,
+                        quest: quest,
+                        dataStore: dataStore,
+                        locationService: locationService,
+                        runMode: runMode,
+                        onAlignmentUpdate: { state, confidence, distance, ready in
+                            alignmentState = state
+                            alignmentConfidence = confidence
+                            distanceToStart = distance
+                            alignmentReady = ready
+                        },
+                        onNearestItemDistance: { nearest in
+                            nearestItemDistance = nearest
+                        },
+                        onItemCollected: { itemId in
+                            handleCollection(itemId: itemId)
+                        }
+                    )
+                    .ignoresSafeArea()
                 }
-            )
-            .ignoresSafeArea()
+            } else {
+                Color.black.ignoresSafeArea()
+                Text("Route not found for this quest.")
+                    .foregroundColor(.white)
+            }
 
-            // HUD overlay
-            VStack {
-                hudOverlay
-                Spacer()
-                bottomBar
+            if route?.encryptedWorldMapData != nil {
+                if runMode == .aligning {
+                    VStack {
+                        alignmentTopBanner
+                        Spacer()
+                        alignmentBottomControls
+                    }
+                } else {
+                    VStack {
+                        runningHUD
+                        Spacer()
+                        bottomBar
+                    }
+                }
             }
         }
         .onAppear {
@@ -51,11 +209,87 @@ struct ARRunnerView: View {
         }
     }
 
-    // MARK: - HUD
+    // MARK: - Alignment HUD
 
-    private var hudOverlay: some View {
-        HStack(spacing: 20) {
-            // Coins collected
+    private var alignmentTopBanner: some View {
+        HStack(alignment: .top) {
+            VStack(spacing: 5) {
+                Text(alignmentState.rawValue)
+                    .font(.headline)
+                    .foregroundColor(.white)
+
+                if let distanceToStart {
+                    Text(String(format: "Distance to start: %.0f ft", distanceToStart * 3.281))
+                        .font(.caption)
+                        .foregroundColor(.white.opacity(0.9))
+                }
+
+                Text(String(format: "Alignment confidence: %.0f%%", alignmentConfidence * 100))
+                    .font(.caption2)
+                    .foregroundColor(alignmentReady ? .green : .orange)
+
+                if let accuracy = locationService.currentLocation?.horizontalAccuracy {
+                    Text(String(format: "GPS: ±%.0f m", accuracy))
+                        .font(.caption2)
+                        .foregroundColor(.orange)
+                }
+            }
+            .frame(maxWidth: .infinity)
+
+            Button(action: { dismiss() }) {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.title2)
+                    .foregroundColor(.white.opacity(0.8))
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(.ultraThinMaterial)
+        .cornerRadius(12)
+        .padding(.top, 8)
+        .padding(.horizontal, 16)
+    }
+
+    private var alignmentBottomControls: some View {
+        VStack(spacing: 12) {
+            Button(action: { runMode = .running }) {
+                Text("Start Run →")
+                    .font(.headline)
+                    .fontWeight(.bold)
+                    .padding(.horizontal, 40)
+                    .padding(.vertical, 16)
+                    .background(alignmentReady ? Color.green : Color.gray)
+                    .foregroundColor(.white)
+                    .clipShape(Capsule())
+            }
+            .disabled(!alignmentReady)
+
+            if !alignmentReady {
+                Group {
+                    switch alignmentState {
+                    case .moveToStart:
+                        Text("Walk to within 40 ft of where you started recording.")
+                    case .scanning:
+                        Text("Move your phone around slowly to scan the environment.")
+                    case .lowConfidence:
+                        Text("Low confidence — try scanning from a different angle or retrace a few steps.")
+                    case .locked:
+                        EmptyView()
+                    }
+                }
+                .font(.caption)
+                .multilineTextAlignment(.center)
+                .foregroundColor(.white.opacity(0.85))
+            }
+        }
+        .padding(.horizontal, 28)
+        .padding(.bottom, 48)
+    }
+
+    // MARK: - Running HUD
+
+    private var runningHUD: some View {
+        HStack(spacing: 16) {
             HStack(spacing: 6) {
                 Image(systemName: "circle.circle.fill")
                     .foregroundColor(.yellow)
@@ -63,7 +297,6 @@ struct ARRunnerView: View {
                     .fontWeight(.bold)
             }
 
-            // Points
             HStack(spacing: 6) {
                 Image(systemName: "star.fill")
                     .foregroundColor(.yellow)
@@ -73,7 +306,22 @@ struct ARRunnerView: View {
 
             Spacer()
 
-            // Close button
+            Text(String(format: "Align %.0f%%", alignmentConfidence * 100))
+                .font(.caption)
+                .fontWeight(.semibold)
+                .foregroundColor(alignmentConfidence >= 0.75 ? .green : .orange)
+
+            Button(action: { runMode = .aligning }) {
+                Label("Realign", systemImage: "location.north.line")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(.ultraThinMaterial)
+                    .cornerRadius(10)
+                    .foregroundColor(.white)
+            }
+
             Button(action: { dismiss() }) {
                 Image(systemName: "xmark.circle.fill")
                     .font(.title2)
@@ -110,7 +358,6 @@ struct ARRunnerView: View {
         collectedCount += 1
         totalPoints += QuestItemType.coin.pointValue
 
-        // Haptic feedback
         let generator = UINotificationFeedbackGenerator()
         generator.notificationOccurred(.success)
 
@@ -124,9 +371,13 @@ struct ARRunnerView: View {
 // MARK: - AR Container (UIViewRepresentable)
 
 struct ARRunnerContainerView: UIViewRepresentable {
+    let route: RecordedRoute
     let quest: Quest
     let dataStore: DataStore
     let locationService: LocationService
+    let runMode: ARRunMode
+    let onAlignmentUpdate: (ARAlignmentState, Double, Double?, Bool) -> Void
+    let onNearestItemDistance: (Double?) -> Void
     let onItemCollected: (UUID) -> Void
 
     func makeUIView(context: Context) -> ARSCNView {
@@ -136,24 +387,41 @@ struct ARRunnerContainerView: UIViewRepresentable {
         arView.automaticallyUpdatesLighting = true
 
         let config = ARWorldTrackingConfiguration()
-        config.worldAlignment = .gravityAndHeading
+        config.worldAlignment = .gravity
         config.planeDetection = []
-        arView.session.run(config)
+
+        if let encrypted = route.encryptedWorldMapData,
+           let decrypted = locationService.decryptWorldMapData(encrypted),
+           let worldMap = try? NSKeyedUnarchiver.unarchivedObject(ofClass: ARWorldMap.self, from: decrypted) {
+            config.initialWorldMap = worldMap
+        }
+
+        arView.session.run(config, options: [.resetTracking, .removeExistingAnchors])
 
         context.coordinator.arView = arView
+        context.coordinator.configureInitialScene()
 
         return arView
     }
 
     func updateUIView(_ uiView: ARSCNView, context: Context) {
-        context.coordinator.updateItems(quest: quest, dataStore: dataStore)
+        context.coordinator.applyRunMode(runMode)
+        // Always pull the live quest from dataStore rather than using the
+        // struct-captured snapshot — the snapshot goes stale the moment any
+        // item is marked collected, which would cause buildCoinNodes to
+        // re-create already-collected coin nodes and break subsequent collections.
+        let liveQuest = dataStore.quests.first(where: { $0.id == quest.id }) ?? quest
+        context.coordinator.updateQuest(liveQuest, dataStore: dataStore)
     }
 
     func makeCoordinator() -> ARCoordinator {
         ARCoordinator(
+            route: route,
             quest: quest,
             dataStore: dataStore,
             locationService: locationService,
+            onAlignmentUpdate: onAlignmentUpdate,
+            onNearestItemDistance: onNearestItemDistance,
             onItemCollected: onItemCollected
         )
     }
@@ -161,79 +429,426 @@ struct ARRunnerContainerView: UIViewRepresentable {
 
 // MARK: - AR Coordinator
 
-class ARCoordinator: NSObject, ARSCNViewDelegate {
+class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
     var arView: ARSCNView?
+
+    let route: RecordedRoute
     var quest: Quest
     let dataStore: DataStore
     let locationService: LocationService
+
+    let onAlignmentUpdate: (ARAlignmentState, Double, Double?, Bool) -> Void
+    let onNearestItemDistance: (Double?) -> Void
     let onItemCollected: (UUID) -> Void
 
+    private let routeGroupNode = SCNNode()
+    private var pathNodes: [SCNNode] = []
     private var coinNodes: [UUID: SCNNode] = [:]
-    private var collectionTimer: Timer?
-    private var placedItems = false
+    private var pendingCollectionIds: Set<UUID> = []
 
-    init(quest: Quest, dataStore: DataStore, locationService: LocationService, onItemCollected: @escaping (UUID) -> Void) {
+    private var runMode: ARRunMode = .aligning
+
+    private var alignmentState: ARAlignmentState = .moveToStart
+    private var alignmentConfidence: Double = 0
+    private var alignmentLocked = false
+    private var consecutiveGoodFrames = 0
+    private var scanStartedAt: Date?
+
+    private var statusTimer: Timer?
+    private var collectionTimer: Timer?
+
+    private let startGateDistanceMeters: Double = 40
+
+    init(
+        route: RecordedRoute,
+        quest: Quest,
+        dataStore: DataStore,
+        locationService: LocationService,
+        onAlignmentUpdate: @escaping (ARAlignmentState, Double, Double?, Bool) -> Void,
+        onNearestItemDistance: @escaping (Double?) -> Void,
+        onItemCollected: @escaping (UUID) -> Void
+    ) {
+        self.route = route
         self.quest = quest
         self.dataStore = dataStore
         self.locationService = locationService
+        self.onAlignmentUpdate = onAlignmentUpdate
+        self.onNearestItemDistance = onNearestItemDistance
         self.onItemCollected = onItemCollected
         super.init()
 
-        // Start checking for collections
-        collectionTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+        // Both timers run on the main RunLoop so all coinNodes access
+        // (checkCollections, updateNearestItemDistance, buildCoinNodes, updateQuest)
+        // is single-threaded on main — no dictionary races possible.
+        statusTimer = Timer(timeInterval: 0.3, repeats: true) { [weak self] _ in
+            self?.updateAlignmentStatusFromGPS()
+            self?.updateNearestItemDistance()
+        }
+        RunLoop.main.add(statusTimer!, forMode: .common)
+
+        collectionTimer = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in
             self?.checkCollections()
         }
+        RunLoop.main.add(collectionTimer!, forMode: .common)
     }
 
     deinit {
+        statusTimer?.invalidate()
         collectionTimer?.invalidate()
     }
 
-    func updateItems(quest: Quest, dataStore: DataStore) {
+    // MARK: - Setup
+
+    func configureInitialScene() {
+        guard let arView else { return }
+
+        arView.session.delegate = self
+
+        if routeGroupNode.parent == nil {
+            arView.scene.rootNode.addChildNode(routeGroupNode)
+        }
+
+        // Shift the entire route (path + coins) down ~1 ft so objects
+        // appear at chest/waist height rather than eye/head height.
+        routeGroupNode.position.y = -0.3
+
+        buildRoutePath()
+        buildCoinNodes(forceRebuild: true)
+        updateAlignmentStatusFromGPS()
+    }
+
+    func applyRunMode(_ newMode: ARRunMode) {
+        guard newMode != runMode else { return }
+        runMode = newMode
+
+        let showPath = newMode == .aligning
+        for node in pathNodes {
+            node.isHidden = !showPath
+        }
+    }
+
+    func updateQuest(_ quest: Quest, dataStore: DataStore) {
+        // updateUIView is called on the main thread; keep coinNodes mutations there.
+        assert(Thread.isMainThread)
         self.quest = quest
+        buildCoinNodes(forceRebuild: false)
+    }
 
-        guard let arView = arView, let currentLocation = locationService.currentLocation else { return }
+    // MARK: - Route + Coins
 
+    private func buildRoutePath() {
+        for node in pathNodes { node.removeFromParentNode() }
+        pathNodes.removeAll()
+
+        guard route.localTrack.count > 1 else { return }
+
+        let points: [SIMD3<Float>] = route.localTrack.map {
+            SIMD3<Float>(Float($0.x), Float($0.y), Float($0.z))
+        }
+
+        for i in 0..<(points.count - 1) {
+            let from = points[i]
+            let to = points[i + 1]
+            let segment = pathSegmentNode(from: from, to: to)
+            routeGroupNode.addChildNode(segment)
+            pathNodes.append(segment)
+        }
+
+        let start = markerNode(color: UIColor(red: 0.2, green: 0.85, blue: 0.2, alpha: 0.9))
+        start.simdPosition = points[0]
+        routeGroupNode.addChildNode(start)
+        pathNodes.append(start)
+
+        let end = markerNode(color: UIColor(red: 0.9, green: 0.2, blue: 0.2, alpha: 0.9))
+        end.simdPosition = points[points.count - 1]
+        routeGroupNode.addChildNode(end)
+        pathNodes.append(end)
+    }
+
+    private func buildCoinNodes(forceRebuild: Bool) {
+        assert(Thread.isMainThread)
         let currentQuest = dataStore.quests.first(where: { $0.id == quest.id }) ?? quest
 
-        // Place or update coin nodes
+        if forceRebuild {
+            for node in coinNodes.values { node.removeFromParentNode() }
+            coinNodes.removeAll()
+        }
+
         for item in currentQuest.items {
             if item.collected {
-                // Remove collected coins
-                if let node = coinNodes[item.id] {
-                    node.removeFromParentNode()
+                if let existing = coinNodes[item.id] {
+                    existing.removeFromParentNode()
                     coinNodes.removeValue(forKey: item.id)
                 }
                 continue
             }
 
-            if coinNodes[item.id] == nil {
-                // Calculate position relative to user
-                let itemLocation = item.location
-                let distance = currentLocation.distance(from: itemLocation)
-
-                // Only render items within 100 meters for performance
-                guard distance < 100 else { continue }
-
-                let bearing = currentLocation.bearing(to: itemLocation)
-                let altDiff = item.altitude - currentLocation.altitude
-
-                // Convert GPS offset to AR scene coordinates
-                // ARKit: x = east, y = up, z = south (with gravityAndHeading alignment)
-                let dx = Float(distance * sin(bearing))
-                let dy = Float(altDiff) + 1.5 // Float coins 1.5m above ground
-                let dz = Float(-distance * cos(bearing))
-
+            if coinNodes[item.id] == nil,
+               let local = item.resolvedLocalPosition(on: route) {
                 let coinNode = createCoinNode()
-                coinNode.position = SCNVector3(dx, dy, dz)
-                arView.scene.rootNode.addChildNode(coinNode)
+                coinNode.simdPosition = local
+                routeGroupNode.addChildNode(coinNode)
                 coinNodes[item.id] = coinNode
             }
         }
     }
 
+    private func updateNearestItemDistance() {
+        guard let cameraNode = arView?.pointOfView else {
+            onNearestItemDistance(nil)
+            return
+        }
+
+        var nearest: Double?
+        let cameraPos = cameraNode.worldPosition
+
+        for (_, node) in coinNodes {
+            let p = node.worldPosition
+            let dx = Double(cameraPos.x - p.x)
+            let dy = Double(cameraPos.y - p.y)
+            let dz = Double(cameraPos.z - p.z)
+            let d = sqrt(dx * dx + dy * dy + dz * dz)
+            if nearest == nil || d < nearest! {
+                nearest = d
+            }
+        }
+
+        onNearestItemDistance(nearest)
+    }
+
+    // MARK: - Alignment
+
+    private func updateAlignmentStatusFromGPS() {
+        let distance = distanceToRouteStart()
+
+        if let distance, distance > startGateDistanceMeters {
+            alignmentState = .moveToStart
+            alignmentConfidence = min(alignmentConfidence, 0.2)
+            alignmentLocked = false
+            consecutiveGoodFrames = 0
+            scanStartedAt = nil
+            publishAlignment(distance: distance)
+            return
+        }
+
+        if !alignmentLocked {
+            if scanStartedAt == nil {
+                scanStartedAt = Date()
+            }
+            alignmentState = .scanning
+        }
+
+        publishAlignment(distance: distance)
+    }
+
+    private func publishAlignment(distance: Double?) {
+        DispatchQueue.main.async {
+            self.onAlignmentUpdate(
+                self.alignmentState,
+                self.alignmentConfidence,
+                distance,
+                self.alignmentLocked
+            )
+        }
+    }
+
+    private func distanceToRouteStart() -> Double? {
+        guard let current = locationService.currentLocation,
+              let start = route.startLocation else { return nil }
+        return current.distance(from: start)
+    }
+
+    func session(_ session: ARSession, didUpdate frame: ARFrame) {
+        guard (distanceToRouteStart() ?? 0) <= startGateDistanceMeters else { return }
+        guard !alignmentLocked else { return }
+
+        let featureCount = Double(frame.rawFeaturePoints?.points.count ?? 0)
+        let featureScore = min(1, featureCount / 250)
+
+        let trackingScore: Double
+        switch frame.camera.trackingState {
+        case .normal:
+            trackingScore = 1
+        case .limited(let reason):
+            switch reason {
+            case .relocalizing: trackingScore = 0.65
+            case .excessiveMotion: trackingScore = 0.45
+            case .insufficientFeatures: trackingScore = 0.3
+            case .initializing: trackingScore = 0.35
+            @unknown default: trackingScore = 0.3
+            }
+        case .notAvailable:
+            trackingScore = 0
+        }
+
+        let mappingScore: Double
+        switch frame.worldMappingStatus {
+        case .mapped: mappingScore = 1
+        case .extending: mappingScore = 0.8
+        case .limited: mappingScore = 0.45
+        case .notAvailable: mappingScore = 0.2
+        @unknown default: mappingScore = 0.3
+        }
+
+        alignmentConfidence = max(0, min(1, (featureScore * 0.35) + (trackingScore * 0.35) + (mappingScore * 0.3)))
+
+        if alignmentConfidence >= 0.75 {
+            consecutiveGoodFrames += 1
+        } else {
+            consecutiveGoodFrames = max(0, consecutiveGoodFrames - 1)
+        }
+
+        if consecutiveGoodFrames >= 15 {
+            alignmentLocked = true
+            alignmentState = .locked
+        } else if let scanStartedAt,
+                  Date().timeIntervalSince(scanStartedAt) > 14,
+                  alignmentConfidence >= 0.45 {
+            alignmentState = .lowConfidence
+        } else {
+            alignmentState = .scanning
+        }
+
+        publishAlignment(distance: distanceToRouteStart())
+    }
+
+    // MARK: - Collection
+
+    private func checkCollections() {
+        guard runMode == .running else { return }
+        guard let arView, let cameraNode = arView.pointOfView else { return }
+
+        let cameraPos = cameraNode.worldPosition
+        let currentQuest = dataStore.quests.first(where: { $0.id == quest.id }) ?? quest
+
+        // ─────────────────────────────────────────────────────────────────────
+        // Phase 1 — geometry check only.
+        //
+        // IMPORTANT: Do NOT mutate coinNodes or call onItemCollected inside this
+        // loop. Doing so triggers dataStore @Published → SwiftUI updateUIView →
+        // buildCoinNodes — which mutates coinNodes while the for-loop is still
+        // iterating. That is Swift dictionary undefined behaviour and silently
+        // breaks all collections after the first one.
+        // ─────────────────────────────────────────────────────────────────────
+        var toCollect: [(id: UUID, node: SCNNode)] = []
+        var logParts: [String] = []
+
+        for item in currentQuest.items {
+            if item.collected {
+                logParts.append("\(item.id.uuidString.prefix(4)):skip(done)")
+                continue
+            }
+            if pendingCollectionIds.contains(item.id) {
+                logParts.append("\(item.id.uuidString.prefix(4)):skip(pending)")
+                continue
+            }
+            guard let node = coinNodes[item.id] else {
+                logParts.append("\(item.id.uuidString.prefix(4)):skip(noNode)")
+                continue
+            }
+
+            let coinPos = node.worldPosition
+            let dx = cameraPos.x - coinPos.x
+            let dy = cameraPos.y - coinPos.y
+            let dz = cameraPos.z - coinPos.z
+
+            let inRange: Bool
+            switch route.recordingMode {
+            case .tight:
+                // Sphere: ~1.5 ft radius (0.457 m) — small, precise indoor collection.
+                let dist = sqrt(dx * dx + dy * dy + dz * dz)
+                inRange = dist < 0.457
+                logParts.append("\(item.id.uuidString.prefix(4)):dist=\(String(format: "%.2f", dist))m \(inRange ? "✓" : "far")")
+
+            case .vast:
+                // Ellipsoid along the camera's forward axis:
+                //   • Along-path (forward/back): half-axis = 0.5 m (~1.6 ft)
+                //   • Lateral (left/right + vertical): half-axis = 1.5 m (~5 ft)
+                let forward = cameraNode.simdWorldFront
+                let delta   = SIMD3<Float>(dx, dy, dz)
+                let fwdDist = simd_dot(delta, forward)
+                let latVec  = delta - forward * fwdDist
+                let latDist = simd_length(latVec)
+                let fwdHalf: Float = 0.5
+                let latHalf: Float = 1.5
+                let e = (fwdDist / fwdHalf) * (fwdDist / fwdHalf)
+                      + (latDist / latHalf) * (latDist / latHalf)
+                inRange = e < 1.0
+                logParts.append("\(item.id.uuidString.prefix(4)):fwd=\(String(format: "%.2f", fwdDist))m lat=\(String(format: "%.2f", latDist))m e=\(String(format: "%.2f", e)) \(inRange ? "✓" : "far")")
+            }
+
+            if inRange {
+                toCollect.append((item.id, node))
+            }
+        }
+
+        // Log every tick so collection behaviour is visible in the debug log.
+        let collectTag = toCollect.isEmpty ? "" : "COLLECT×\(toCollect.count) | "
+        locationService.logRunEvent("[Tick] \(collectTag)\(logParts.joined(separator: " | "))")
+
+        // ─────────────────────────────────────────────────────────────────────
+        // Phase 2 — act on collected items AFTER the loop is fully done.
+        // It is now safe to mutate coinNodes and fire onItemCollected because
+        // the for-loop over currentQuest.items has already finished.
+        // ─────────────────────────────────────────────────────────────────────
+        for (itemId, node) in toCollect {
+            pendingCollectionIds.insert(itemId)
+            coinNodes.removeValue(forKey: itemId)
+
+            CoinSoundPlayer.shared.playCollect()
+
+            let scaleUp = SCNAction.scale(to: 2.0, duration: 0.2)
+            let fadeOut = SCNAction.fadeOut(duration: 0.3)
+            let group   = SCNAction.group([scaleUp, fadeOut])
+            let remove  = SCNAction.removeFromParentNode()
+            node.runAction(SCNAction.sequence([group, remove]))
+
+            // Already on main thread — call directly.
+            onItemCollected(itemId)
+        }
+    }
+
+    // MARK: - Nodes
+
+    private func markerNode(color: UIColor) -> SCNNode {
+        let sphere = SCNSphere(radius: 0.25)
+        let mat = SCNMaterial()
+        mat.diffuse.contents = color
+        mat.emission.contents = color.withAlphaComponent(0.35)
+        mat.isDoubleSided = true
+        sphere.materials = [mat]
+        return SCNNode(geometry: sphere)
+    }
+
+    private func pathSegmentNode(from: SIMD3<Float>, to: SIMD3<Float>) -> SCNNode {
+        let delta = to - from
+        let len = simd_length(delta)
+        guard len > 0.01 else { return SCNNode() }
+
+        let cylinder = SCNCylinder(radius: 0.04, height: CGFloat(len))
+        let material = SCNMaterial()
+        material.diffuse.contents = UIColor(red: 0.5, green: 0.7, blue: 1.0, alpha: 0.45)
+        material.isDoubleSided = true
+        cylinder.materials = [material]
+
+        let node = SCNNode(geometry: cylinder)
+        node.simdPosition = (from + to) / 2
+
+        let dirNorm = simd_normalize(delta)
+        let yAxis = SIMD3<Float>(0, 1, 0)
+        let dot = simd_dot(yAxis, dirNorm)
+        if dot < -0.9999 {
+            node.simdOrientation = simd_quatf(angle: .pi, axis: SIMD3<Float>(1, 0, 0))
+        } else if dot < 0.9999 {
+            node.simdOrientation = simd_quatf(from: yAxis, to: dirNorm)
+        }
+
+        return node
+    }
+
     private func createCoinNode() -> SCNNode {
-        // Create a golden disc (coin)
+        let containerNode = SCNNode()
+
         let coin = SCNCylinder(radius: 0.15, height: 0.02)
 
         let goldMaterial = SCNMaterial()
@@ -242,87 +857,36 @@ class ARCoordinator: NSObject, ARSCNViewDelegate {
         goldMaterial.metalness.contents = 0.8
         goldMaterial.roughness.contents = 0.2
         goldMaterial.emission.contents = UIColor(red: 0.6, green: 0.45, blue: 0.0, alpha: 1.0)
+        goldMaterial.isDoubleSided = true
 
         coin.materials = [goldMaterial]
 
-        let coinNode = SCNNode(geometry: coin)
+        let coinDisc = SCNNode(geometry: coin)
+        coinDisc.eulerAngles = SCNVector3(Float.pi / 2, 0, 0)
+        containerNode.addChildNode(coinDisc)
 
-        // Add glow effect with a slightly larger transparent sphere
         let glow = SCNSphere(radius: 0.2)
         let glowMaterial = SCNMaterial()
         glowMaterial.diffuse.contents = UIColor(red: 1.0, green: 0.9, blue: 0.3, alpha: 0.15)
         glowMaterial.emission.contents = UIColor(red: 1.0, green: 0.84, blue: 0.0, alpha: 0.3)
         glowMaterial.isDoubleSided = true
         glow.materials = [glowMaterial]
-        let glowNode = SCNNode(geometry: glow)
-        coinNode.addChildNode(glowNode)
+        containerNode.addChildNode(SCNNode(geometry: glow))
 
-        // Spinning animation
         let spin = CABasicAnimation(keyPath: "rotation")
         spin.toValue = NSValue(scnVector4: SCNVector4(0, 1, 0, Float.pi * 2))
         spin.duration = 2.0
         spin.repeatCount = .infinity
-        coinNode.addAnimation(spin, forKey: "spin")
+        containerNode.addAnimation(spin, forKey: "spin")
 
-        // Bobbing animation
         let bob = CABasicAnimation(keyPath: "position.y")
         bob.byValue = 0.1
         bob.duration = 1.0
         bob.autoreverses = true
         bob.repeatCount = .infinity
         bob.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-        coinNode.addAnimation(bob, forKey: "bob")
+        containerNode.addAnimation(bob, forKey: "bob")
 
-        return coinNode
+        return containerNode
     }
-
-    private func checkCollections() {
-        guard let _ = locationService.currentLocation else { return }
-
-        let currentQuest = dataStore.quests.first(where: { $0.id == quest.id }) ?? quest
-
-        for item in currentQuest.items {
-            guard !item.collected else { continue }
-
-            if locationService.isWithinCollectionRange(of: item) {
-                // Collect this item!
-                if let node = coinNodes[item.id] {
-                    // Collection animation
-                    let scaleUp = SCNAction.scale(to: 2.0, duration: 0.2)
-                    let fadeOut = SCNAction.fadeOut(duration: 0.3)
-                    let group = SCNAction.group([scaleUp, fadeOut])
-                    let remove = SCNAction.removeFromParentNode()
-                    node.runAction(SCNAction.sequence([group, remove]))
-                    coinNodes.removeValue(forKey: item.id)
-                }
-
-                DispatchQueue.main.async {
-                    self.onItemCollected(item.id)
-                }
-            }
-        }
-    }
-}
-
-// MARK: - CLLocation Bearing Extension
-
-extension CLLocation {
-    /// Calculate bearing from this location to another location in radians.
-    func bearing(to destination: CLLocation) -> Double {
-        let lat1 = coordinate.latitude.degreesToRadians
-        let lon1 = coordinate.longitude.degreesToRadians
-        let lat2 = destination.coordinate.latitude.degreesToRadians
-        let lon2 = destination.coordinate.longitude.degreesToRadians
-
-        let dLon = lon2 - lon1
-        let y = sin(dLon) * cos(lat2)
-        let x = cos(lat1) * sin(lat2) - sin(lat1) * cos(lat2) * cos(dLon)
-
-        return atan2(y, x)
-    }
-}
-
-extension Double {
-    var degreesToRadians: Double { self * .pi / 180 }
-    var radiansToDegrees: Double { self * 180 / .pi }
 }

@@ -2,7 +2,7 @@ import SwiftUI
 import MapKit
 
 /// Allows the user to configure and create a quest along a recorded route.
-/// Places coins at specified intervals and lets the user preview them on a map.
+/// Places coins at route-progress intervals and previews resolved map locations.
 struct QuestEditorView: View {
     @EnvironmentObject var dataStore: DataStore
     let route: RecordedRoute
@@ -11,6 +11,11 @@ struct QuestEditorView: View {
     @State private var questName = ""
     @State private var coinIntervalFeet: Double = 10
     @State private var generatedItems: [QuestItem] = []
+
+    private struct PreviewMarker: Identifiable {
+        let id: UUID
+        let coordinate: CLLocationCoordinate2D
+    }
 
     var body: some View {
         Form {
@@ -43,10 +48,9 @@ struct QuestEditorView: View {
                     Text("Total points: \(generatedItems.count * 10)")
                         .foregroundColor(.secondary)
 
-                    // Mini map preview
                     Map(coordinateRegion: .constant(routeRegion),
-                        annotationItems: generatedItems) { item in
-                        MapAnnotation(coordinate: item.coordinate) {
+                        annotationItems: previewMarkers) { marker in
+                        MapAnnotation(coordinate: marker.coordinate) {
                             Circle()
                                 .fill(Color.yellow)
                                 .frame(width: 6, height: 6)
@@ -83,9 +87,9 @@ struct QuestEditorView: View {
     }
 
     private var routeRegion: MKCoordinateRegion {
-        guard !route.points.isEmpty else { return MKCoordinateRegion() }
-        let lats = route.points.map(\.latitude)
-        let lons = route.points.map(\.longitude)
+        guard !route.geoTrack.isEmpty else { return MKCoordinateRegion() }
+        let lats = route.geoTrack.map(\.latitude)
+        let lons = route.geoTrack.map(\.longitude)
         let center = CLLocationCoordinate2D(
             latitude: (lats.min()! + lats.max()!) / 2,
             longitude: (lons.min()! + lons.max()!) / 2
@@ -95,6 +99,13 @@ struct QuestEditorView: View {
             longitudeDelta: (lons.max()! - lons.min()!) * 1.3 + 0.002
         )
         return MKCoordinateRegion(center: center, span: span)
+    }
+
+    private var previewMarkers: [PreviewMarker] {
+        generatedItems.compactMap { item in
+            guard let sample = route.geoSample(atProgress: item.routeProgress) else { return nil }
+            return PreviewMarker(id: item.id, coordinate: sample.coordinate)
+        }
     }
 
     private func regenerateItems() {

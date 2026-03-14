@@ -100,7 +100,11 @@ struct RouteDetailView: View {
                 statCard(title: "Duration", value: formatDuration(route.durationSeconds), icon: "clock")
             }
             HStack(spacing: 24) {
-                statCard(title: "Elevation Gain", value: String(format: "%.0f ft", route.elevationGainMeters * 3.281), icon: "arrow.up.right")
+                statCard(
+                    title: route.netElevationChangeMeters >= 0 ? "Elevation Gain" : "Elevation Loss",
+                    value: String(format: "%.0f ft", abs(route.netElevationChangeMeters) * 3.281),
+                    icon: route.netElevationChangeMeters >= 0 ? "arrow.up.right" : "arrow.down.right"
+                )
                 statCard(title: "GPS Points", value: "\(route.points.count)", icon: "mappin.circle")
             }
         }
