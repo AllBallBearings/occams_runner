@@ -17,13 +17,18 @@ jobs:
       - name: Install xcpretty
         run: gem install xcpretty --no-document
 
+      - name: Show available simulators
+        run: xcrun simctl list devices available | grep -E "iPhone [0-9]"
+
       - name: Run unit tests
         run: |
           set -o pipefail
+          SIM=$(xcrun simctl list devices available | grep -E "iPhone [0-9]" | head -1 | sed 's/.*(\(.*\)) .*/\1/')
+          echo "Using simulator: $SIM"
           xcodebuild test \
             -project OccamsRunner.xcodeproj \
             -scheme OccamsRunner \
-            -destination 'platform=iOS Simulator,name=iPhone 16,OS=latest' \
+            -destination "platform=iOS Simulator,id=$SIM" \
             -only-testing OccamsRunnerTests \
             -resultBundlePath TestResults/UnitTests.xcresult \
             | xcpretty
@@ -49,10 +54,12 @@ jobs:
       - name: Run UI tests
         run: |
           set -o pipefail
+          SIM=$(xcrun simctl list devices available | grep -E "iPhone [0-9]" | head -1 | sed 's/.*(\(.*\)) .*/\1/')
+          echo "Using simulator: $SIM"
           xcodebuild test \
             -project OccamsRunner.xcodeproj \
             -scheme OccamsRunner \
-            -destination 'platform=iOS Simulator,name=iPhone 16,OS=latest' \
+            -destination "platform=iOS Simulator,id=$SIM" \
             -only-testing OccamsRunnerUITests \
             -resultBundlePath TestResults/UITests.xcresult \
             | xcpretty
