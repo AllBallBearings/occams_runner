@@ -71,7 +71,7 @@ final class NavigationFlowTests: XCTestCase {
         app.tabBars.buttons["Routes"].tap()
         XCTAssertTrue(app.staticTexts["Morning Loop"].waitForExistence(timeout: 3))
         app.staticTexts["Morning Loop"].tap()
-        XCTAssertTrue(app.buttons["View 3D"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["View in 3D"].waitForExistence(timeout: 3))
     }
 
     // MARK: - Quest creation
@@ -95,6 +95,9 @@ final class NavigationFlowTests: XCTestCase {
         XCTAssertTrue(app.textFields.firstMatch.waitForExistence(timeout: 3))
 
         app.buttons["Cancel"].tap()
+        // Wait for the route detail to reappear — this confirms the sheet has fully
+        // dismissed (including animation) before asserting the text field is gone.
+        XCTAssertTrue(app.buttons["Create Quest"].waitForExistence(timeout: 3))
         XCTAssertFalse(app.textFields.firstMatch.exists)
     }
 
