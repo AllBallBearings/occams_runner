@@ -890,3 +890,15 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
         return containerNode
     }
 }
+
+// MARK: - Testable Pure Helpers
+
+extension ARCoordinator {
+    /// Euclidean distance between two SceneKit positions. Extracted for unit testing.
+    static func distance3D(_ a: SCNVector3, _ b: SCNVector3) -> Float {
+        let dx = a.x - b.x
+        let dy = a.y - b.y
+        let dz = a.z - b.z
+        return sqrt(dx * dx + dy * dy + dz * dz)
+    }
+}
