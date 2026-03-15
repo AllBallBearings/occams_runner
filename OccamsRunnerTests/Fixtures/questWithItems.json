@@ -1,0 +1,48 @@
+{
+  "id": "B2C3D4E5-0000-0000-0000-000000000001",
+  "name": "Test Quest",
+  "routeId": "A1B2C3D4-0000-0000-0000-000000000001",
+  "dateCreated": "2024-01-15T12:00:00Z",
+  "items": [
+    {
+      "id": "C3D4E5F6-0001-0000-0000-000000000001",
+      "type": "coin",
+      "latitude": 37.33182,
+      "longitude": -122.03090,
+      "altitude": 50.0,
+      "collected": true
+    },
+    {
+      "id": "C3D4E5F6-0002-0000-0000-000000000001",
+      "type": "coin",
+      "latitude": 37.33182,
+      "longitude": -122.03060,
+      "altitude": 50.0,
+      "collected": true
+    },
+    {
+      "id": "C3D4E5F6-0003-0000-0000-000000000001",
+      "type": "coin",
+      "latitude": 37.33182,
+      "longitude": -122.03040,
+      "altitude": 50.0,
+      "collected": false
+    },
+    {
+      "id": "C3D4E5F6-0004-0000-0000-000000000001",
+      "type": "coin",
+      "latitude": 37.33182,
+      "longitude": -122.03020,
+      "altitude": 50.0,
+      "collected": false
+    },
+    {
+      "id": "C3D4E5F6-0005-0000-0000-000000000001",
+      "type": "coin",
+      "latitude": 37.33182,
+      "longitude": -122.03005,
+      "altitude": 50.0,
+      "collected": false
+    }
+  ]
+}

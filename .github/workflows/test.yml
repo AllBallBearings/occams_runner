@@ -1,0 +1,78 @@
+name: Tests
+
+on:
+  push:
+    branches: [main, "feature/**"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  unit-tests:
+    name: Unit Tests
+    runs-on: macos-15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install xcpretty
+        run: gem install xcpretty --no-document
+
+      - name: Run unit tests
+        run: |
+          set -o pipefail
+          # Extract the UDID of the first available arm64 iPhone 16 simulator.
+          # grep -oE pulls only the UUID token so we never accidentally capture
+          # the "(Shutdown)" state string that a sed-based approach would grab.
+          SIM=$(xcrun simctl list devices available \
+            | grep -E "iPhone 16 \(" \
+            | grep -oE "[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}" \
+            | head -1)
+          echo "Using simulator UDID: $SIM"
+          xcodebuild test \
+            -project OccamsRunner.xcodeproj \
+            -scheme OccamsRunner \
+            -destination "platform=iOS Simulator,id=$SIM" \
+            -only-testing OccamsRunnerTests \
+            -resultBundlePath TestResults/UnitTests.xcresult \
+            | xcpretty
+
+      - name: Upload unit test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: unit-test-results
+          path: TestResults/UnitTests.xcresult
+
+  ui-tests:
+    name: UI Tests
+    runs-on: macos-15
+    needs: unit-tests  # Only run UI tests if unit tests pass
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install xcpretty
+        run: gem install xcpretty --no-document
+
+      - name: Run UI tests
+        run: |
+          set -o pipefail
+          SIM=$(xcrun simctl list devices available \
+            | grep -E "iPhone 16 \(" \
+            | grep -oE "[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}" \
+            | head -1)
+          echo "Using simulator UDID: $SIM"
+          xcodebuild test \
+            -project OccamsRunner.xcodeproj \
+            -scheme OccamsRunner \
+            -destination "platform=iOS Simulator,id=$SIM" \
+            -only-testing OccamsRunnerUITests \
+            -resultBundlePath TestResults/UITests.xcresult \
+            | xcpretty
+
+      - name: Upload UI test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ui-test-results
+          path: TestResults/UITests.xcresult

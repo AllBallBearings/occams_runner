@@ -7,9 +7,10 @@ class DataStore: ObservableObject {
     @Published var runSessions: [RunSession] = []
 
     private let fileManager = FileManager.default
+    private let customDirectory: URL?
 
     private var documentsDirectory: URL {
-        fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        customDirectory ?? fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
     }
 
     private var routesURL: URL { documentsDirectory.appendingPathComponent("routes.json") }
@@ -19,7 +20,14 @@ class DataStore: ObservableObject {
     private let hardResetVersionKey = "didHardResetForDualTrackV2"
 
     init() {
+        self.customDirectory = nil
         performOneTimeHardResetIfNeeded()
+        loadAll()
+    }
+
+    /// Designated initializer for testing. Uses a custom directory instead of the app's documents folder.
+    init(directory: URL) {
+        self.customDirectory = directory
         loadAll()
     }
 
