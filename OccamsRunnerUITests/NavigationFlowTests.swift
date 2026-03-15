@@ -1,0 +1,153 @@
+import XCTest
+
+/// UI tests for non-AR screens. Runs in iOS Simulator (no device required).
+/// The AR screen is NOT tested here — it requires a physical device and camera.
+///
+/// Setup: The app is launched with UI_TESTING=1 so it uses an isolated temp directory.
+/// LOAD_FIXTURE_ROUTES=1 pre-populates two routes and one quest for data-dependent tests.
+final class NavigationFlowTests: XCTestCase {
+
+    var app: XCUIApplication!
+
+    override func setUpWithError() throws {
+        continueAfterFailure = false
+        app = XCUIApplication()
+        app.launchEnvironment["UI_TESTING"] = "1"
+        app.launchEnvironment["LOAD_FIXTURE_ROUTES"] = "1"
+        app.launch()
+    }
+
+    override func tearDownWithError() throws {
+        app.terminate()
+    }
+
+    // MARK: - Tab bar
+
+    func test_tabBar_hasThreeTabs() {
+        XCTAssertEqual(app.tabBars.firstMatch.buttons.count, 3)
+    }
+
+    func test_defaultTab_showsRecordUI() {
+        // Record tab is the first tab. It shows the map or a start-recording button.
+        XCTAssertTrue(app.tabBars.buttons["Record"].isSelected)
+    }
+
+    func test_tapRoutesTab_showsRoutesTitle() {
+        app.tabBars.buttons["Routes"].tap()
+        XCTAssertTrue(app.navigationBars["My Routes"].exists)
+    }
+
+    func test_tapQuestsTab_showsQuestsTitle() {
+        app.tabBars.buttons["Quests"].tap()
+        XCTAssertTrue(app.navigationBars["My Quests"].exists)
+    }
+
+    // MARK: - Routes list
+
+    func test_routesTab_withFixtureData_showsRoutesList() {
+        app.tabBars.buttons["Routes"].tap()
+        // Fixture data has two routes: "Morning Loop" and "Hill Climb"
+        XCTAssertTrue(app.staticTexts["Morning Loop"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["Hill Climb"].exists)
+    }
+
+    func test_routesTab_routeRow_showsDistanceLabel() {
+        app.tabBars.buttons["Routes"].tap()
+        XCTAssertTrue(app.staticTexts["Morning Loop"].waitForExistence(timeout: 3))
+        // Route rows show distance in miles (e.g. "0.01 mi")
+        let miLabel = app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'mi'")).firstMatch
+        XCTAssertTrue(miLabel.exists)
+    }
+
+    func test_tapRoute_navigatesToRouteDetail() {
+        app.tabBars.buttons["Routes"].tap()
+        XCTAssertTrue(app.staticTexts["Morning Loop"].waitForExistence(timeout: 3))
+        app.staticTexts["Morning Loop"].tap()
+        // RouteDetailView should appear with a Create Quest button
+        XCTAssertTrue(app.buttons["Create Quest"].waitForExistence(timeout: 3))
+    }
+
+    func test_routeDetail_hasView3DButton() {
+        app.tabBars.buttons["Routes"].tap()
+        XCTAssertTrue(app.staticTexts["Morning Loop"].waitForExistence(timeout: 3))
+        app.staticTexts["Morning Loop"].tap()
+        XCTAssertTrue(app.buttons["View 3D"].waitForExistence(timeout: 3))
+    }
+
+    // MARK: - Quest creation
+
+    func test_createQuest_sheetAppears() {
+        app.tabBars.buttons["Routes"].tap()
+        XCTAssertTrue(app.staticTexts["Morning Loop"].waitForExistence(timeout: 3))
+        app.staticTexts["Morning Loop"].tap()
+        app.buttons["Create Quest"].waitForExistence(timeout: 3)
+        app.buttons["Create Quest"].tap()
+        // Quest creator sheet should appear with a name field
+        XCTAssertTrue(app.textFields.firstMatch.waitForExistence(timeout: 3))
+    }
+
+    func test_createQuest_cancelDismissesSheet() {
+        app.tabBars.buttons["Routes"].tap()
+        XCTAssertTrue(app.staticTexts["Morning Loop"].waitForExistence(timeout: 3))
+        app.staticTexts["Morning Loop"].tap()
+        app.buttons["Create Quest"].waitForExistence(timeout: 3)
+        app.buttons["Create Quest"].tap()
+        XCTAssertTrue(app.textFields.firstMatch.waitForExistence(timeout: 3))
+
+        app.buttons["Cancel"].tap()
+        XCTAssertFalse(app.textFields.firstMatch.exists)
+    }
+
+    // MARK: - Quests list
+
+    func test_questsTab_withFixtureData_showsQuestName() {
+        app.tabBars.buttons["Quests"].tap()
+        XCTAssertTrue(app.staticTexts["Morning Loop Quest"].waitForExistence(timeout: 3))
+    }
+
+    func test_tapQuest_navigatesToQuestDetail() {
+        app.tabBars.buttons["Quests"].tap()
+        XCTAssertTrue(app.staticTexts["Morning Loop Quest"].waitForExistence(timeout: 3))
+        app.staticTexts["Morning Loop Quest"].tap()
+        // Quest detail should show a "Start AR Run" button
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label CONTAINS 'AR Run'"))
+            .firstMatch.waitForExistence(timeout: 3))
+    }
+
+    // MARK: - Empty states (launch without fixture data)
+
+    func test_routesTab_withoutData_showsEmptyState() {
+        app.terminate()
+        let emptyApp = XCUIApplication()
+        emptyApp.launchEnvironment["UI_TESTING"] = "1"
+        // No LOAD_FIXTURE_ROUTES
+        emptyApp.launch()
+        emptyApp.tabBars.buttons["Routes"].tap()
+        XCTAssertTrue(emptyApp.staticTexts["No Routes Yet"].waitForExistence(timeout: 3))
+        emptyApp.terminate()
+    }
+
+    func test_questsTab_withoutData_showsEmptyState() {
+        app.terminate()
+        let emptyApp = XCUIApplication()
+        emptyApp.launchEnvironment["UI_TESTING"] = "1"
+        emptyApp.launch()
+        emptyApp.tabBars.buttons["Quests"].tap()
+        XCTAssertTrue(emptyApp.staticTexts.matching(NSPredicate(format: "label CONTAINS 'No Quests'"))
+            .firstMatch.waitForExistence(timeout: 3))
+        emptyApp.terminate()
+    }
+
+    // MARK: - Delete
+
+    func test_swipeToDelete_route_removesFromList() {
+        app.tabBars.buttons["Routes"].tap()
+        XCTAssertTrue(app.staticTexts["Hill Climb"].waitForExistence(timeout: 3))
+
+        let cell = app.cells.containing(.staticText, identifier: "Hill Climb").firstMatch
+        cell.swipeLeft()
+        app.buttons["Delete"].tap()
+
+        XCTAssertFalse(app.staticTexts["Hill Climb"].waitForExistence(timeout: 2))
+    }
+}

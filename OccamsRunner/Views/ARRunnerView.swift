@@ -406,6 +406,16 @@ struct ARRunnerContainerView: UIViewRepresentable {
 
     func updateUIView(_ uiView: ARSCNView, context: Context) {
         context.coordinator.applyRunMode(runMode)
+
+        // Fix 3: Refresh callbacks on every render pass so the coordinator always
+        // holds closures that close over the current @State / @EnvironmentObject
+        // values. makeCoordinator() is called only once, so without this the
+        // callbacks capture a frozen struct that goes stale after the first
+        // SwiftUI re-render (e.g. after the first coin collection).
+        context.coordinator.onItemCollected       = onItemCollected
+        context.coordinator.onAlignmentUpdate     = onAlignmentUpdate
+        context.coordinator.onNearestItemDistance = onNearestItemDistance
+
         // Always pull the live quest from dataStore rather than using the
         // struct-captured snapshot — the snapshot goes stale the moment any
         // item is marked collected, which would cause buildCoinNodes to
@@ -437,9 +447,14 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
     let dataStore: DataStore
     let locationService: LocationService
 
-    let onAlignmentUpdate: (ARAlignmentState, Double, Double?, Bool) -> Void
-    let onNearestItemDistance: (Double?) -> Void
-    let onItemCollected: (UUID) -> Void
+    // Fix 3: `var` so updateUIView can refresh these on every SwiftUI render pass.
+    // makeCoordinator() is called once — the closures it captures contain a frozen
+    // struct copy of ARRunnerView. By re-assigning these from updateUIView we ensure
+    // each collection callback always closes over the live @State / @EnvironmentObject
+    // values rather than the stale snapshot from the first render.
+    var onAlignmentUpdate: (ARAlignmentState, Double, Double?, Bool) -> Void
+    var onNearestItemDistance: (Double?) -> Void
+    var onItemCollected: (UUID) -> Void
 
     private let routeGroupNode = SCNNode()
     private var pathNodes: [SCNNode] = []
@@ -576,6 +591,13 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
 
         for item in currentQuest.items {
             if item.collected {
+                // Fix 1: unblock the pending slot now that the dataStore has
+                // confirmed this item is collected. Without this remove(), the
+                // ID stays in pendingCollectionIds forever. If the collection
+                // callback ever fires but the dataStore write is delayed, the
+                // item will be re-blockable on the next cycle rather than
+                // permanently invisible to checkCollections.
+                pendingCollectionIds.remove(item.id)
                 if let existing = coinNodes[item.id] {
                     existing.removeFromParentNode()
                     coinNodes.removeValue(forKey: item.id)
@@ -583,7 +605,14 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
                 continue
             }
 
+            // Fix 2: also skip items that are in-flight (pending collection).
+            // Between Phase 2 removing the node from coinNodes and the dataStore
+            // confirming collected=true, a SwiftUI re-render can fire this path.
+            // Without the guard, buildCoinNodes would create a ghost node for the
+            // in-flight item — it re-appears in coinNodes and confuses the next
+            // checkCollections tick even though the item has already been "taken".
             if coinNodes[item.id] == nil,
+               !pendingCollectionIds.contains(item.id),
                let local = item.resolvedLocalPosition(on: route) {
                 let coinNode = createCoinNode()
                 coinNode.simdPosition = local
@@ -900,5 +929,34 @@ extension ARCoordinator {
         let dy = a.y - b.y
         let dz = a.z - b.z
         return sqrt(dx * dx + dy * dy + dz * dz)
+    }
+
+    /// Returns items eligible for collection — not collected, not pending, and with a node.
+    /// Extracted as a pure static function so collection-state logic can be unit-tested
+    /// without any ARKit or SceneKit dependencies.
+    static func eligibleItems(
+        from items: [QuestItem],
+        coinNodes: [UUID: SCNNode],
+        pendingIds: Set<UUID>
+    ) -> [QuestItem] {
+        items.filter { item in
+            !item.collected &&
+            !pendingIds.contains(item.id) &&
+            coinNodes[item.id] != nil
+        }
+    }
+
+    /// Returns whether `buildCoinNodes` should create a new node for `item`.
+    /// A node must not be created when the item is in-flight (pending) — doing so
+    /// produces a ghost node that appears collected on the next tick but is then
+    /// permanently skipped because `pendingCollectionIds` still contains the ID.
+    static func shouldCreateNode(
+        for item: QuestItem,
+        coinNodes: [UUID: SCNNode],
+        pendingIds: Set<UUID>
+    ) -> Bool {
+        !item.collected &&
+        !pendingIds.contains(item.id) &&
+        coinNodes[item.id] == nil
     }
 }

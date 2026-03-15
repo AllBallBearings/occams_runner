@@ -1,0 +1,68 @@
+name: Tests
+
+on:
+  push:
+    branches: [main, "feature/**"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  unit-tests:
+    name: Unit Tests
+    runs-on: macos-14
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_16.0.app
+
+      - name: Run unit tests
+        run: |
+          xcodebuild test \
+            -project OccamsRunner.xcodeproj \
+            -scheme OccamsRunner \
+            -destination 'platform=iOS Simulator,name=iPhone 16,OS=latest' \
+            -only-testing OccamsRunnerTests \
+            -resultBundlePath TestResults/UnitTests.xcresult \
+            | xcpretty
+
+      - name: Upload unit test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: unit-test-results
+          path: TestResults/UnitTests.xcresult
+
+  ui-tests:
+    name: UI Tests
+    runs-on: macos-14
+    needs: unit-tests  # Only run UI tests if unit tests pass
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_16.0.app
+
+      - name: Boot simulator
+        run: |
+          UDID=$(xcrun simctl list devices available | grep 'iPhone 16 (' | head -1 | awk -F '[()]' '{print $2}')
+          xcrun simctl boot "$UDID" || true
+
+      - name: Run UI tests
+        run: |
+          xcodebuild test \
+            -project OccamsRunner.xcodeproj \
+            -scheme OccamsRunner \
+            -destination 'platform=iOS Simulator,name=iPhone 16,OS=latest' \
+            -only-testing OccamsRunnerUITests \
+            -resultBundlePath TestResults/UITests.xcresult \
+            | xcpretty
+
+      - name: Upload UI test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ui-test-results
+          path: TestResults/UITests.xcresult

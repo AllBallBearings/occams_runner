@@ -231,6 +231,47 @@ struct RecordedRoute: Codable, Identifiable {
         geoTrack.first?.location
     }
 
+    /// Convenience init that converts a flat ``RoutePoint`` array to a dual-track route.
+    /// Progress is computed from cumulative distance. Used for fixtures and UI-test helpers.
+    init(name: String, points: [RoutePoint]) {
+        self.id = UUID()
+        self.name = name
+        self.dateRecorded = Date()
+        self.localTrack = []
+        self.checkpoints = []
+        self.encryptedWorldMapData = nil
+        self.preciseEnabled = false
+        self.recordingMode = .vast
+        self.captureQuality = RouteCaptureQuality(
+            matchedSampleRatio: 0,
+            averageFeaturePoints: 0,
+            averageTrackingScore: 0,
+            hasEncryptedWorldMap: false
+        )
+        guard !points.isEmpty else { self.geoTrack = []; return }
+        var totalDist: Double = 0
+        var cumulative: [Double] = [0]
+        for i in 1..<points.count {
+            totalDist += points[i].location.distance(from: points[i - 1].location)
+            cumulative.append(totalDist)
+        }
+        self.geoTrack = points.enumerated().map { i, p in
+            let progress: Double = totalDist > 0
+                ? cumulative[i] / totalDist
+                : (points.count > 1 ? Double(i) / Double(points.count - 1) : 0)
+            return GeoRouteSample(
+                sampleId: p.id,
+                latitude: p.latitude,
+                longitude: p.longitude,
+                altitude: p.altitude,
+                timestamp: p.timestamp,
+                horizontalAccuracy: 5,
+                verticalAccuracy: 5,
+                progress: progress
+            )
+        }
+    }
+
     init(
         name: String,
         geoTrack: [GeoRouteSample],
