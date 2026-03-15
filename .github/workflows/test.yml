@@ -17,14 +17,17 @@ jobs:
       - name: Install xcpretty
         run: gem install xcpretty --no-document
 
-      - name: Show available simulators
-        run: xcrun simctl list devices available | grep -E "iPhone [0-9]"
-
       - name: Run unit tests
         run: |
           set -o pipefail
-          SIM=$(xcrun simctl list devices available | grep -E "iPhone [0-9]" | head -1 | sed 's/.*(\(.*\)) .*/\1/')
-          echo "Using simulator: $SIM"
+          # Extract the UDID of the first available arm64 iPhone 16 simulator.
+          # grep -oE pulls only the UUID token so we never accidentally capture
+          # the "(Shutdown)" state string that a sed-based approach would grab.
+          SIM=$(xcrun simctl list devices available \
+            | grep -E "iPhone 16 \(" \
+            | grep -oE "[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}" \
+            | head -1)
+          echo "Using simulator UDID: $SIM"
           xcodebuild test \
             -project OccamsRunner.xcodeproj \
             -scheme OccamsRunner \
@@ -54,8 +57,11 @@ jobs:
       - name: Run UI tests
         run: |
           set -o pipefail
-          SIM=$(xcrun simctl list devices available | grep -E "iPhone [0-9]" | head -1 | sed 's/.*(\(.*\)) .*/\1/')
-          echo "Using simulator: $SIM"
+          SIM=$(xcrun simctl list devices available \
+            | grep -E "iPhone 16 \(" \
+            | grep -oE "[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}" \
+            | head -1)
+          echo "Using simulator UDID: $SIM"
           xcodebuild test \
             -project OccamsRunner.xcodeproj \
             -scheme OccamsRunner \
