@@ -40,6 +40,16 @@
                ReferencedContainer = "container:OccamsRunner.xcodeproj">
             </BuildableReference>
          </TestableReference>
+         <TestableReference
+            skipped = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "D60001"
+               BuildableName = "OccamsRunnerUITests.xctest"
+               BlueprintName = "OccamsRunnerUITests"
+               ReferencedContainer = "container:OccamsRunner.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
       </Testables>
    </TestAction>
    <LaunchAction
