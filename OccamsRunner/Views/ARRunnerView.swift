@@ -114,10 +114,10 @@ struct ARRunnerView: View {
     let quest: Quest
 
     @State private var collectedCount = 0
-    @State private var totalPoints = 0
     @State private var showingCompletionAlert = false
     @State private var nearestItemDistance: Double?
     @State private var runMode: ARRunMode = .aligning
+    @State private var debugTickLog: String = ""
 
     @State private var alignmentState: ARAlignmentState = .moveToStart
     @State private var alignmentConfidence: Double = 0
@@ -170,6 +170,9 @@ struct ARRunnerView: View {
                         },
                         onItemCollected: { itemId in
                             handleCollection(itemId: itemId)
+                        },
+                        onDebugTick: { log in
+                            debugTickLog = log
                         }
                     )
                     .ignoresSafeArea()
@@ -191,6 +194,7 @@ struct ARRunnerView: View {
                     VStack {
                         runningHUD
                         Spacer()
+                        debugOverlay
                         bottomBar
                     }
                 }
@@ -200,12 +204,11 @@ struct ARRunnerView: View {
             locationService.startUpdating()
             let currentQuest = dataStore.quests.first(where: { $0.id == quest.id }) ?? quest
             collectedCount = currentQuest.collectedItems
-            totalPoints = currentQuest.collectedPoints
         }
         .alert("Quest Complete!", isPresented: $showingCompletionAlert) {
             Button("Finish") { dismiss() }
         } message: {
-            Text("You collected all \(quest.totalItems) coins for \(quest.totalPoints) points!")
+            Text("You collected all \(quest.totalItems) coins!")
         }
     }
 
@@ -289,19 +292,14 @@ struct ARRunnerView: View {
     // MARK: - Running HUD
 
     private var runningHUD: some View {
-        HStack(spacing: 16) {
+        HStack(spacing: 12) {
             HStack(spacing: 6) {
                 Image(systemName: "circle.circle.fill")
                     .foregroundColor(.yellow)
                 Text("\(collectedCount)/\(quest.totalItems)")
                     .fontWeight(.bold)
-            }
-
-            HStack(spacing: 6) {
-                Image(systemName: "star.fill")
-                    .foregroundColor(.yellow)
-                Text("\(totalPoints) pts")
-                    .fontWeight(.bold)
+                    .lineLimit(1)
+                    .fixedSize()
             }
 
             Spacer()
@@ -310,11 +308,15 @@ struct ARRunnerView: View {
                 .font(.caption)
                 .fontWeight(.semibold)
                 .foregroundColor(alignmentConfidence >= 0.75 ? .green : .orange)
+                .lineLimit(1)
+                .fixedSize()
 
             Button(action: { runMode = .aligning }) {
                 Label("Realign", systemImage: "location.north.line")
                     .font(.caption)
                     .fontWeight(.semibold)
+                    .lineLimit(1)
+                    .fixedSize()
                     .padding(.horizontal, 10)
                     .padding(.vertical, 6)
                     .background(.ultraThinMaterial)
@@ -325,10 +327,11 @@ struct ARRunnerView: View {
             Button(action: { dismiss() }) {
                 Image(systemName: "xmark.circle.fill")
                     .font(.title2)
-                    .foregroundColor(.white)
+                    .foregroundColor(.white.opacity(0.8))
             }
         }
-        .padding()
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
         .background(.ultraThinMaterial)
     }
 
@@ -351,12 +354,28 @@ struct ARRunnerView: View {
         .padding(.bottom, 40)
     }
 
+    // MARK: - Debug
+
+    private var debugOverlay: some View {
+        Group {
+            if !debugTickLog.isEmpty {
+                Text(debugTickLog)
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundColor(.white)
+                    .padding(8)
+                    .background(Color.black.opacity(0.7))
+                    .cornerRadius(8)
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 4)
+            }
+        }
+    }
+
     // MARK: - Collection
 
     private func handleCollection(itemId: UUID) {
         dataStore.updateQuestItem(questId: quest.id, itemId: itemId, collected: true)
         collectedCount += 1
-        totalPoints += QuestItemType.coin.pointValue
 
         let generator = UINotificationFeedbackGenerator()
         generator.notificationOccurred(.success)
@@ -379,6 +398,7 @@ struct ARRunnerContainerView: UIViewRepresentable {
     let onAlignmentUpdate: (ARAlignmentState, Double, Double?, Bool) -> Void
     let onNearestItemDistance: (Double?) -> Void
     let onItemCollected: (UUID) -> Void
+    let onDebugTick: (String) -> Void
 
     func makeUIView(context: Context) -> ARSCNView {
         let arView = ARSCNView()
@@ -415,6 +435,7 @@ struct ARRunnerContainerView: UIViewRepresentable {
         context.coordinator.onItemCollected       = onItemCollected
         context.coordinator.onAlignmentUpdate     = onAlignmentUpdate
         context.coordinator.onNearestItemDistance = onNearestItemDistance
+        context.coordinator.onDebugTick          = onDebugTick
 
         // Always pull the live quest from dataStore rather than using the
         // struct-captured snapshot — the snapshot goes stale the moment any
@@ -432,7 +453,8 @@ struct ARRunnerContainerView: UIViewRepresentable {
             locationService: locationService,
             onAlignmentUpdate: onAlignmentUpdate,
             onNearestItemDistance: onNearestItemDistance,
-            onItemCollected: onItemCollected
+            onItemCollected: onItemCollected,
+            onDebugTick: onDebugTick
         )
     }
 }
@@ -455,6 +477,7 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
     var onAlignmentUpdate: (ARAlignmentState, Double, Double?, Bool) -> Void
     var onNearestItemDistance: (Double?) -> Void
     var onItemCollected: (UUID) -> Void
+    var onDebugTick: (String) -> Void
 
     private let routeGroupNode = SCNNode()
     private var pathNodes: [SCNNode] = []
@@ -481,7 +504,8 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
         locationService: LocationService,
         onAlignmentUpdate: @escaping (ARAlignmentState, Double, Double?, Bool) -> Void,
         onNearestItemDistance: @escaping (Double?) -> Void,
-        onItemCollected: @escaping (UUID) -> Void
+        onItemCollected: @escaping (UUID) -> Void,
+        onDebugTick: @escaping (String) -> Void
     ) {
         self.route = route
         self.quest = quest
@@ -490,6 +514,7 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
         self.onAlignmentUpdate = onAlignmentUpdate
         self.onNearestItemDistance = onNearestItemDistance
         self.onItemCollected = onItemCollected
+        self.onDebugTick = onDebugTick
         super.init()
 
         // Both timers run on the main RunLoop so all coinNodes access
@@ -746,8 +771,18 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
     private func checkCollections() {
         guard runMode == .running else { return }
         guard let arView, let cameraNode = arView.pointOfView else { return }
+        performCollectionTick(
+            cameraPosition: cameraNode.worldPosition,
+            cameraForward: cameraNode.simdWorldFront
+        )
+    }
 
-        let cameraPos = cameraNode.worldPosition
+    /// Core collection logic extracted from checkCollections so it can be
+    /// tested without an ARSCNView. Accepts the camera pose directly.
+    func performCollectionTick(
+        cameraPosition: SCNVector3,
+        cameraForward: SIMD3<Float>
+    ) {
         let currentQuest = dataStore.quests.first(where: { $0.id == quest.id }) ?? quest
 
         // ─────────────────────────────────────────────────────────────────────
@@ -764,6 +799,16 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
 
         for item in currentQuest.items {
             if item.collected {
+                // Fix 5: Self-heal pendingCollectionIds and stale nodes
+                // directly in checkCollections. Previously this cleanup only
+                // ran in buildCoinNodes (Fix 1), which depends on
+                // updateUIView firing. Doing it here on every 250ms tick
+                // ensures confirmed-collected items are cleared regardless
+                // of SwiftUI's render cycle.
+                pendingCollectionIds.remove(item.id)
+                if let staleNode = coinNodes.removeValue(forKey: item.id) {
+                    staleNode.removeFromParentNode()
+                }
                 logParts.append("\(item.id.uuidString.prefix(4)):skip(done)")
                 continue
             }
@@ -777,29 +822,29 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
             }
 
             let coinPos = node.worldPosition
-            let dx = cameraPos.x - coinPos.x
-            let dy = cameraPos.y - coinPos.y
-            let dz = cameraPos.z - coinPos.z
+            let dx = cameraPosition.x - coinPos.x
+            let dy = cameraPosition.y - coinPos.y
+            let dz = cameraPosition.z - coinPos.z
 
             let inRange: Bool
             switch route.recordingMode {
             case .tight:
-                // Sphere: ~1.5 ft radius (0.457 m) — small, precise indoor collection.
+                // 1.2 m ≈ 4 ft — generous enough to absorb ARKit drift
+                // that accumulates over longer walks. The original 0.457 m
+                // (1.5 ft) was too tight; coins 0.6 m+ away in AR space
+                // despite the user physically standing on them.
                 let dist = sqrt(dx * dx + dy * dy + dz * dz)
-                inRange = dist < 0.457
+                inRange = dist < 1.2
                 logParts.append("\(item.id.uuidString.prefix(4)):dist=\(String(format: "%.2f", dist))m \(inRange ? "✓" : "far")")
 
             case .vast:
-                // Ellipsoid along the camera's forward axis:
-                //   • Along-path (forward/back): half-axis = 0.5 m (~1.6 ft)
-                //   • Lateral (left/right + vertical): half-axis = 1.5 m (~5 ft)
-                let forward = cameraNode.simdWorldFront
                 let delta   = SIMD3<Float>(dx, dy, dz)
-                let fwdDist = simd_dot(delta, forward)
-                let latVec  = delta - forward * fwdDist
+                let fwdDist = simd_dot(delta, cameraForward)
+                let latVec  = delta - cameraForward * fwdDist
                 let latDist = simd_length(latVec)
-                let fwdHalf: Float = 0.5
-                let latHalf: Float = 1.5
+                // Increased from 0.5/1.5 to absorb outdoor AR drift.
+                let fwdHalf: Float = 1.5
+                let latHalf: Float = 3.0
                 let e = (fwdDist / fwdHalf) * (fwdDist / fwdHalf)
                       + (latDist / latHalf) * (latDist / latHalf)
                 inRange = e < 1.0
@@ -813,7 +858,9 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
 
         // Log every tick so collection behaviour is visible in the debug log.
         let collectTag = toCollect.isEmpty ? "" : "COLLECT×\(toCollect.count) | "
-        locationService.logRunEvent("[Tick] \(collectTag)\(logParts.joined(separator: " | "))")
+        let tickLog = "\(collectTag)\(logParts.joined(separator: " | "))"
+        locationService.logRunEvent("[Tick] \(tickLog)")
+        onDebugTick(tickLog)
 
         // ─────────────────────────────────────────────────────────────────────
         // Phase 2 — act on collected items AFTER the loop is fully done.
@@ -824,18 +871,39 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
             pendingCollectionIds.insert(itemId)
             coinNodes.removeValue(forKey: itemId)
 
-            CoinSoundPlayer.shared.playCollect()
+            // Audio and animation require a live AR session; skip in tests.
+            if arView != nil {
+                CoinSoundPlayer.shared.playCollect()
 
-            let scaleUp = SCNAction.scale(to: 2.0, duration: 0.2)
-            let fadeOut = SCNAction.fadeOut(duration: 0.3)
-            let group   = SCNAction.group([scaleUp, fadeOut])
-            let remove  = SCNAction.removeFromParentNode()
-            node.runAction(SCNAction.sequence([group, remove]))
+                let scaleUp = SCNAction.scale(to: 2.0, duration: 0.2)
+                let fadeOut = SCNAction.fadeOut(duration: 0.3)
+                let group   = SCNAction.group([scaleUp, fadeOut])
+                let remove  = SCNAction.removeFromParentNode()
+                node.runAction(SCNAction.sequence([group, remove]))
+            } else {
+                node.removeFromParentNode()
+            }
 
-            // Already on main thread — call directly.
+            // Fix 4: Update dataStore directly from the coordinator.
+            dataStore.updateQuestItem(questId: quest.id, itemId: itemId, collected: true)
+
+            // Still fire the callback for UI-layer updates.
             onItemCollected(itemId)
         }
     }
+
+    // MARK: - Test Inspection
+
+    #if DEBUG
+    var testCoinNodeIds: Set<UUID> { Set(coinNodes.keys) }
+    var testPendingIds: Set<UUID> { pendingCollectionIds }
+    var testCoinNodeCount: Int { coinNodes.count }
+
+    /// Build coin nodes without needing configureInitialScene (no arView).
+    func testBuildCoinNodes(forceRebuild: Bool) {
+        buildCoinNodes(forceRebuild: forceRebuild)
+    }
+    #endif
 
     // MARK: - Nodes
 
