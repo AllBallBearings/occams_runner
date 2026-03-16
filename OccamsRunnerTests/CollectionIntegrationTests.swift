@@ -342,8 +342,8 @@ final class CollectionIntegrationTests: XCTestCase {
         let coord = makeCoordinator(route: route, quest: quest)
         coord.testBuildCoinNodes(forceRebuild: true)
 
-        // Coin at (0,0,0). Camera at (0, 2.5, 0) — within lateral half-axis of 3.0m
-        coord.performCollectionTick(cameraPosition: cameraAt(0, 2.5, 0), cameraForward: forward)
+        // Coin at (0,0,0). Camera at (0, 4.0, 0) — within lateral half-axis of 5.0m
+        coord.performCollectionTick(cameraPosition: cameraAt(0, 4.0, 0), cameraForward: forward)
 
         XCTAssertEqual(collectedCallbackIds.count, 1,
                        "Should collect within the lateral half-axis of the ellipsoid")
@@ -358,8 +358,8 @@ final class CollectionIntegrationTests: XCTestCase {
         let coord = makeCoordinator(route: route, quest: quest)
         coord.testBuildCoinNodes(forceRebuild: true)
 
-        // Coin at (0,0,0). Camera at (0, 3.5, 0) — outside lateral half-axis of 3.0m
-        coord.performCollectionTick(cameraPosition: cameraAt(0, 3.5, 0), cameraForward: forward)
+        // Coin at (0,0,0). Camera at (0, 5.5, 0) — outside lateral half-axis of 5.0m
+        coord.performCollectionTick(cameraPosition: cameraAt(0, 5.5, 0), cameraForward: forward)
 
         XCTAssertTrue(collectedCallbackIds.isEmpty,
                       "Should NOT collect outside the ellipsoid")

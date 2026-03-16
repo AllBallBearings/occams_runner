@@ -829,12 +829,12 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
             let inRange: Bool
             switch route.recordingMode {
             case .tight:
-                // 1.2 m ≈ 4 ft — generous enough to absorb ARKit drift
-                // that accumulates over longer walks. The original 0.457 m
-                // (1.5 ft) was too tight; coins 0.6 m+ away in AR space
-                // despite the user physically standing on them.
+                // 2.5 m ≈ 8 ft — ARKit drift of 1.2 m+ observed on device
+                // even for the second coin in a short indoor route. Must be
+                // generous enough that physically standing on a coin always
+                // triggers collection despite accumulated tracking error.
                 let dist = sqrt(dx * dx + dy * dy + dz * dz)
-                inRange = dist < 1.2
+                inRange = dist < 2.5
                 logParts.append("\(item.id.uuidString.prefix(4)):dist=\(String(format: "%.2f", dist))m \(inRange ? "✓" : "far")")
 
             case .vast:
@@ -842,9 +842,9 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
                 let fwdDist = simd_dot(delta, cameraForward)
                 let latVec  = delta - cameraForward * fwdDist
                 let latDist = simd_length(latVec)
-                // Increased from 0.5/1.5 to absorb outdoor AR drift.
-                let fwdHalf: Float = 1.5
-                let latHalf: Float = 3.0
+                // Increased to absorb outdoor AR drift (1.2m+ observed indoors).
+                let fwdHalf: Float = 3.0
+                let latHalf: Float = 5.0
                 let e = (fwdDist / fwdHalf) * (fwdDist / fwdHalf)
                       + (latDist / latHalf) * (latDist / latHalf)
                 inRange = e < 1.0
