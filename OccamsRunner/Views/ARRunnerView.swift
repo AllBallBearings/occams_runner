@@ -113,7 +113,6 @@ struct ARRunnerView: View {
 
     let quest: Quest
 
-    @State private var collectedCount = 0
     @State private var showingCompletionAlert = false
     @State private var nearestItemDistance: Double?
     @State private var runMode: ARRunMode = .aligning
@@ -126,6 +125,10 @@ struct ARRunnerView: View {
 
     private var route: RecordedRoute? {
         dataStore.route(for: quest.routeId)
+    }
+
+    private var liveQuest: Quest {
+        dataStore.quests.first(where: { $0.id == quest.id }) ?? quest
     }
 
     var body: some View {
@@ -175,6 +178,7 @@ struct ARRunnerView: View {
                             debugTickLog = log
                         }
                     )
+                    .allowsHitTesting(false)
                     .ignoresSafeArea()
                 }
             } else {
@@ -202,13 +206,19 @@ struct ARRunnerView: View {
         }
         .onAppear {
             locationService.startUpdating()
-            let currentQuest = dataStore.quests.first(where: { $0.id == quest.id }) ?? quest
-            collectedCount = currentQuest.collectedItems
+            if liveQuest.isComplete {
+                showingCompletionAlert = true
+            }
+        }
+        .onReceive(dataStore.$quests) { _ in
+            if liveQuest.isComplete {
+                showingCompletionAlert = true
+            }
         }
         .alert("Quest Complete!", isPresented: $showingCompletionAlert) {
             Button("Finish") { dismiss() }
         } message: {
-            Text("You collected all \(quest.totalItems) coins!")
+            Text("You collected all \(liveQuest.totalItems) coins!")
         }
     }
 
@@ -296,7 +306,7 @@ struct ARRunnerView: View {
             HStack(spacing: 6) {
                 Image(systemName: "circle.circle.fill")
                     .foregroundColor(.yellow)
-                Text("\(collectedCount)/\(quest.totalItems)")
+                Text("\(liveQuest.collectedItems)/\(liveQuest.totalItems)")
                     .fontWeight(.bold)
                     .lineLimit(1)
                     .fixedSize()
@@ -374,16 +384,8 @@ struct ARRunnerView: View {
     // MARK: - Collection
 
     private func handleCollection(itemId: UUID) {
-        dataStore.updateQuestItem(questId: quest.id, itemId: itemId, collected: true)
-        collectedCount += 1
-
         let generator = UINotificationFeedbackGenerator()
         generator.notificationOccurred(.success)
-
-        let currentQuest = dataStore.quests.first(where: { $0.id == quest.id }) ?? quest
-        if currentQuest.isComplete {
-            showingCompletionAlert = true
-        }
     }
 }
 
@@ -403,6 +405,9 @@ struct ARRunnerContainerView: UIViewRepresentable {
     func makeUIView(context: Context) -> ARSCNView {
         let arView = ARSCNView()
         arView.delegate = context.coordinator
+        // This view does not need direct touch handling; keeping it non-interactive
+        // ensures top HUD controls (Realign/X) are always tappable.
+        arView.isUserInteractionEnabled = false
         arView.autoenablesDefaultLighting = true
         arView.automaticallyUpdatesLighting = true
 
@@ -485,6 +490,12 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
     private var pendingCollectionIds: Set<UUID> = []
 
     private var runMode: ARRunMode = .aligning
+    private var runStartedAt: Date?
+    private var collectionTickSerial: UInt64 = 0
+    private var collectionCheckSerial: UInt64 = 0
+    private var lastSkipReasonLogged: String?
+    private var lastHeartbeatAt: Date = .distantPast
+    private var frozenRouteWorldTransform: simd_float4x4?
 
     private var alignmentState: ARAlignmentState = .moveToStart
     private var alignmentConfidence: Double = 0
@@ -560,6 +571,26 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
     func applyRunMode(_ newMode: ARRunMode) {
         guard newMode != runMode else { return }
         runMode = newMode
+        if newMode == .running {
+            runStartedAt = Date()
+            collectionTickSerial = 0
+            // Freeze route transform at run start so alignment remains stable
+            // during active collection unless user explicitly chooses realign.
+            frozenRouteWorldTransform = routeGroupNode.simdWorldTransform
+            // Running mode does not require per-frame ARSession callbacks.
+            // Removing the delegate here prevents ARFrame backlog warnings
+            // ("delegate retaining ARFrames") from starving live updates.
+            arView?.session.delegate = nil
+        } else {
+            // Explicit realign: re-enable frame callbacks and unlock alignment.
+            frozenRouteWorldTransform = nil
+            // Restore frame callbacks when returning to alignment mode.
+            arView?.session.delegate = self
+            alignmentLocked = false
+            consecutiveGoodFrames = 0
+            scanStartedAt = nil
+            alignmentState = .scanning
+        }
 
         let showPath = newMode == .aligning
         for node in pathNodes {
@@ -648,6 +679,10 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
     }
 
     private func updateNearestItemDistance() {
+        if runMode == .running, let frozen = frozenRouteWorldTransform {
+            routeGroupNode.simdWorldTransform = frozen
+        }
+
         guard let cameraNode = arView?.pointOfView else {
             onNearestItemDistance(nil)
             return
@@ -673,6 +708,7 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
     // MARK: - Alignment
 
     private func updateAlignmentStatusFromGPS() {
+        guard runMode == .aligning else { return }
         let distance = distanceToRouteStart()
 
         if let distance, distance > startGateDistanceMeters {
@@ -713,6 +749,7 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
     }
 
     func session(_ session: ARSession, didUpdate frame: ARFrame) {
+        guard runMode == .aligning else { return }
         guard (distanceToRouteStart() ?? 0) <= startGateDistanceMeters else { return }
         guard !alignmentLocked else { return }
 
@@ -768,9 +805,65 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
 
     // MARK: - Collection
 
+    private func logCollectionConsole(_ message: String, force: Bool = false) {
+        #if DEBUG
+        let now = Date()
+        if force || now.timeIntervalSince(lastHeartbeatAt) >= 1.0 {
+            lastHeartbeatAt = now
+            print("[ARRunner][Collection] \(message)")
+        }
+        #endif
+    }
+
     private func checkCollections() {
-        guard runMode == .running else { return }
-        guard let arView, let cameraNode = arView.pointOfView else { return }
+        collectionCheckSerial &+= 1
+
+        guard runMode == .running else {
+            let reason = "skip:runMode=\(runMode)"
+            if lastSkipReasonLogged != reason {
+                lastSkipReasonLogged = reason
+                logCollectionConsole("check#\(collectionCheckSerial) \(reason)", force: true)
+            }
+            return
+        }
+        if let runStartedAt, Date().timeIntervalSince(runStartedAt) < 0.8 {
+            let reason = "skip:startDelay"
+            if lastSkipReasonLogged != reason {
+                lastSkipReasonLogged = reason
+                logCollectionConsole("check#\(collectionCheckSerial) \(reason)", force: true)
+            }
+            return
+        }
+        guard let arView else {
+            let reason = "skip:noARView"
+            if lastSkipReasonLogged != reason {
+                lastSkipReasonLogged = reason
+                logCollectionConsole("check#\(collectionCheckSerial) \(reason)", force: true)
+            }
+            return
+        }
+        guard let cameraNode = arView.pointOfView else {
+            let reason = "skip:noCameraNode"
+            if lastSkipReasonLogged != reason {
+                lastSkipReasonLogged = reason
+                logCollectionConsole("check#\(collectionCheckSerial) \(reason)", force: true)
+            }
+            return
+        }
+
+        if let frozen = frozenRouteWorldTransform {
+            routeGroupNode.simdWorldTransform = frozen
+        }
+
+        if lastSkipReasonLogged != nil {
+            lastSkipReasonLogged = nil
+            logCollectionConsole("check#\(collectionCheckSerial) resumed", force: true)
+        } else {
+            logCollectionConsole(
+                "check#\(collectionCheckSerial) heartbeat tick=\(collectionTickSerial) nodes=\(coinNodes.count) pending=\(pendingCollectionIds.count)"
+            )
+        }
+
         performCollectionTick(
             cameraPosition: cameraNode.worldPosition,
             cameraForward: cameraNode.simdWorldFront
@@ -783,6 +876,7 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
         cameraPosition: SCNVector3,
         cameraForward: SIMD3<Float>
     ) {
+        collectionTickSerial &+= 1
         let currentQuest = dataStore.quests.first(where: { $0.id == quest.id }) ?? quest
 
         // ─────────────────────────────────────────────────────────────────────
@@ -825,30 +919,63 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
             let dx = cameraPosition.x - coinPos.x
             let dy = cameraPosition.y - coinPos.y
             let dz = cameraPosition.z - coinPos.z
+            let horizontalDist = sqrt(dx * dx + dz * dz)
+            let verticalDist = abs(dy)
+            let flatForward = simd_normalize(SIMD3<Float>(cameraForward.x, 0, cameraForward.z))
+            let safeForward = simd_length(flatForward) > 0.001 ? flatForward : SIMD3<Float>(0, 0, -1)
+            let flatDelta   = SIMD3<Float>(dx, 0, dz)
+            let fwdDist = simd_dot(flatDelta, safeForward)
+            let latVec  = flatDelta - safeForward * fwdDist
+            let latDist = simd_length(latVec)
 
-            let inRange: Bool
+            let arInRange: Bool
             switch route.recordingMode {
             case .tight:
-                // 2.5 m ≈ 8 ft — ARKit drift of 1.2 m+ observed on device
-                // even for the second coin in a short indoor route. Must be
-                // generous enough that physically standing on a coin always
-                // triggers collection despite accumulated tracking error.
-                let dist = sqrt(dx * dx + dy * dy + dz * dz)
-                inRange = dist < 2.5
-                logParts.append("\(item.id.uuidString.prefix(4)):dist=\(String(format: "%.2f", dist))m \(inRange ? "✓" : "far")")
+                let sinceRunStart = runStartedAt.map { Date().timeIntervalSince($0) } ?? .infinity
+                // Prevent startup auto-collect while still requiring exact
+                // position matching near the coin coordinate.
+                let tightRadius: Float = sinceRunStart < 2.5 ? 0.45 : 1.25
+                // Tight mode: collect only when physically over the coin.
+                arInRange = horizontalDist < tightRadius && verticalDist < 3.5
 
             case .vast:
-                let delta   = SIMD3<Float>(dx, dy, dz)
-                let fwdDist = simd_dot(delta, cameraForward)
-                let latVec  = delta - cameraForward * fwdDist
-                let latDist = simd_length(latVec)
-                // Increased to absorb outdoor AR drift (1.2m+ observed indoors).
-                let fwdHalf: Float = 3.0
-                let latHalf: Float = 5.0
-                let e = (fwdDist / fwdHalf) * (fwdDist / fwdHalf)
-                      + (latDist / latHalf) * (latDist / latHalf)
-                inRange = e < 1.0
-                logParts.append("\(item.id.uuidString.prefix(4)):fwd=\(String(format: "%.2f", fwdDist))m lat=\(String(format: "%.2f", latDist))m e=\(String(format: "%.2f", e)) \(inRange ? "✓" : "far")")
+                // Vast mode is looser, but still based on proximity to the coin
+                // coordinate rather than camera-facing direction.
+                arInRange = horizontalDist < 2.8 && verticalDist < 5.0
+            }
+
+            let geoDistance: Double?
+            let geoThresholdVast: Double
+            switch route.recordingMode {
+            case .tight:
+                geoDistance = nil
+                geoThresholdVast = 0
+            case .vast:
+                let horizontalAccuracy = max(0, locationService.currentLocation?.horizontalAccuracy ?? -1)
+                geoThresholdVast = min(8.0, max(3.0, horizontalAccuracy * 0.9))
+                geoDistance = item.resolvedGeoLocation(on: route)
+                    .flatMap { coinLocation in
+                        locationService.currentLocation?.distance(from: coinLocation)
+                    }
+            }
+
+            let geoInRange: Bool
+            switch route.recordingMode {
+            case .tight:
+                geoInRange = false
+            case .vast:
+                geoInRange = (geoDistance ?? .infinity) <= geoThresholdVast
+            }
+
+            let inRange = arInRange || geoInRange
+            if let geoDistance {
+                logParts.append(
+                    "\(item.id.uuidString.prefix(4)):f=\(String(format: "%.2f", fwdDist))m l=\(String(format: "%.2f", latDist))m h=\(String(format: "%.2f", horizontalDist))m v=\(String(format: "%.2f", verticalDist))m geo=\(String(format: "%.2f", geoDistance))m gT=\(String(format: "%.2f", geoThresholdVast)) \(inRange ? "✓" : "far")"
+                )
+            } else {
+                logParts.append(
+                    "\(item.id.uuidString.prefix(4)):f=\(String(format: "%.2f", fwdDist))m l=\(String(format: "%.2f", latDist))m h=\(String(format: "%.2f", horizontalDist))m v=\(String(format: "%.2f", verticalDist))m geo=na \(inRange ? "✓" : "far")"
+                )
             }
 
             if inRange {
@@ -858,9 +985,17 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
 
         // Log every tick so collection behaviour is visible in the debug log.
         let collectTag = toCollect.isEmpty ? "" : "COLLECT×\(toCollect.count) | "
-        let tickLog = "\(collectTag)\(logParts.joined(separator: " | "))"
-        locationService.logRunEvent("[Tick] \(tickLog)")
+        let tickLog = "t\(collectionTickSerial) \(collectTag)\(logParts.joined(separator: " | "))"
+        let shouldPersistTick = !toCollect.isEmpty || (collectionTickSerial % 4 == 0)
+        if shouldPersistTick {
+            locationService.logRunEvent("[Tick] \(tickLog)")
+        }
         onDebugTick(tickLog)
+        #if DEBUG
+        if shouldPersistTick {
+            print("[ARRunner][Tick] \(tickLog)")
+        }
+        #endif
 
         // ─────────────────────────────────────────────────────────────────────
         // Phase 2 — act on collected items AFTER the loop is fully done.
@@ -889,6 +1024,9 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
 
             // Still fire the callback for UI-layer updates.
             onItemCollected(itemId)
+            #if DEBUG
+            print("[ARRunner][Collect] t\(collectionTickSerial) item=\(itemId.uuidString.prefix(8)) nodes=\(coinNodes.count) pending=\(pendingCollectionIds.count)")
+            #endif
         }
     }
 
