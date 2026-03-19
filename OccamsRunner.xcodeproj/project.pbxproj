@@ -21,6 +21,11 @@
 		A10012 /* QuestsListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20012 /* QuestsListView.swift */; };
 		A10013 /* QuestDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20013 /* QuestDetailView.swift */; };
 		A10014 /* ARRunnerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20014 /* ARRunnerView.swift */; };
+		A10018 /* CoinSoundPlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20018 /* CoinSoundPlayer.swift */; };
+		A10019 /* ARRunMode.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20019 /* ARRunMode.swift */; };
+		A10020 /* ARRunnerContainerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20020 /* ARRunnerContainerView.swift */; };
+		A10021 /* ARCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20021 /* ARCoordinator.swift */; };
+		A10022 /* CollectionEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20022 /* CollectionEngine.swift */; };
 		A10015 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A20015 /* Assets.xcassets */; };
 		A10016 /* Preview Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A20016 /* Preview Assets.xcassets */; };
 		C10001 /* RouteModelsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20001 /* RouteModelsTests.swift */; };
@@ -29,6 +34,7 @@
 		C10004 /* ARCoordinatorLogicTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20004 /* ARCoordinatorLogicTests.swift */; };
 		C10005 /* FixtureLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20005 /* FixtureLoader.swift */; };
 		C10006 /* CollectionStateMachineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20006 /* CollectionStateMachineTests.swift */; };
+		C10007 /* CollectionIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20007 /* CollectionIntegrationTests.swift */; };
 		D10001 /* NavigationFlowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20001 /* NavigationFlowTests.swift */; };
 /* End PBXBuildFile section */
 
@@ -64,6 +70,11 @@
 		A20012 /* QuestsListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuestsListView.swift; sourceTree = "<group>"; };
 		A20013 /* QuestDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuestDetailView.swift; sourceTree = "<group>"; };
 		A20014 /* ARRunnerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ARRunnerView.swift; sourceTree = "<group>"; };
+		A20018 /* CoinSoundPlayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoinSoundPlayer.swift; sourceTree = "<group>"; };
+		A20019 /* ARRunMode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ARRunMode.swift; sourceTree = "<group>"; };
+		A20020 /* ARRunnerContainerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ARRunnerContainerView.swift; sourceTree = "<group>"; };
+		A20021 /* ARCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ARCoordinator.swift; sourceTree = "<group>"; };
+		A20022 /* CollectionEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CollectionEngine.swift; sourceTree = "<group>"; };
 		A20015 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		A20016 /* Preview Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = "Preview Assets.xcassets"; sourceTree = "<group>"; };
 		A20017 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
@@ -74,6 +85,7 @@
 		C20004 /* ARCoordinatorLogicTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ARCoordinatorLogicTests.swift; sourceTree = "<group>"; };
 		C20005 /* FixtureLoader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FixtureLoader.swift; sourceTree = "<group>"; };
 		C20006 /* CollectionStateMachineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CollectionStateMachineTests.swift; sourceTree = "<group>"; };
+		C20007 /* CollectionIntegrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CollectionIntegrationTests.swift; sourceTree = "<group>"; };
 		C30001 /* OccamsRunnerTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = OccamsRunnerTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		D20001 /* NavigationFlowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NavigationFlowTests.swift; sourceTree = "<group>"; };
 		D30001 /* OccamsRunnerUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = OccamsRunnerUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -122,6 +134,7 @@
 				A50004 /* Models */,
 				A50005 /* Views */,
 				A50006 /* Services */,
+				A50008 /* Audio */,
 				A20015 /* Assets.xcassets */,
 				A50007 /* Preview Content */,
 			);
@@ -142,6 +155,7 @@
 			isa = PBXGroup;
 			children = (
 				A20003 /* RouteModels.swift */,
+				A20019 /* ARRunMode.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -157,7 +171,7 @@
 				A20011 /* QuestEditorView.swift */,
 				A20012 /* QuestsListView.swift */,
 				A20013 /* QuestDetailView.swift */,
-				A20014 /* ARRunnerView.swift */,
+				A50009 /* AR */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -168,6 +182,7 @@
 				A20004 /* LocationService.swift */,
 				A20005 /* DataStore.swift */,
 				A20006 /* QuestGenerator.swift */,
+				A20022 /* CollectionEngine.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -188,6 +203,7 @@
 				C20003 /* DataStoreTests.swift */,
 				C20004 /* ARCoordinatorLogicTests.swift */,
 				C20006 /* CollectionStateMachineTests.swift */,
+				C20007 /* CollectionIntegrationTests.swift */,
 				C50002 /* TestHelpers */,
 			);
 			path = OccamsRunnerTests;
@@ -207,6 +223,24 @@
 				D20001 /* NavigationFlowTests.swift */,
 			);
 			path = OccamsRunnerUITests;
+			sourceTree = "<group>";
+		};
+		A50008 /* Audio */ = {
+			isa = PBXGroup;
+			children = (
+				A20018 /* CoinSoundPlayer.swift */,
+			);
+			path = Audio;
+			sourceTree = "<group>";
+		};
+		A50009 /* AR */ = {
+			isa = PBXGroup;
+			children = (
+				A20014 /* ARRunnerView.swift */,
+				A20020 /* ARRunnerContainerView.swift */,
+				A20021 /* ARCoordinator.swift */,
+			);
+			path = AR;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -337,6 +371,11 @@
 				A10012 /* QuestsListView.swift in Sources */,
 				A10013 /* QuestDetailView.swift in Sources */,
 				A10014 /* ARRunnerView.swift in Sources */,
+				A10018 /* CoinSoundPlayer.swift in Sources */,
+				A10019 /* ARRunMode.swift in Sources */,
+				A10020 /* ARRunnerContainerView.swift in Sources */,
+				A10021 /* ARCoordinator.swift in Sources */,
+				A10022 /* CollectionEngine.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -349,6 +388,7 @@
 				C10003 /* DataStoreTests.swift in Sources */,
 				C10004 /* ARCoordinatorLogicTests.swift in Sources */,
 				C10006 /* CollectionStateMachineTests.swift in Sources */,
+				C10007 /* CollectionIntegrationTests.swift in Sources */,
 				C10005 /* FixtureLoader.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

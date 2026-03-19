@@ -116,6 +116,44 @@ class DataStore: ObservableObject {
         persist(runSessions, to: sessionsURL)
     }
 
+    /// Returns the most-recent paused-and-unfinished session for the given quest,
+    /// or `nil` if the quest has no paused run in progress.
+    func activePausedSession(for questId: UUID) -> RunSession? {
+        runSessions
+            .filter { $0.questId == questId && $0.isPaused && $0.endTime == nil }
+            .sorted { $0.startTime > $1.startTime }
+            .first
+    }
+
+    /// Creates (or refreshes) a paused-run marker for `questId` and persists it.
+    /// Quest item progress is already saved per-item; this session flag lets
+    /// QuestDetailView show the "Resume AR Run" button.
+    func savePausedSession(for questId: UUID) {
+        // If a paused session already exists, nothing to create — just re-persist.
+        guard activePausedSession(for: questId) == nil else {
+            persist(runSessions, to: sessionsURL)
+            return
+        }
+        var session = RunSession(questId: questId)
+        session.isPaused = true
+        runSessions.append(session)
+        persist(runSessions, to: sessionsURL)
+    }
+
+    /// Clears (ends) any open paused session for `questId` so "Resume AR Run"
+    /// disappears from QuestDetailView after the user finishes or explicitly exits.
+    func clearPausedSession(for questId: UUID) {
+        let now = Date()
+        for index in runSessions.indices
+        where runSessions[index].questId == questId
+           && runSessions[index].isPaused
+           && runSessions[index].endTime == nil {
+            runSessions[index].isPaused = false
+            runSessions[index].endTime = now
+        }
+        persist(runSessions, to: sessionsURL)
+    }
+
     // MARK: - Persistence
 
     private func performOneTimeHardResetIfNeeded() {
