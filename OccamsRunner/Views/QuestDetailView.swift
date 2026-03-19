@@ -8,6 +8,10 @@ struct QuestDetailView: View {
 
     @State private var showingARView = false
 
+    private var pausedSession: RunSession? {
+        dataStore.activePausedSession(for: quest.id)
+    }
+
     private struct ResolvedMarker: Identifiable {
         let id: UUID
         let coordinate: CLLocationCoordinate2D
@@ -157,14 +161,37 @@ struct QuestDetailView: View {
 
     private var actionButtons: some View {
         VStack(spacing: 12) {
-            Button(action: { showingARView = true }) {
-                Label("Start AR Run", systemImage: "arkit")
-                    .font(.headline)
-                    .foregroundColor(.white)
-                    .frame(maxWidth: .infinity)
-                    .padding()
-                    .background(Color.orange)
-                    .cornerRadius(12)
+            if pausedSession != nil {
+                // Resume button — shown prominently when a run was paused.
+                Button(action: resumeRun) {
+                    Label("Resume AR Run", systemImage: "play.fill")
+                        .font(.headline)
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding()
+                        .background(Color.green)
+                        .cornerRadius(12)
+                }
+
+                Button(action: { showingARView = true }) {
+                    Label("Start New AR Run", systemImage: "arkit")
+                        .font(.subheadline)
+                        .foregroundColor(.orange)
+                        .frame(maxWidth: .infinity)
+                        .padding()
+                        .background(Color(.systemGray6))
+                        .cornerRadius(12)
+                }
+            } else {
+                Button(action: { showingARView = true }) {
+                    Label("Start AR Run", systemImage: "arkit")
+                        .font(.headline)
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding()
+                        .background(Color.orange)
+                        .cornerRadius(12)
+                }
             }
 
             if let route = associatedRoute {
@@ -194,7 +221,16 @@ struct QuestDetailView: View {
         .padding(.horizontal)
     }
 
+    /// Clears the paused-session marker and opens the AR view. The quest items
+    /// that were already collected remain collected — the user just needs to
+    /// re-align the route in AR before continuing.
+    private func resumeRun() {
+        dataStore.clearPausedSession(for: quest.id)
+        showingARView = true
+    }
+
     private func resetProgress() {
+        dataStore.clearPausedSession(for: quest.id)
         dataStore.resetQuestProgress(questId: quest.id)
     }
 }
