@@ -407,7 +407,7 @@ struct QuestItem: Codable, Identifiable {
     let verticalOffset: Double
     var collected: Bool
 
-    /// Collection radius in meters (~5 feet).
+    /// Collection radius in meters (~5 feet, generous for AR drift).
     static let collectionRadiusMeters: Double = 1.524
 
     init(type: QuestItemType, routeProgress: Double, verticalOffset: Double = 0) {
@@ -480,11 +480,27 @@ struct RunSession: Codable, Identifiable {
     let startTime: Date
     var endTime: Date?
     var collectedItemIds: [UUID]
+    /// `true` when the user paused mid-run. The quest item collected states are
+    /// persisted separately; this flag just tells QuestDetailView to show
+    /// "Resume AR Run" instead of (or alongside) "Start AR Run".
+    var isPaused: Bool
 
     init(questId: UUID) {
         self.id = UUID()
         self.questId = questId
         self.startTime = Date()
         self.collectedItemIds = []
+        self.isPaused = false
+    }
+
+    // Custom decoder so sessions saved before `isPaused` was added still load.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id               = try c.decode(UUID.self,    forKey: .id)
+        questId          = try c.decode(UUID.self,    forKey: .questId)
+        startTime        = try c.decode(Date.self,    forKey: .startTime)
+        endTime          = try c.decodeIfPresent(Date.self,   forKey: .endTime)
+        collectedItemIds = try c.decode([UUID].self,  forKey: .collectedItemIds)
+        isPaused         = try c.decodeIfPresent(Bool.self,   forKey: .isPaused) ?? false
     }
 }

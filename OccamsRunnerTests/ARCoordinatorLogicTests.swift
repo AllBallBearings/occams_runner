@@ -2,11 +2,11 @@ import XCTest
 import SceneKit
 @testable import OccamsRunner
 
-/// Tests for the pure math helpers extracted from ARCoordinator.
+/// Tests for the pure math helpers and CollectionEngine logic.
 /// No ARSCNView or ARSession required.
 final class ARCoordinatorLogicTests: XCTestCase {
 
-    // MARK: - distance3D
+    // MARK: - distance3D (ARCoordinator)
 
     func test_distance3D_samePoint_isZero() {
         XCTAssertEqual(ARCoordinator.distance3D(.init(0, 0, 0), .init(0, 0, 0)), 0.0, accuracy: 1e-6)
@@ -25,7 +25,6 @@ final class ARCoordinatorLogicTests: XCTestCase {
     }
 
     func test_distance3D_diagonal_isPythagorean() {
-        // (1,1,1) to origin = √3 ≈ 1.7320508
         let d = ARCoordinator.distance3D(.init(0, 0, 0), .init(1, 1, 1))
         XCTAssertEqual(d, sqrt(3), accuracy: 1e-5)
     }
@@ -42,47 +41,115 @@ final class ARCoordinatorLogicTests: XCTestCase {
                        ARCoordinator.distance3D(b, a), accuracy: 1e-5)
     }
 
-    // MARK: - Collection threshold
+    // MARK: - CollectionEngine radius (0.15m = half-foot)
 
-    func test_distance3D_insideCollectionThreshold_lessThan2() {
-        // The game collects a coin when distance < 2.0 in AR scene space
+    func test_collectionEngine_insideRadius_collects() {
         let camera = SCNVector3(0, 0, 0)
-        let coin = SCNVector3(1.5, 0, 0)
-        XCTAssertLessThan(ARCoordinator.distance3D(camera, coin), 2.0)
+        let coin = SCNVector3(0.10, 0, 0)
+        XCTAssertLessThan(CollectionEngine.distance3D(camera, coin),
+                          CollectionEngine.collectionRadius,
+                          "A coin at 0.10m should be inside the 0.15m collection radius")
     }
 
-    func test_distance3D_outsideCollectionThreshold_greaterThanOrEqual2() {
+    func test_collectionEngine_outsideRadius_doesNotCollect() {
         let camera = SCNVector3(0, 0, 0)
-        let coin = SCNVector3(2.5, 0, 0)
-        XCTAssertGreaterThanOrEqual(ARCoordinator.distance3D(camera, coin), 2.0)
+        let coin = SCNVector3(0.20, 0, 0)
+        XCTAssertGreaterThanOrEqual(CollectionEngine.distance3D(camera, coin),
+                                    CollectionEngine.collectionRadius,
+                                    "A coin at 0.20m should be outside the 0.15m collection radius")
     }
 
-    func test_distance3D_exactlyAtThreshold_isNotCollected() {
+    func test_collectionEngine_exactlyAtRadius_doesNotCollect() {
         let camera = SCNVector3(0, 0, 0)
-        let coin = SCNVector3(2.0, 0, 0)
-        // The production condition is `< 2.0`, so exactly 2.0 is NOT collected
-        XCTAssertFalse(ARCoordinator.distance3D(camera, coin) < 2.0)
+        let coin = SCNVector3(0.15, 0, 0)
+        // The condition is `< 0.15`, so exactly 0.15 is NOT collected
+        XCTAssertFalse(CollectionEngine.distance3D(camera, coin) < CollectionEngine.collectionRadius)
     }
 
-    // MARK: - Tight-mode collection sphere (< 0.457 m)
+    // MARK: - CollectionEngine.evaluateCollections
 
-    func test_distance3D_coinInTightRadius_isCollectible() {
-        // Tight mode uses a 0.457 m sphere (~1.5 ft).
-        // A coin at 0.4 m should be within the threshold.
-        let camera = SCNVector3(0, 0, 0)
-        let coin   = SCNVector3(0.4, 0, 0)
-        let dist = ARCoordinator.distance3D(camera, coin)
-        XCTAssertLessThan(dist, 0.457,
-                          "A coin at 0.4 m should be inside the tight-mode collection radius of 0.457 m")
+    func test_evaluateCollections_collectsWhenClose() {
+        let item = QuestItem(type: .coin, routeProgress: 0.0)
+        let positions: [UUID: SCNVector3] = [item.id: SCNVector3(0, 0, 0)]
+        let result = CollectionEngine.evaluateCollections(
+            cameraPosition: SCNVector3(0.05, 0, 0),
+            items: [item],
+            coinWorldPositions: positions,
+            pendingIds: [],
+            tickSerial: 1
+        )
+        XCTAssertEqual(result.collectedItemIds, [item.id])
     }
 
-    func test_distance3D_coinOutsideTightRadius_notCollectible() {
-        // A coin at 0.5 m is just outside the tight-mode threshold.
-        let camera = SCNVector3(0, 0, 0)
-        let coin   = SCNVector3(0.5, 0, 0)
-        let dist = ARCoordinator.distance3D(camera, coin)
-        XCTAssertGreaterThanOrEqual(dist, 0.457,
-                                    "A coin at 0.5 m should be outside the tight-mode collection radius of 0.457 m")
+    func test_evaluateCollections_doesNotCollectWhenFar() {
+        let item = QuestItem(type: .coin, routeProgress: 0.0)
+        let positions: [UUID: SCNVector3] = [item.id: SCNVector3(0, 0, 0)]
+        let result = CollectionEngine.evaluateCollections(
+            cameraPosition: SCNVector3(1.0, 0, 0),
+            items: [item],
+            coinWorldPositions: positions,
+            pendingIds: [],
+            tickSerial: 1
+        )
+        XCTAssertTrue(result.collectedItemIds.isEmpty)
     }
 
+    func test_evaluateCollections_skipsPendingItems() {
+        let item = QuestItem(type: .coin, routeProgress: 0.0)
+        let positions: [UUID: SCNVector3] = [item.id: SCNVector3(0, 0, 0)]
+        let result = CollectionEngine.evaluateCollections(
+            cameraPosition: SCNVector3(0, 0, 0),
+            items: [item],
+            coinWorldPositions: positions,
+            pendingIds: [item.id],
+            tickSerial: 1
+        )
+        XCTAssertTrue(result.collectedItemIds.isEmpty)
+    }
+
+    func test_evaluateCollections_skipsCollectedItems() {
+        var item = QuestItem(type: .coin, routeProgress: 0.0)
+        item.collected = true
+        let positions: [UUID: SCNVector3] = [item.id: SCNVector3(0, 0, 0)]
+        let result = CollectionEngine.evaluateCollections(
+            cameraPosition: SCNVector3(0, 0, 0),
+            items: [item],
+            coinWorldPositions: positions,
+            pendingIds: [],
+            tickSerial: 1
+        )
+        XCTAssertTrue(result.collectedItemIds.isEmpty)
+    }
+
+    func test_evaluateCollections_multipleCoins_collectsOnlyClose() {
+        let items = (0..<3).map { i in
+            QuestItem(type: .coin, routeProgress: Double(i) / 2.0)
+        }
+        let positions: [UUID: SCNVector3] = [
+            items[0].id: SCNVector3(0, 0, 0),
+            items[1].id: SCNVector3(5, 0, 0),
+            items[2].id: SCNVector3(10, 0, 0),
+        ]
+        let result = CollectionEngine.evaluateCollections(
+            cameraPosition: SCNVector3(0.05, 0, 0),
+            items: items,
+            coinWorldPositions: positions,
+            pendingIds: [],
+            tickSerial: 1
+        )
+        XCTAssertEqual(result.collectedItemIds, [items[0].id])
+    }
+
+    func test_evaluateCollections_debugLogContainsTickSerial() {
+        let item = QuestItem(type: .coin, routeProgress: 0.0)
+        let positions: [UUID: SCNVector3] = [item.id: SCNVector3(0, 0, 0)]
+        let result = CollectionEngine.evaluateCollections(
+            cameraPosition: SCNVector3(5, 0, 0),
+            items: [item],
+            coinWorldPositions: positions,
+            pendingIds: [],
+            tickSerial: 42
+        )
+        XCTAssertTrue(result.debugLog.contains("t42"))
+    }
 }

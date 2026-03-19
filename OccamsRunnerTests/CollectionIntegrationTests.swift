@@ -109,7 +109,7 @@ final class CollectionIntegrationTests: XCTestCase {
         SCNVector3(x, y, z)
     }
 
-    private let forward = SIMD3<Float>(1, 0, 0) // looking along +X
+    // Collection uses simple 3D proximity (0.15m) — no direction needed.
 
     // MARK: - buildCoinNodes Tests
 
@@ -178,7 +178,7 @@ final class CollectionIntegrationTests: XCTestCase {
 
         // Item 0 is at progress 0.0 → localTrack position (0, 0, 0)
         // Place camera right on top of it
-        coord.performCollectionTick(cameraPosition: cameraAt(0, 0, 0), cameraForward: forward)
+        coord.performCollectionTick(cameraPosition: cameraAt(0, 0, 0))
 
         // Verify dataStore was updated directly by the coordinator
         let liveQuest = store.quests.first(where: { $0.id == quest.id })!
@@ -197,7 +197,7 @@ final class CollectionIntegrationTests: XCTestCase {
         let coord = makeCoordinator(route: route, quest: quest)
         coord.testBuildCoinNodes(forceRebuild: true)
 
-        coord.performCollectionTick(cameraPosition: cameraAt(0, 0, 0), cameraForward: forward)
+        coord.performCollectionTick(cameraPosition: cameraAt(0, 0, 0))
 
         XCTAssertEqual(collectedCallbackIds.count, 1)
         XCTAssertEqual(collectedCallbackIds.first, quest.items[0].id)
@@ -212,7 +212,7 @@ final class CollectionIntegrationTests: XCTestCase {
         let coord = makeCoordinator(route: route, quest: quest)
         coord.testBuildCoinNodes(forceRebuild: true)
 
-        coord.performCollectionTick(cameraPosition: cameraAt(0, 0, 0), cameraForward: forward)
+        coord.performCollectionTick(cameraPosition: cameraAt(0, 0, 0))
 
         XCTAssertTrue(coord.testPendingIds.contains(quest.items[0].id),
                       "Collected item should be in pendingIds after Phase 2")
@@ -235,7 +235,7 @@ final class CollectionIntegrationTests: XCTestCase {
         XCTAssertEqual(coord.testCoinNodeCount, 3, "Should start with 3 coin nodes")
 
         // --- Tick 1: Collect coin 0 (at position 0,0,0) ---
-        coord.performCollectionTick(cameraPosition: cameraAt(0, 0, 0), cameraForward: forward)
+        coord.performCollectionTick(cameraPosition: cameraAt(0, 0, 0))
 
         XCTAssertEqual(collectedCallbackIds.count, 1, "First tick should collect coin 0")
         XCTAssertEqual(coord.testCoinNodeCount, 2, "Should have 2 nodes remaining")
@@ -246,7 +246,7 @@ final class CollectionIntegrationTests: XCTestCase {
 
         // --- Tick 2: Collect coin 1 (at position 5,0,0 for 3-coin quest on 11-point route) ---
         // Item 1 is at progress 0.5 → local position interpolated at x=5.0
-        coord.performCollectionTick(cameraPosition: cameraAt(5, 0, 0), cameraForward: forward)
+        coord.performCollectionTick(cameraPosition: cameraAt(5, 0, 0))
 
         XCTAssertEqual(collectedCallbackIds.count, 2,
                        "Second tick should collect coin 1 — THIS IS THE BUG if it fails")
@@ -257,7 +257,7 @@ final class CollectionIntegrationTests: XCTestCase {
                       "Item 1 should be marked collected in the dataStore")
 
         // --- Tick 3: Collect coin 2 (at position 10,0,0) ---
-        coord.performCollectionTick(cameraPosition: cameraAt(10, 0, 0), cameraForward: forward)
+        coord.performCollectionTick(cameraPosition: cameraAt(10, 0, 0))
 
         XCTAssertEqual(collectedCallbackIds.count, 3, "Third tick should collect coin 2")
         let afterThird = store.quests.first(where: { $0.id == quest.id })!
@@ -276,12 +276,12 @@ final class CollectionIntegrationTests: XCTestCase {
         coord.testBuildCoinNodes(forceRebuild: true)
 
         // Collect coin 0
-        coord.performCollectionTick(cameraPosition: cameraAt(0, 0, 0), cameraForward: forward)
+        coord.performCollectionTick(cameraPosition: cameraAt(0, 0, 0))
         XCTAssertTrue(coord.testPendingIds.contains(quest.items[0].id))
 
         // On the NEXT tick (camera moved away), the self-healing in Phase 1
         // should clear coin 0 from pendingIds since dataStore confirms collected
-        coord.performCollectionTick(cameraPosition: cameraAt(5, 0, 0), cameraForward: forward)
+        coord.performCollectionTick(cameraPosition: cameraAt(5, 0, 0))
         XCTAssertFalse(coord.testPendingIds.contains(quest.items[0].id),
                        "Pending ID should be cleared after dataStore confirms collection")
     }
@@ -298,7 +298,7 @@ final class CollectionIntegrationTests: XCTestCase {
         coord.testBuildCoinNodes(forceRebuild: true)
 
         // Collect coin 0 — it enters pendingIds, node removed
-        coord.performCollectionTick(cameraPosition: cameraAt(0, 0, 0), cameraForward: forward)
+        coord.performCollectionTick(cameraPosition: cameraAt(0, 0, 0))
         XCTAssertEqual(coord.testCoinNodeCount, 1, "Only coin 1's node should remain")
 
         // Simulate a SwiftUI re-render calling buildCoinNodes BEFORE dataStore
@@ -325,15 +325,15 @@ final class CollectionIntegrationTests: XCTestCase {
         coord.testBuildCoinNodes(forceRebuild: true)
 
         // Camera at position (50, 0, 0) — far from both coins
-        coord.performCollectionTick(cameraPosition: cameraAt(50, 0, 0), cameraForward: forward)
+        coord.performCollectionTick(cameraPosition: cameraAt(50, 0, 0))
 
         XCTAssertTrue(collectedCallbackIds.isEmpty, "Should not collect any coins when out of range")
         XCTAssertEqual(coord.testCoinNodeCount, 2, "Both nodes should still exist")
     }
 
-    // MARK: - Vast Mode (Ellipsoid)
+    // MARK: - Collection Radius (0.15m, mode-independent)
 
-    func test_vastMode_collectsWithinEllipsoid() {
+    func test_collectsWithinHalfFootRadius() {
         let route = makeDualTrackRoute(pointCount: 11, mode: .vast)
         let quest = makeQuest(routeId: route.id, coinCount: 1)
         store.saveRoute(route)
@@ -342,14 +342,14 @@ final class CollectionIntegrationTests: XCTestCase {
         let coord = makeCoordinator(route: route, quest: quest)
         coord.testBuildCoinNodes(forceRebuild: true)
 
-        // Coin at (0,0,0). Camera at (0, 4.0, 0) — within lateral half-axis of 5.0m
-        coord.performCollectionTick(cameraPosition: cameraAt(0, 4.0, 0), cameraForward: forward)
+        // Coin at (0,0,0). Camera at (0.10, 0, 0) — within 0.15m radius
+        coord.performCollectionTick(cameraPosition: cameraAt(0.10, 0, 0))
 
         XCTAssertEqual(collectedCallbackIds.count, 1,
-                       "Should collect within the lateral half-axis of the ellipsoid")
+                       "Should collect within the 0.15m half-foot radius")
     }
 
-    func test_vastMode_doesNotCollectOutsideEllipsoid() {
+    func test_doesNotCollectOutsideHalfFootRadius() {
         let route = makeDualTrackRoute(pointCount: 11, mode: .vast)
         let quest = makeQuest(routeId: route.id, coinCount: 1)
         store.saveRoute(route)
@@ -358,11 +358,11 @@ final class CollectionIntegrationTests: XCTestCase {
         let coord = makeCoordinator(route: route, quest: quest)
         coord.testBuildCoinNodes(forceRebuild: true)
 
-        // Coin at (0,0,0). Camera at (0, 5.5, 0) — outside lateral half-axis of 5.0m
-        coord.performCollectionTick(cameraPosition: cameraAt(0, 5.5, 0), cameraForward: forward)
+        // Coin at (0,0,0). Camera at (0.20, 0, 0) — outside 0.15m radius
+        coord.performCollectionTick(cameraPosition: cameraAt(0.20, 0, 0))
 
         XCTAssertTrue(collectedCallbackIds.isEmpty,
-                      "Should NOT collect outside the ellipsoid")
+                      "Should NOT collect outside the 0.15m radius")
     }
 
     // MARK: - Many Coins Sequential
@@ -381,7 +381,7 @@ final class CollectionIntegrationTests: XCTestCase {
         for i in 0..<10 {
             // Each coin is at progress i/9, which maps to local x = (i/9)*100
             let x = Float(i) / 9.0 * 100.0
-            coord.performCollectionTick(cameraPosition: cameraAt(x, 0, 0), cameraForward: forward)
+            coord.performCollectionTick(cameraPosition: cameraAt(x, 0, 0))
         }
 
         XCTAssertEqual(collectedCallbackIds.count, 10,
@@ -404,7 +404,7 @@ final class CollectionIntegrationTests: XCTestCase {
         coord.testBuildCoinNodes(forceRebuild: true)
 
         // Far from both coins
-        coord.performCollectionTick(cameraPosition: cameraAt(50, 0, 0), cameraForward: forward)
+        coord.performCollectionTick(cameraPosition: cameraAt(50, 0, 0))
 
         XCTAssertEqual(debugLogs.count, 1)
         let log = debugLogs[0]
