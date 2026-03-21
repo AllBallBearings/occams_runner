@@ -116,10 +116,12 @@ struct QuestEditorView: View {
     }
 
     private func createQuest() {
+        let boxes = QuestGenerator.generateBoxes(from: generatedItems)
         let quest = Quest(
             name: questName,
             routeId: route.id,
-            items: generatedItems
+            items: generatedItems,
+            boxes: boxes
         )
         dataStore.saveQuest(quest)
         isPresented = false

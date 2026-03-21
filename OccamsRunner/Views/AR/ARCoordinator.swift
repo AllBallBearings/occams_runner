@@ -1,6 +1,8 @@
 import ARKit
 import SceneKit
 import CoreLocation
+import Vision
+import UIKit
 
 // MARK: - AR Coordinator
 
@@ -26,6 +28,17 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
     private var pathNodes: [SCNNode] = []
     private(set) var coinNodes: [UUID: SCNNode] = [:]
     private(set) var pendingCollectionIds: Set<UUID> = []
+    private(set) var boxNodes: [UUID: SCNNode] = [:]
+    private var pendingBoxIds: Set<UUID> = []
+
+    // Hand pose detection
+    private let handPoseRequest: VNDetectHumanHandPoseRequest = {
+        let r = VNDetectHumanHandPoseRequest()
+        r.maximumHandCount = 1
+        return r
+    }()
+    private var lastHandPoseTime: TimeInterval = 0
+    private let handPoseInterval: TimeInterval = 0.1  // 10 fps
 
     private var runMode: ARRunMode = .aligning
     private var runStartedAt: Date?
@@ -103,6 +116,7 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
 
         buildRoutePath()
         buildCoinNodes(forceRebuild: true)
+        buildBoxNodes(forceRebuild: true)
         updateAlignmentStatusFromGPS()
     }
 
@@ -120,8 +134,8 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
             }
             // Freeze route transform so alignment remains stable during collection.
             frozenRouteWorldTransform = routeGroupNode.simdWorldTransform
-            // Running mode does not require per-frame ARSession callbacks.
-            arView?.session.delegate = nil
+            // Keep session delegate active for hand pose detection during running.
+            arView?.session.delegate = self
 
         case .aligning, .realigning:
             // Unfreeze route transform so AR alignment can adjust it.
@@ -216,6 +230,152 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
         }
     }
 
+    func buildBoxNodes(forceRebuild: Bool) {
+        assert(Thread.isMainThread)
+        let currentQuest = dataStore.quests.first(where: { $0.id == quest.id }) ?? quest
+
+        if forceRebuild {
+            for node in boxNodes.values { node.removeFromParentNode() }
+            boxNodes.removeAll()
+            pendingBoxIds.removeAll()
+        }
+
+        for box in currentQuest.boxes {
+            if boxNodes[box.id] == nil,
+               !pendingBoxIds.contains(box.id),
+               let local = box.resolvedLocalPosition(on: route) {
+                let node = createBoxNode()
+                node.simdPosition = local
+                routeGroupNode.addChildNode(node)
+                boxNodes[box.id] = node
+            }
+        }
+    }
+
+    // MARK: - Hand Pose & Punch Detection
+
+    private func processHandPose(frame: ARFrame) {
+        let handler = VNImageRequestHandler(cvPixelBuffer: frame.capturedImage, options: [:])
+        do {
+            try handler.perform([handPoseRequest])
+        } catch { return }
+
+        guard let observation = handPoseRequest.results?.first,
+              detectFistPose(observation) else { return }
+
+        let fistPos = fistWorldPosition(frame: frame)
+        checkPunchDetection(fistPosition: fistPos)
+    }
+
+    /// Returns true when the detected hand is in a fist pose.
+    /// Uses normalized tip-to-palm distances to be orientation-independent.
+    private func detectFistPose(_ observation: VNHumanHandPoseObservation) -> Bool {
+        guard let wrist      = try? observation.recognizedPoint(.wrist),
+              let indexTip   = try? observation.recognizedPoint(.indexTip),
+              let indexMCP   = try? observation.recognizedPoint(.indexMCP),
+              let middleTip  = try? observation.recognizedPoint(.middleTip),
+              let middleMCP  = try? observation.recognizedPoint(.middleMCP) else { return false }
+
+        let minConf: Float = 0.4
+        guard wrist.confidence > minConf,
+              indexTip.confidence > minConf,
+              indexMCP.confidence > minConf,
+              middleTip.confidence > minConf,
+              middleMCP.confidence > minConf else { return false }
+
+        func dist2D(_ a: VNRecognizedPoint, _ bx: Double, _ by: Double) -> Double {
+            let dx = a.location.x - bx
+            let dy = a.location.y - by
+            return sqrt(dx * dx + dy * dy)
+        }
+
+        // Palm center = midpoint between index and middle MCPs
+        let palmX = (indexMCP.location.x + middleMCP.location.x) / 2
+        let palmY = (indexMCP.location.y + middleMCP.location.y) / 2
+
+        // Reference scale: wrist to index MCP distance
+        let scale = dist2D(indexMCP, wrist.location.x, wrist.location.y)
+        guard scale > 0.01 else { return false }
+
+        // Fingertips are "curled" when they're close to the palm relative to hand size
+        let indexRatio  = dist2D(indexTip,  palmX, palmY) / scale
+        let middleRatio = dist2D(middleTip, palmX, palmY) / scale
+
+        return indexRatio < 0.7 && middleRatio < 0.7
+    }
+
+    /// Estimates the 3D world position of the fist as camera position + forward × arm length.
+    private func fistWorldPosition(frame: ARFrame) -> SIMD3<Float> {
+        let t = frame.camera.transform
+        let cameraPos = SIMD3<Float>(t.columns.3.x, t.columns.3.y, t.columns.3.z)
+        // Camera looks along its -Z axis in world space
+        let forward = SIMD3<Float>(-t.columns.2.x, -t.columns.2.y, -t.columns.2.z)
+        return cameraPos + simd_normalize(forward) * 0.6  // ~arm's length
+    }
+
+    private func checkPunchDetection(fistPosition: SIMD3<Float>) {
+        guard runMode == .running else { return }
+        let punchRadius: Float = 0.5
+
+        for (id, node) in boxNodes {
+            guard !pendingBoxIds.contains(id) else { continue }
+            let boxPos = SIMD3<Float>(
+                node.simdWorldPosition.x,
+                node.simdWorldPosition.y,
+                node.simdWorldPosition.z
+            )
+            if simd_distance(fistPosition, boxPos) < punchRadius {
+                pendingBoxIds.insert(id)
+                explodeBox(id: id, node: node)
+                break
+            }
+        }
+    }
+
+    private func explodeBox(id: UUID, node: SCNNode) {
+        guard let arView else { return }
+
+        // Haptic feedback
+        let generator = UIImpactFeedbackGenerator(style: .heavy)
+        generator.impactOccurred()
+
+        // Capture world position before removing node
+        let worldPos = node.simdWorldPosition
+
+        // Remove box node immediately
+        node.removeFromParentNode()
+        boxNodes.removeValue(forKey: id)
+
+        // Particle burst at box world position
+        let particleNode = SCNNode()
+        particleNode.simdWorldPosition = worldPos
+        arView.scene.rootNode.addChildNode(particleNode)
+
+        let particles = SCNParticleSystem()
+        particles.particleColor = UIColor(red: 0.6, green: 0.35, blue: 0.1, alpha: 1.0)
+        particles.particleColorVariation = SCNVector4(0.2, 0.1, 0.05, 0)
+        particles.particleLifeSpan        = 0.7
+        particles.particleLifeSpanVariation = 0.3
+        particles.birthRate               = 500
+        particles.emissionDuration        = 0.08
+        particles.spreadingAngle          = 180
+        particles.particleVelocity        = 3.0
+        particles.particleVelocityVariation = 1.5
+        particles.particleSize            = 0.04
+        particles.particleSizeVariation   = 0.02
+        particles.isAffectedByGravity     = true
+        particles.loops                   = false
+        particleNode.addParticleSystem(particles)
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak particleNode] in
+            particleNode?.removeFromParentNode()
+        }
+
+        #if DEBUG
+        print("[ARRunner][PunchBox] destroyed box \(id.uuidString.prefix(8))")
+        #endif
+    }
+
     private func updateNearestItemDistance() {
         if runMode == .running, let frozen = frozenRouteWorldTransform {
             routeGroupNode.simdWorldTransform = frozen
@@ -287,6 +447,14 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
     }
 
     func session(_ session: ARSession, didUpdate frame: ARFrame) {
+        if runMode == .running {
+            let now = frame.timestamp
+            if now - lastHandPoseTime >= handPoseInterval {
+                lastHandPoseTime = now
+                processHandPose(frame: frame)
+            }
+            return
+        }
         guard runMode == .aligning || runMode == .realigning else { return }
         guard (distanceToRouteStart() ?? 0) <= startGateDistanceMeters else { return }
         guard !alignmentLocked else { return }
@@ -519,6 +687,27 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
         } else if dot < 0.9999 {
             node.simdOrientation = simd_quatf(from: yAxis, to: dirNorm)
         }
+
+        return node
+    }
+
+    private func createBoxNode() -> SCNNode {
+        let box = SCNBox(width: 0.305, height: 0.305, length: 0.305, chamferRadius: 0.015)
+        let material = SCNMaterial()
+        material.diffuse.contents  = UIColor(red: 0.55, green: 0.35, blue: 0.15, alpha: 1.0)
+        material.specular.contents = UIColor(white: 0.3, alpha: 1.0)
+        material.roughness.contents = NSNumber(value: 0.7)
+        material.isDoubleSided = true
+        box.materials = [material]
+
+        let node = SCNNode(geometry: box)
+
+        // Slow idle rotation so the box is visually distinct from coins
+        let spin = CABasicAnimation(keyPath: "eulerAngles.y")
+        spin.byValue = Float.pi * 2
+        spin.duration = 5.0
+        spin.repeatCount = .infinity
+        node.addAnimation(spin, forKey: "spin")
 
         return node
     }

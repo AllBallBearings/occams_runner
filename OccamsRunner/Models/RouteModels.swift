@@ -439,6 +439,39 @@ struct QuestItem: Codable, Identifiable {
     }
 }
 
+// MARK: - Quest Box
+
+/// A punchable box placed along a route at every 10th coin position.
+struct QuestBox: Codable, Identifiable {
+    let id: UUID
+    /// Position along the route in [0, 1].
+    let routeProgress: Double
+    /// Horizontal offset direction from route centerline, 0–360°.
+    let clockAngleDegrees: Double
+    /// Lateral distance from route centerline in meters.
+    let radialOffsetMeters: Double
+
+    init(routeProgress: Double, clockAngleDegrees: Double, radialOffsetMeters: Double) {
+        self.id = UUID()
+        self.routeProgress = max(0, min(1, routeProgress))
+        self.clockAngleDegrees = clockAngleDegrees
+        self.radialOffsetMeters = radialOffsetMeters
+    }
+
+    /// Returns the box position in AR local space, offset from the route centerline.
+    func resolvedLocalPosition(on route: RecordedRoute) -> SIMD3<Float>? {
+        guard let sample = route.localSample(atProgress: routeProgress) else { return nil }
+        let angleRad = Float(clockAngleDegrees * .pi / 180)
+        let offsetX = Float(radialOffsetMeters) * cos(angleRad)
+        let offsetZ = Float(radialOffsetMeters) * sin(angleRad)
+        return SIMD3<Float>(
+            Float(sample.x) + offsetX,
+            Float(sample.y),
+            Float(sample.z) + offsetZ
+        )
+    }
+}
+
 // MARK: - Quest
 
 /// A quest tied to a recorded route, containing items to collect.
@@ -448,6 +481,8 @@ struct Quest: Codable, Identifiable {
     let routeId: UUID
     let dateCreated: Date
     var items: [QuestItem]
+    /// Punchable boxes placed at every 10th coin position.
+    var boxes: [QuestBox]
 
     var totalItems: Int { items.count }
     var collectedItems: Int { items.filter { $0.collected }.count }
@@ -455,12 +490,24 @@ struct Quest: Codable, Identifiable {
     var collectedPoints: Int { items.filter { $0.collected }.reduce(0) { $0 + $1.type.pointValue } }
     var isComplete: Bool { collectedItems == totalItems }
 
-    init(name: String, routeId: UUID, items: [QuestItem]) {
+    init(name: String, routeId: UUID, items: [QuestItem], boxes: [QuestBox] = []) {
         self.id = UUID()
         self.name = name
         self.routeId = routeId
         self.dateCreated = Date()
         self.items = items
+        self.boxes = boxes
+    }
+
+    // Custom decoder so quests saved before `boxes` was added still load.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id          = try c.decode(UUID.self,        forKey: .id)
+        name        = try c.decode(String.self,      forKey: .name)
+        routeId     = try c.decode(UUID.self,        forKey: .routeId)
+        dateCreated = try c.decode(Date.self,        forKey: .dateCreated)
+        items       = try c.decode([QuestItem].self, forKey: .items)
+        boxes       = try c.decodeIfPresent([QuestBox].self, forKey: .boxes) ?? []
     }
 
     /// Reset all items to uncollected for a fresh run.
