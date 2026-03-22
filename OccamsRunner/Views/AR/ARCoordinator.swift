@@ -24,6 +24,10 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
     var onItemCollected: (UUID) -> Void
     var onDebugTick: (String) -> Void
 
+    /// Shared state object written by SwiftUI gesture handlers and read each
+    /// AR frame to apply manual position / rotation corrections to the route.
+    var manualAlignment: ManualAlignmentState?
+
     private let routeGroupNode = SCNNode()
     private var pathNodes: [SCNNode] = []
     private(set) var coinNodes: [UUID: SCNNode] = [:]
@@ -52,6 +56,9 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
 
     private var alignmentState: ARAlignmentState = .moveToStart
     private var alignmentConfidence: Double = 0
+    /// Exponential moving average of per-frame raw confidence — smooths out
+    /// transient tracking blips without introducing too much lag.
+    private var smoothedConfidence: Double = 0
     private var alignmentLocked = false
     private var consecutiveGoodFrames = 0
     private var scanStartedAt: Date?
@@ -60,6 +67,10 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
     private var collectionTimer: Timer?
 
     private let startGateDistanceMeters: Double = 40
+
+    // Base Y offset applied to the route group so objects sit at chest height.
+    // The manual alignment adds onto this baseline.
+    private let baseRouteY: Float = -0.3
 
     init(
         route: RecordedRoute,
@@ -114,7 +125,7 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
 
         // Shift the entire route (path + coins) down ~1 ft so objects
         // appear at chest/waist height rather than eye/head height.
-        routeGroupNode.position.y = -0.3
+        routeGroupNode.position.y = baseRouteY
 
         buildRoutePath()
         buildCoinNodes(forceRebuild: true)
@@ -494,6 +505,24 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
         }
     }
 
+    // MARK: - Manual Alignment
+
+    /// Applies the user's manual position and rotation corrections to the route group.
+    /// Called every AR frame while in aligning/realigning mode so the adjustments
+    /// are visible in real-time as the user drags/rotates.
+    private func applyManualAlignment() {
+        guard let manual = manualAlignment else { return }
+        routeGroupNode.simdPosition = SIMD3<Float>(
+            manual.worldX,
+            baseRouteY + manual.worldY,
+            0
+        )
+        routeGroupNode.simdOrientation = simd_quatf(
+            angle: manual.rotationY,
+            axis: SIMD3<Float>(0, 1, 0)
+        )
+    }
+
     // MARK: - Alignment
 
     private func updateAlignmentStatusFromGPS() {
@@ -547,51 +576,93 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
             return
         }
         guard runMode == .aligning || runMode == .realigning else { return }
+
+        // Apply manual position/rotation corrections every frame so the
+        // AR view updates in real-time as the user adjusts.
+        applyManualAlignment()
+
         guard (distanceToRouteStart() ?? 0) <= startGateDistanceMeters else { return }
         guard !alignmentLocked else { return }
 
+        // --- Feature density score ---
         let featureCount = Double(frame.rawFeaturePoints?.points.count ?? 0)
-        let featureScore = min(1, featureCount / 250)
+        // Scale: 0 at 0 features, 1.0 at ≥300 features (raised from 250 for stricter signal).
+        let featureScore = min(1.0, featureCount / 300.0)
 
+        // --- Tracking state score ---
         let trackingScore: Double
+        let isTrackingNormal: Bool
         switch frame.camera.trackingState {
         case .normal:
-            trackingScore = 1
+            trackingScore = 1.0
+            isTrackingNormal = true
         case .limited(let reason):
+            isTrackingNormal = false
             switch reason {
-            case .relocalizing: trackingScore = 0.65
-            case .excessiveMotion: trackingScore = 0.45
-            case .insufficientFeatures: trackingScore = 0.3
-            case .initializing: trackingScore = 0.35
-            @unknown default: trackingScore = 0.3
+            case .relocalizing:         trackingScore = 0.65
+            case .excessiveMotion:      trackingScore = 0.40
+            case .insufficientFeatures: trackingScore = 0.30
+            case .initializing:         trackingScore = 0.35
+            @unknown default:           trackingScore = 0.30
             }
         case .notAvailable:
             trackingScore = 0
+            isTrackingNormal = false
         }
 
+        // --- World mapping status score ---
         let mappingScore: Double
+        let isMappingGood: Bool
         switch frame.worldMappingStatus {
-        case .mapped: mappingScore = 1
-        case .extending: mappingScore = 0.8
-        case .limited: mappingScore = 0.45
-        case .notAvailable: mappingScore = 0.2
-        @unknown default: mappingScore = 0.3
+        case .mapped:
+            mappingScore = 1.0
+            isMappingGood = true
+        case .extending:
+            mappingScore = 0.8
+            isMappingGood = true
+        case .limited:
+            mappingScore = 0.45
+            isMappingGood = false
+        case .notAvailable:
+            mappingScore = 0.2
+            isMappingGood = false
+        @unknown default:
+            mappingScore = 0.3
+            isMappingGood = false
         }
 
-        alignmentConfidence = max(0, min(1, (featureScore * 0.35) + (trackingScore * 0.35) + (mappingScore * 0.3)))
+        // --- Raw composite confidence ---
+        let rawConfidence = max(0.0, min(1.0,
+            (featureScore * 0.35) + (trackingScore * 0.35) + (mappingScore * 0.30)
+        ))
 
-        if alignmentConfidence >= 0.75 {
+        // --- EMA smoothing (α=0.25) to damp transient tracking blips ---
+        // A single bad frame won't crash confidence, but sustained degradation will.
+        smoothedConfidence = 0.75 * smoothedConfidence + 0.25 * rawConfidence
+        alignmentConfidence = smoothedConfidence
+
+        // --- Consecutive-good-frame counter ---
+        // Only increment when tracking is fully normal AND mapping is good AND
+        // smoothed confidence clears the stricter 0.78 threshold.
+        // Hard-reset to 0 on catastrophic loss; soft-decay otherwise.
+        if isTrackingNormal && isMappingGood && smoothedConfidence >= 0.78 {
             consecutiveGoodFrames += 1
+        } else if !isTrackingNormal || smoothedConfidence < 0.40 {
+            // Catastrophic: notAvailable tracking or severely low confidence.
+            consecutiveGoodFrames = 0
         } else {
+            // Mild degradation: soft decay so a brief glitch doesn't reset progress.
             consecutiveGoodFrames = max(0, consecutiveGoodFrames - 1)
         }
 
-        if consecutiveGoodFrames >= 15 {
+        // --- State transitions ---
+        // Require 20 consecutive good frames (≈0.33 s at 60 fps) to lock.
+        if consecutiveGoodFrames >= 20 {
             alignmentLocked = true
             alignmentState = .locked
         } else if let scanStartedAt,
                   Date().timeIntervalSince(scanStartedAt) > 14,
-                  alignmentConfidence >= 0.45 {
+                  smoothedConfidence >= 0.45 {
             alignmentState = .lowConfidence
         } else {
             alignmentState = .scanning

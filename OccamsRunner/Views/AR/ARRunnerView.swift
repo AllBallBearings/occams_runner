@@ -2,6 +2,7 @@ import SwiftUI
 import ARKit
 import SceneKit
 import CoreLocation
+import MapKit
 
 // MARK: - AR Runner View
 
@@ -22,6 +23,18 @@ struct ARRunnerView: View {
     @State private var alignmentConfidence: Double = 0
     @State private var distanceToStart: Double?
     @State private var alignmentReady = false
+
+    // MARK: - Manual Alignment State
+    // Class (reference type) — both this view's gestures and the ARCoordinator
+    // read/write the same instance without going through SwiftUI's diffing.
+    @State private var manualAlignment = ManualAlignmentState()
+
+    // Sensitivity: meters of route shift per screen-point of drag.
+    private let panSensitivity: Float = 0.004
+    // Clamp to ±3 m lateral, ±2 m vertical so the user can't
+    // accidentally fling the route off into oblivion.
+    private let maxLateral: Float = 3.0
+    private let maxVertical: Float = 2.0
 
     private var route: RecordedRoute? {
         dataStore.route(for: quest.routeId)
@@ -62,6 +75,7 @@ struct ARRunnerView: View {
                         dataStore: dataStore,
                         locationService: locationService,
                         runMode: runMode,
+                        manualAlignment: manualAlignment,
                         onAlignmentUpdate: { state, confidence, distance, ready in
                             alignmentState = state
                             alignmentConfidence = confidence
@@ -80,6 +94,12 @@ struct ARRunnerView: View {
                     )
                     .allowsHitTesting(false)
                     .ignoresSafeArea()
+
+                    // Gesture capture layer — sits between the AR view and the
+                    // HUD controls so button taps still reach the controls on top.
+                    if runMode == .aligning || runMode == .realigning {
+                        alignmentGestureLayer
+                    }
                 }
             } else {
                 Color.black.ignoresSafeArea()
@@ -89,9 +109,17 @@ struct ARRunnerView: View {
 
             if route?.encryptedWorldMapData != nil {
                 if runMode == .aligning || runMode == .realigning {
-                    VStack {
+                    VStack(spacing: 0) {
                         alignmentTopBanner
                         Spacer()
+                        if let route {
+                            HStack(alignment: .bottom) {
+                                Spacer()
+                                alignmentMiniMap(route: route)
+                                    .padding(.trailing, 16)
+                                    .padding(.bottom, 8)
+                            }
+                        }
                         alignmentBottomControls
                     }
                 } else {
@@ -117,7 +145,6 @@ struct ARRunnerView: View {
         }
         .alert("Quest Complete!", isPresented: $showingCompletionAlert) {
             Button("Finish") {
-                // Quest is done — clear any paused session marker.
                 dataStore.clearPausedSession(for: quest.id)
                 dismiss()
             }
@@ -139,6 +166,39 @@ struct ARRunnerView: View {
         } message: {
             Text("Pausing saves your progress. You can resume from the Quest screen.")
         }
+    }
+
+    // MARK: - Alignment Gesture Layer
+
+    /// Transparent, full-screen gesture capture layer for the alignment phase.
+    /// Uses `.simultaneousGesture` so underlying button taps still register.
+    private var alignmentGestureLayer: some View {
+        Color.clear
+            .contentShape(Rectangle())
+            .ignoresSafeArea()
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 8)
+                    .onChanged { value in
+                        let dx = Float(value.translation.width)  * panSensitivity
+                        let dy = Float(-value.translation.height) * panSensitivity
+                        manualAlignment.worldX = (manualAlignment.baseX + dx)
+                            .clamped(to: -maxLateral...maxLateral)
+                        manualAlignment.worldY = (manualAlignment.baseY + dy)
+                            .clamped(to: -maxVertical...maxVertical)
+                    }
+                    .onEnded { _ in
+                        manualAlignment.commitGesture()
+                    }
+            )
+            .simultaneousGesture(
+                RotationGesture(minimumAngleDelta: .degrees(2))
+                    .onChanged { angle in
+                        manualAlignment.rotationY = manualAlignment.baseRotation + Float(angle.radians)
+                    }
+                    .onEnded { _ in
+                        manualAlignment.commitGesture()
+                    }
+            )
     }
 
     // MARK: - Alignment HUD
@@ -165,6 +225,15 @@ struct ARRunnerView: View {
                         .font(.caption2)
                         .foregroundColor(.orange)
                 }
+
+                if manualAlignment.hasAdjustment {
+                    Text(String(format: "Offset: X %.2f m  Y %.2f m  R %.1f°",
+                                manualAlignment.worldX,
+                                manualAlignment.worldY,
+                                manualAlignment.rotationY * 180 / .pi))
+                        .font(.system(size: 9, design: .monospaced))
+                        .foregroundColor(.cyan.opacity(0.85))
+                }
             }
             .frame(maxWidth: .infinity)
 
@@ -183,7 +252,31 @@ struct ARRunnerView: View {
     }
 
     private var alignmentBottomControls: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 10) {
+            // Gesture hint
+            HStack(spacing: 16) {
+                Label("Drag to shift", systemImage: "arrow.up.and.down.and.arrow.left.and.right")
+                Label("Twist to rotate", systemImage: "arrow.2.circlepath")
+            }
+            .font(.caption2)
+            .foregroundColor(.white.opacity(0.7))
+
+            // Reset manual offset (only shown when there is an offset)
+            if manualAlignment.hasAdjustment {
+                Button(action: {
+                    manualAlignment.reset()
+                }) {
+                    Label("Reset Position", systemImage: "arrow.counterclockwise")
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .padding(.horizontal, 18)
+                        .padding(.vertical, 8)
+                        .background(.ultraThinMaterial)
+                        .cornerRadius(10)
+                        .foregroundColor(.white)
+                }
+            }
+
             Button(action: { runMode = .running }) {
                 Text(runMode == .realigning ? "Resume Run →" : "Start Run →")
                     .font(.headline)
@@ -216,6 +309,64 @@ struct ARRunnerView: View {
         }
         .padding(.horizontal, 28)
         .padding(.bottom, 48)
+    }
+
+    // MARK: - Alignment Mini-Map
+
+    /// Small PiP-style map showing the route and current GPS position.
+    /// Lets the user confirm they're at the right physical location while
+    /// the AR view is displayed.
+    private func alignmentMiniMap(route: RecordedRoute) -> some View {
+        let coords = route.geoTrack.map { $0.coordinate }
+        let region = routeRegion(from: coords)
+
+        return ZStack(alignment: .topLeading) {
+            Map(coordinateRegion: .constant(region),
+                showsUserLocation: true,
+                annotationItems: route.geoTrack) { sample in
+                MapAnnotation(coordinate: sample.coordinate) {
+                    Circle()
+                        .fill(Color.orange)
+                        .frame(width: 4, height: 4)
+                }
+            }
+            .disabled(true)
+            .frame(width: 160, height: 160)
+            .cornerRadius(12)
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(Color.white.opacity(0.4), lineWidth: 1)
+            )
+
+            Text("Route Map")
+                .font(.system(size: 8, weight: .semibold))
+                .foregroundColor(.white)
+                .padding(.horizontal, 5)
+                .padding(.vertical, 2)
+                .background(Color.black.opacity(0.55))
+                .cornerRadius(4)
+                .padding(5)
+        }
+        .shadow(color: .black.opacity(0.5), radius: 6, x: 0, y: 2)
+    }
+
+    /// Compute a map region that fits all the route coordinates with padding.
+    private func routeRegion(from coords: [CLLocationCoordinate2D]) -> MKCoordinateRegion {
+        guard !coords.isEmpty else { return MKCoordinateRegion() }
+        let lats = coords.map(\.latitude)
+        let lons = coords.map(\.longitude)
+        let minLat = lats.min()!; let maxLat = lats.max()!
+        let minLon = lons.min()!; let maxLon = lons.max()!
+        let center = CLLocationCoordinate2D(
+            latitude:  (minLat + maxLat) / 2,
+            longitude: (minLon + maxLon) / 2
+        )
+        let spanLat = max(maxLat - minLat, 0.0005) * 1.5
+        let spanLon = max(maxLon - minLon, 0.0005) * 1.5
+        return MKCoordinateRegion(
+            center: center,
+            span: MKCoordinateSpan(latitudeDelta: spanLat, longitudeDelta: spanLon)
+        )
     }
 
     // MARK: - Running HUD
@@ -302,8 +453,6 @@ struct ARRunnerView: View {
 
     // MARK: - Dismiss / Pause
 
-    /// Called by both X buttons. Shows the pause dialog when a run is active;
-    /// dismisses immediately if the user is still in the initial alignment phase.
     private func handleDismissTap() {
         if runMode == .running || runMode == .realigning {
             showingPauseDialog = true
@@ -312,8 +461,6 @@ struct ARRunnerView: View {
         }
     }
 
-    /// Saves a paused-run marker to the data store so QuestDetailView can show
-    /// the "Resume AR Run" button, then dismisses the AR screen.
     private func pauseAndDismiss() {
         dataStore.savePausedSession(for: quest.id)
         dismiss()
@@ -324,5 +471,13 @@ struct ARRunnerView: View {
     private func handleCollection(itemId: UUID) {
         let generator = UINotificationFeedbackGenerator()
         generator.notificationOccurred(.success)
+    }
+}
+
+// MARK: - Float Clamping Helper
+
+private extension Float {
+    func clamped(to range: ClosedRange<Float>) -> Float {
+        Swift.min(Swift.max(self, range.lowerBound), range.upperBound)
     }
 }
