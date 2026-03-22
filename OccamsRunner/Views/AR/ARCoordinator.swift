@@ -62,6 +62,10 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
     private var alignmentLocked = false
     private var consecutiveGoodFrames = 0
     private var scanStartedAt: Date?
+    /// How many consecutive GPS readings have placed the user beyond the start gate.
+    /// We require several before resetting an established lock so GPS jitter can't
+    /// knock out a good alignment on a single bad reading.
+    private var consecutiveOutOfRangeGPS = 0
 
     private var statusTimer: Timer?
     private var collectionTimer: Timer?
@@ -158,6 +162,7 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
             arView?.session.delegate = self
             alignmentLocked = false
             consecutiveGoodFrames = 0
+            consecutiveOutOfRangeGPS = 0
             scanStartedAt = nil
             alignmentState = .scanning
         }
@@ -530,14 +535,21 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
         let distance = distanceToRouteStart()
 
         if let distance, distance > startGateDistanceMeters {
-            alignmentState = .moveToStart
-            alignmentConfidence = min(alignmentConfidence, 0.2)
-            alignmentLocked = false
-            consecutiveGoodFrames = 0
-            scanStartedAt = nil
+            consecutiveOutOfRangeGPS += 1
+            // Require 3 consecutive out-of-range GPS readings before resetting a
+            // lock — GPS can jitter 20-40 m so a single bad fix must not undo
+            // good alignment.
+            if consecutiveOutOfRangeGPS >= 3 {
+                alignmentState = .moveToStart
+                alignmentConfidence = min(alignmentConfidence, 0.2)
+                alignmentLocked = false
+                consecutiveGoodFrames = 0
+                scanStartedAt = nil
+            }
             publishAlignment(distance: distance)
             return
         }
+        consecutiveOutOfRangeGPS = 0
 
         if !alignmentLocked {
             if scanStartedAt == nil {
@@ -642,22 +654,21 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
         alignmentConfidence = smoothedConfidence
 
         // --- Consecutive-good-frame counter ---
-        // Only increment when tracking is fully normal AND mapping is good AND
-        // smoothed confidence clears the stricter 0.78 threshold.
-        // Hard-reset to 0 on catastrophic loss; soft-decay otherwise.
-        if isTrackingNormal && isMappingGood && smoothedConfidence >= 0.78 {
+        // Increment when tracking is normal, mapping is good, and smoothed
+        // confidence clears 0.70. On catastrophic loss hard-reset to 0.
+        // On mild degradation hold the counter (don't decay) so a brief
+        // glitch doesn't undo accumulated progress.
+        if isTrackingNormal && isMappingGood && smoothedConfidence >= 0.70 {
             consecutiveGoodFrames += 1
         } else if !isTrackingNormal || smoothedConfidence < 0.40 {
-            // Catastrophic: notAvailable tracking or severely low confidence.
+            // Catastrophic: tracking unavailable or severely low confidence.
             consecutiveGoodFrames = 0
-        } else {
-            // Mild degradation: soft decay so a brief glitch doesn't reset progress.
-            consecutiveGoodFrames = max(0, consecutiveGoodFrames - 1)
         }
+        // else: mild degradation — hold counter, don't increment or decrement.
 
         // --- State transitions ---
-        // Require 20 consecutive good frames (≈0.33 s at 60 fps) to lock.
-        if consecutiveGoodFrames >= 20 {
+        // Require 15 consecutive good frames (≈0.25 s at 60 fps) to lock.
+        if consecutiveGoodFrames >= 15 {
             alignmentLocked = true
             alignmentState = .locked
         } else if let scanStartedAt,
