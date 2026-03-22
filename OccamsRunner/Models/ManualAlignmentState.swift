@@ -17,6 +17,10 @@ final class ManualAlignmentState {
     /// Vertical offset in meters along world Y axis (positive = up).
     var worldY: Float = 0
 
+    /// Depth offset in meters along world Z axis (positive = forward / North-ish).
+    /// Pinch-to-spread pulls the route closer (negative Z), squeeze pushes it away (positive Z).
+    var worldZ: Float = 0
+
     /// Rotation around world Y axis in radians (positive = counter-clockwise from above).
     var rotationY: Float = 0
 
@@ -27,19 +31,21 @@ final class ManualAlignmentState {
 
     var baseX: Float = 0
     var baseY: Float = 0
+    var baseZ: Float = 0
     var baseRotation: Float = 0
 
     // MARK: - Helpers
 
     var hasAdjustment: Bool {
-        worldX != 0 || worldY != 0 || rotationY != 0
+        worldX != 0 || worldY != 0 || worldZ != 0 || rotationY != 0
     }
 
-    /// Call at the end of each drag / rotation gesture to commit the live values
+    /// Call at the end of each drag / rotation / pinch gesture to commit the live values
     /// as the new base for the next gesture.
     func commitGesture() {
         baseX = worldX
         baseY = worldY
+        baseZ = worldZ
         baseRotation = rotationY
     }
 
@@ -47,9 +53,11 @@ final class ManualAlignmentState {
     func reset() {
         worldX = 0
         worldY = 0
+        worldZ = 0
         rotationY = 0
         baseX = 0
         baseY = 0
+        baseZ = 0
         baseRotation = 0
     }
 }

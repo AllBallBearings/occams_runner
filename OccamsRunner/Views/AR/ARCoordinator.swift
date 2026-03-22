@@ -515,7 +515,7 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
         routeGroupNode.simdPosition = SIMD3<Float>(
             manual.worldX,
             baseRouteY + manual.worldY,
-            0
+            manual.worldZ
         )
         routeGroupNode.simdOrientation = simd_quatf(
             angle: manual.rotationY,

@@ -31,10 +31,13 @@ struct ARRunnerView: View {
 
     // Sensitivity: meters of route shift per screen-point of drag.
     private let panSensitivity: Float = 0.004
-    // Clamp to ±3 m lateral, ±2 m vertical so the user can't
-    // accidentally fling the route off into oblivion.
+    // Depth sensitivity: (scale - 1) is mapped to meters of depth shift.
+    // scale=2 (full spread) → pull 4 m closer; scale=0.5 (full pinch) → push 2 m away.
+    private let depthSensitivity: Float = 4.0
+    // Clamp ranges so the route can't be accidentally flung out of sight.
     private let maxLateral: Float = 3.0
     private let maxVertical: Float = 2.0
+    private let maxDepth:   Float = 5.0
 
     private var route: RecordedRoute? {
         dataStore.route(for: quest.routeId)
@@ -199,6 +202,19 @@ struct ARRunnerView: View {
                         manualAlignment.commitGesture()
                     }
             )
+            .simultaneousGesture(
+                MagnificationGesture(minimumScaleDelta: 0.02)
+                    .onChanged { scale in
+                        // Spread (scale > 1) pulls route closer (negative Z = toward camera).
+                        // Pinch (scale < 1) pushes route away (positive Z = away from camera).
+                        let delta = -Float(scale - 1.0) * depthSensitivity
+                        manualAlignment.worldZ = (manualAlignment.baseZ + delta)
+                            .clamped(to: -maxDepth...maxDepth)
+                    }
+                    .onEnded { _ in
+                        manualAlignment.commitGesture()
+                    }
+            )
     }
 
     // MARK: - Alignment HUD
@@ -227,9 +243,10 @@ struct ARRunnerView: View {
                 }
 
                 if manualAlignment.hasAdjustment {
-                    Text(String(format: "Offset: X %.2f m  Y %.2f m  R %.1f°",
+                    Text(String(format: "X %.2f  Y %.2f  Z %.2f m  R %.1f°",
                                 manualAlignment.worldX,
                                 manualAlignment.worldY,
+                                manualAlignment.worldZ,
                                 manualAlignment.rotationY * 180 / .pi))
                         .font(.system(size: 9, design: .monospaced))
                         .foregroundColor(.cyan.opacity(0.85))
@@ -253,9 +270,10 @@ struct ARRunnerView: View {
 
     private var alignmentBottomControls: some View {
         VStack(spacing: 10) {
-            // Gesture hint
-            HStack(spacing: 16) {
+            // Gesture hints
+            HStack(spacing: 12) {
                 Label("Drag to shift", systemImage: "arrow.up.and.down.and.arrow.left.and.right")
+                Label("Pinch for depth", systemImage: "arrow.up.left.and.arrow.down.right")
                 Label("Twist to rotate", systemImage: "arrow.2.circlepath")
             }
             .font(.caption2)
