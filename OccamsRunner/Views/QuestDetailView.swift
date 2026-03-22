@@ -86,8 +86,8 @@ struct QuestDetailView: View {
             longitude: (lons.min()! + lons.max()!) / 2
         )
         let span = MKCoordinateSpan(
-            latitudeDelta: (lats.max()! - lats.min()!) * 1.3 + 0.002,
-            longitudeDelta: (lons.max()! - lons.min()!) * 1.3 + 0.002
+            latitudeDelta: max((lats.max()! - lats.min()!) * 1.2, 0.0002),
+            longitudeDelta: max((lons.max()! - lons.min()!) * 1.2, 0.0002)
         )
         return MKCoordinateRegion(center: center, span: span)
     }

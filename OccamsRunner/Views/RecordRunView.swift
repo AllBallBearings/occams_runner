@@ -10,7 +10,7 @@ struct RecordRunView: View {
 
     @State private var region = MKCoordinateRegion(
         center: CLLocationCoordinate2D(latitude: 37.7749, longitude: -122.4194),
-        span: MKCoordinateSpan(latitudeDelta: 0.01, longitudeDelta: 0.01)
+        span: MKCoordinateSpan(latitudeDelta: 0.003, longitudeDelta: 0.003)
     )
     @State private var showingSaveSheet = false
     @State private var routeName = ""

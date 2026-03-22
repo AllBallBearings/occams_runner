@@ -379,8 +379,8 @@ struct ARRunnerView: View {
             latitude:  (minLat + maxLat) / 2,
             longitude: (minLon + maxLon) / 2
         )
-        let spanLat = max(maxLat - minLat, 0.0005) * 1.5
-        let spanLon = max(maxLon - minLon, 0.0005) * 1.5
+        let spanLat = max((maxLat - minLat) * 1.2, 0.0002)
+        let spanLon = max((maxLon - minLon) * 1.2, 0.0002)
         return MKCoordinateRegion(
             center: center,
             span: MKCoordinateSpan(latitudeDelta: spanLat, longitudeDelta: spanLon)
