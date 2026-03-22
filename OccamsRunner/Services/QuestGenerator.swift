@@ -1,6 +1,6 @@
 import Foundation
 
-/// Generates quest items along a recorded route at specified intervals.
+/// Generates quest items and boxes along a recorded route.
 struct QuestGenerator {
 
     /// Place coins along a route at a given interval in feet.
@@ -42,5 +42,27 @@ struct QuestGenerator {
         }
 
         return items
+    }
+
+    /// Place a punchable box at every 10th coin position.
+    /// Each box occupies one of 9 slots on a vertical plane the runner walks through —
+    /// 3 columns (left / center / right) × 3 rows (low / mid / high) — chosen at random.
+    static func generateBoxes(from items: [QuestItem]) -> [QuestBox] {
+        // ~2 ft lateral spread, rows at knee / chest / above-head height
+        let lateralOptions: [Double] = [-0.6, 0.0, 0.6]
+        let verticalOptions: [Double] = [-0.5, 0.0, 0.6]
+
+        var rng = SystemRandomNumberGenerator()
+        var boxes: [QuestBox] = []
+
+        for i in stride(from: 9, to: items.count, by: 10) {
+            boxes.append(QuestBox(
+                routeProgress: items[i].routeProgress,
+                lateralOffsetMeters: lateralOptions.randomElement(using: &rng)!,
+                verticalOffsetMeters: verticalOptions.randomElement(using: &rng)!
+            ))
+        }
+
+        return boxes
     }
 }

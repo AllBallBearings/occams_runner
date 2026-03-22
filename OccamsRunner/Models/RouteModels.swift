@@ -439,6 +439,57 @@ struct QuestItem: Codable, Identifiable {
     }
 }
 
+// MARK: - Quest Box
+
+/// A punchable box placed along a route at every 10th coin position.
+/// Position is one of 9 grid slots on a vertical plane the runner walks through:
+/// 3 columns (left / center / right) × 3 rows (low / mid / high).
+struct QuestBox: Codable, Identifiable {
+    let id: UUID
+    /// Position along the route in [0, 1].
+    let routeProgress: Double
+    /// Left/right offset from route centerline in meters (negative = left, positive = right).
+    let lateralOffsetMeters: Double
+    /// Up/down offset from route altitude in meters (negative = low, positive = high).
+    let verticalOffsetMeters: Double
+
+    init(routeProgress: Double, lateralOffsetMeters: Double, verticalOffsetMeters: Double) {
+        self.id = UUID()
+        self.routeProgress = max(0, min(1, routeProgress))
+        self.lateralOffsetMeters = lateralOffsetMeters
+        self.verticalOffsetMeters = verticalOffsetMeters
+    }
+
+    /// Returns the box position in AR local space on the vertical plane the runner walks through.
+    /// Lateral offset is applied along the route's right-perpendicular axis so left/right
+    /// is always relative to the direction of travel, not world axes.
+    func resolvedLocalPosition(on route: RecordedRoute) -> SIMD3<Float>? {
+        guard let sample = route.localSample(atProgress: routeProgress) else { return nil }
+
+        // Compute route tangent from adjacent samples
+        let epsilon = 0.02
+        let prev = route.localSample(atProgress: max(0, routeProgress - epsilon))
+        let next = route.localSample(atProgress: min(1, routeProgress + epsilon))
+
+        let tangent: SIMD3<Float>
+        if let p = prev, let n = next {
+            let dir = SIMD3<Float>(Float(n.x - p.x), 0, Float(n.z - p.z))
+            tangent = simd_length(dir) > 0.001 ? simd_normalize(dir) : SIMD3<Float>(1, 0, 0)
+        } else {
+            tangent = SIMD3<Float>(1, 0, 0)
+        }
+
+        // Right-perpendicular in the horizontal plane: cross(up, tangent)
+        let up = SIMD3<Float>(0, 1, 0)
+        let right = simd_normalize(simd_cross(up, tangent))
+
+        let base = SIMD3<Float>(Float(sample.x), Float(sample.y), Float(sample.z))
+        return base
+            + right * Float(lateralOffsetMeters)
+            + up    * Float(verticalOffsetMeters)
+    }
+}
+
 // MARK: - Quest
 
 /// A quest tied to a recorded route, containing items to collect.
@@ -448,6 +499,8 @@ struct Quest: Codable, Identifiable {
     let routeId: UUID
     let dateCreated: Date
     var items: [QuestItem]
+    /// Punchable boxes placed at every 10th coin position.
+    var boxes: [QuestBox]
 
     var totalItems: Int { items.count }
     var collectedItems: Int { items.filter { $0.collected }.count }
@@ -455,12 +508,24 @@ struct Quest: Codable, Identifiable {
     var collectedPoints: Int { items.filter { $0.collected }.reduce(0) { $0 + $1.type.pointValue } }
     var isComplete: Bool { collectedItems == totalItems }
 
-    init(name: String, routeId: UUID, items: [QuestItem]) {
+    init(name: String, routeId: UUID, items: [QuestItem], boxes: [QuestBox] = []) {
         self.id = UUID()
         self.name = name
         self.routeId = routeId
         self.dateCreated = Date()
         self.items = items
+        self.boxes = boxes
+    }
+
+    // Custom decoder so quests saved before `boxes` was added still load.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id          = try c.decode(UUID.self,        forKey: .id)
+        name        = try c.decode(String.self,      forKey: .name)
+        routeId     = try c.decode(UUID.self,        forKey: .routeId)
+        dateCreated = try c.decode(Date.self,        forKey: .dateCreated)
+        items       = try c.decode([QuestItem].self, forKey: .items)
+        boxes       = try c.decodeIfPresent([QuestBox].self, forKey: .boxes) ?? []
     }
 
     /// Reset all items to uncollected for a fresh run.
