@@ -31,6 +31,8 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
     private(set) var boxNodes: [UUID: SCNNode] = [:]
     private var pendingBoxIds: Set<UUID> = []
 
+    private var arrowIndicatorNode: SCNNode?
+
     // Hand pose detection
     private let handPoseRequest: VNDetectHumanHandPoseRequest = {
         let r = VNDetectHumanHandPoseRequest()
@@ -117,6 +119,7 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
         buildRoutePath()
         buildCoinNodes(forceRebuild: true)
         buildBoxNodes(forceRebuild: true)
+        setupArrowIndicator()
         updateAlignmentStatusFromGPS()
     }
 
@@ -401,6 +404,94 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
         }
 
         onNearestItemDistance(nearest)
+        updateArrowDirection()
+    }
+
+    // MARK: - Arrow Indicator
+
+    private func setupArrowIndicator() {
+        guard let cameraNode = arView?.pointOfView else { return }
+        let arrow = createArrowIndicatorNode()
+        // Sit at the bottom-center of the view: centered (x=0), below center (y=-0.25), 0.7 m in front
+        arrow.position = SCNVector3(0, -0.25, -0.7)
+        arrow.isHidden = true
+        // Always draw on top of AR geometry so it isn't occluded by route nodes
+        arrow.renderingOrder = 100
+        cameraNode.addChildNode(arrow)
+        arrowIndicatorNode = arrow
+    }
+
+    private func createArrowIndicatorNode() -> SCNNode {
+        let mat = SCNMaterial()
+        mat.diffuse.contents  = UIColor.orange
+        mat.emission.contents = UIColor(red: 1.0, green: 0.5, blue: 0.0, alpha: 1.0)
+        mat.isDoubleSided = true
+
+        // Shaft: thin cylinder along +Y
+        let shaft = SCNCylinder(radius: 0.006, height: 0.055)
+        shaft.materials = [mat]
+        let shaftNode = SCNNode(geometry: shaft)
+
+        // Head: cone with tip at +Y, base at shaft top
+        let head = SCNCone(topRadius: 0, bottomRadius: 0.018, height: 0.035)
+        head.materials = [mat]
+        let headNode = SCNNode(geometry: head)
+        headNode.position = SCNVector3(0, 0.045, 0)
+
+        let container = SCNNode()
+        container.addChildNode(shaftNode)
+        container.addChildNode(headNode)
+        return container
+    }
+
+    private func updateArrowDirection() {
+        guard let arrow = arrowIndicatorNode,
+              let cameraNode = arView?.pointOfView else { return }
+
+        guard runMode == .running, !coinNodes.isEmpty else {
+            arrow.isHidden = true
+            return
+        }
+
+        // Find nearest coin by world-space distance to the camera
+        let camPos = cameraNode.worldPosition
+        var nearest: SCNNode?
+        var nearestDist: Float = .infinity
+
+        for (_, node) in coinNodes {
+            let d = ARCoordinator.distance3D(camPos, node.worldPosition)
+            if d < nearestDist { nearestDist = d; nearest = node }
+        }
+
+        // Hide when the coin is close enough to see directly
+        guard let target = nearest, nearestDist > 2.0 else {
+            arrow.isHidden = true
+            return
+        }
+
+        arrow.isHidden = false
+
+        // Compute direction from arrow's position to the coin, in camera-local space
+        let coinCamLocal  = cameraNode.convertPosition(target.worldPosition, from: nil)
+        let arrowCamLocal = arrow.position
+        let dir = simd_float3(
+            coinCamLocal.x - arrowCamLocal.x,
+            coinCamLocal.y - arrowCamLocal.y,
+            coinCamLocal.z - arrowCamLocal.z
+        )
+        guard simd_length(dir) > 0.01 else { return }
+        let dirNorm = simd_normalize(dir)
+
+        // Rotate arrow so its +Y tip axis points toward the coin
+        let yAxis = simd_float3(0, 1, 0)
+        let dot = simd_dot(yAxis, dirNorm)
+        if dot > 0.9999 {
+            arrow.simdOrientation = simd_quatf(ix: 0, iy: 0, iz: 0, r: 1)
+        } else if dot < -0.9999 {
+            arrow.simdOrientation = simd_quatf(angle: .pi, axis: simd_float3(1, 0, 0))
+        } else {
+            arrow.simdOrientation = simd_quatf(from: yAxis, to: dirNorm)
+        }
     }
 
     // MARK: - Alignment
@@ -700,16 +791,7 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
         material.isDoubleSided = true
         box.materials = [material]
 
-        let node = SCNNode(geometry: box)
-
-        // Slow idle rotation so the box is visually distinct from coins
-        let spin = CABasicAnimation(keyPath: "eulerAngles.y")
-        spin.byValue = Float.pi * 2
-        spin.duration = 5.0
-        spin.repeatCount = .infinity
-        node.addAnimation(spin, forKey: "spin")
-
-        return node
+        return SCNNode(geometry: box)
     }
 
     private func createCoinNode() -> SCNNode {
