@@ -10,6 +10,8 @@ struct ARRunnerContainerView: UIViewRepresentable {
     let dataStore: DataStore
     let locationService: LocationService
     let runMode: ARRunMode
+    /// Shared state object that carries user-applied manual alignment corrections.
+    let manualAlignment: ManualAlignmentState
     let onAlignmentUpdate: (ARAlignmentState, Double, Double?, Bool) -> Void
     let onNearestItemDistance: (Double?) -> Void
     let onItemCollected: (UUID) -> Void
@@ -37,6 +39,8 @@ struct ARRunnerContainerView: UIViewRepresentable {
         arView.session.run(config, options: [.resetTracking, .removeExistingAnchors])
 
         context.coordinator.arView = arView
+        // Wire the manual alignment state before the initial scene is built.
+        context.coordinator.manualAlignment = manualAlignment
         context.coordinator.configureInitialScene()
 
         return arView
@@ -54,6 +58,10 @@ struct ARRunnerContainerView: UIViewRepresentable {
         context.coordinator.onAlignmentUpdate     = onAlignmentUpdate
         context.coordinator.onNearestItemDistance = onNearestItemDistance
         context.coordinator.onDebugTick          = onDebugTick
+
+        // Keep the manual alignment reference in sync (same instance in practice,
+        // but explicit assignment ensures correctness across any future refactors).
+        context.coordinator.manualAlignment = manualAlignment
 
         // Always pull the live quest from dataStore rather than using the
         // struct-captured snapshot — the snapshot goes stale the moment any

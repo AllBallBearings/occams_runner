@@ -85,8 +85,8 @@ struct RouteDetailView: View {
             longitude: (minLon + maxLon) / 2
         )
         let span = MKCoordinateSpan(
-            latitudeDelta: (maxLat - minLat) * 1.3 + 0.002,
-            longitudeDelta: (maxLon - minLon) * 1.3 + 0.002
+            latitudeDelta: max((maxLat - minLat) * 1.2, 0.0002),
+            longitudeDelta: max((maxLon - minLon) * 1.2, 0.0002)
         )
         return MKCoordinateRegion(center: center, span: span)
     }
