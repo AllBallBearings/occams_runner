@@ -135,6 +135,11 @@ struct ARRunnerView: View {
                 }
             }
         }
+        .overlay {
+            if showingCompletionAlert {
+                questCompleteOverlay
+            }
+        }
         .onAppear {
             locationService.startUpdating()
             if liveQuest.isComplete {
@@ -145,14 +150,6 @@ struct ARRunnerView: View {
             if liveQuest.isComplete {
                 showingCompletionAlert = true
             }
-        }
-        .alert("Quest Complete!", isPresented: $showingCompletionAlert) {
-            Button("Finish") {
-                dataStore.clearPausedSession(for: quest.id)
-                dismiss()
-            }
-        } message: {
-            Text("You collected all \(liveQuest.totalItems) coins!")
         }
         .confirmationDialog(
             "Pause or Exit Run?",
@@ -482,6 +479,95 @@ struct ARRunnerView: View {
     private func pauseAndDismiss() {
         dataStore.savePausedSession(for: quest.id)
         dismiss()
+    }
+
+    // MARK: - Quest Complete Overlay
+
+    private var questCompleteOverlay: some View {
+        ZStack {
+            // Dim the AR scene behind the card.
+            Color.black.opacity(0.6)
+                .ignoresSafeArea()
+
+            VStack(spacing: 0) {
+                // Trophy burst
+                ZStack {
+                    Circle()
+                        .fill(
+                            RadialGradient(
+                                colors: [Color.yellow.opacity(0.35), Color.clear],
+                                center: .center,
+                                startRadius: 20,
+                                endRadius: 80
+                            )
+                        )
+                        .frame(width: 160, height: 160)
+
+                    Image(systemName: "trophy.fill")
+                        .font(.system(size: 72))
+                        .foregroundStyle(
+                            LinearGradient(
+                                colors: [Color(red: 1.0, green: 0.84, blue: 0.0), Color.orange],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
+                        )
+                }
+                .padding(.top, 36)
+                .padding(.bottom, 12)
+
+                Text("Quest Complete!")
+                    .font(.system(size: 30, weight: .bold, design: .rounded))
+                    .foregroundColor(.white)
+
+                Text(liveQuest.name)
+                    .font(.subheadline)
+                    .foregroundColor(.white.opacity(0.75))
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 24)
+                    .padding(.top, 4)
+
+                // Stat pill
+                HStack(spacing: 8) {
+                    Image(systemName: "circle.circle.fill")
+                        .foregroundColor(.yellow)
+                    Text("\(liveQuest.totalItems) of \(liveQuest.totalItems) coins collected")
+                        .fontWeight(.semibold)
+                }
+                .font(.callout)
+                .foregroundColor(.white)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 10)
+                .background(Color.white.opacity(0.12))
+                .clipShape(Capsule())
+                .padding(.top, 20)
+
+                // Finish button
+                Button {
+                    dataStore.clearPausedSession(for: quest.id)
+                    dismiss()
+                } label: {
+                    Text("Finish")
+                        .font(.headline)
+                        .fontWeight(.bold)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 16)
+                        .background(Color.yellow)
+                        .foregroundColor(.black)
+                        .clipShape(Capsule())
+                        .padding(.horizontal, 32)
+                }
+                .padding(.top, 28)
+                .padding(.bottom, 36)
+            }
+            .background(
+                RoundedRectangle(cornerRadius: 28, style: .continuous)
+                    .fill(.ultraThinMaterial)
+            )
+            .padding(.horizontal, 28)
+        }
+        .transition(.opacity.combined(with: .scale(scale: 0.92)))
+        .animation(.spring(response: 0.45, dampingFraction: 0.8), value: showingCompletionAlert)
     }
 
     // MARK: - Collection
