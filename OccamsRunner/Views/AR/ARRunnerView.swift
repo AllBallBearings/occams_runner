@@ -575,6 +575,9 @@ struct ARRunnerView: View {
     private func handleCollection(itemId: UUID) {
         let generator = UINotificationFeedbackGenerator()
         generator.notificationOccurred(.success)
+        if liveQuest.isComplete {
+            showingCompletionAlert = true
+        }
     }
 }
 
