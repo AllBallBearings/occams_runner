@@ -517,11 +517,36 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
     /// are visible in real-time as the user drags/rotates.
     private func applyManualAlignment() {
         guard let manual = manualAlignment else { return }
-        routeGroupNode.simdPosition = SIMD3<Float>(
-            manual.worldX,
-            baseRouteY + manual.worldY,
-            manual.worldZ
-        )
+
+        // Convert camera-relative offsets to AR world-space coordinates so the
+        // route slides in the direction the user actually dragged regardless of
+        // which way the camera is facing.
+        //
+        //   manual.worldX  = "screen right" offset  (drag right → route goes right on screen)
+        //   manual.worldZ  = "screen depth" offset  (spread → closer, pinch → further)
+        //   manual.worldY  = vertical offset         (drag up → route goes up; Y is up in both spaces)
+        //
+        // We flatten the camera's right and forward vectors onto the horizontal
+        // plane so that tilting the phone doesn't cause vertical drift during
+        // a horizontal drag.
+        var posX: Float = manual.worldX
+        var posZ: Float = manual.worldZ
+
+        if let cam = arView?.session.currentFrame?.camera.transform {
+            // Camera's right vector is its X column; forward is -Z column (ARKit looks in -Z).
+            let rightFlat   = SIMD3<Float>( cam.columns.0.x, 0,  cam.columns.0.z)
+            let forwardFlat = SIMD3<Float>(-cam.columns.2.x, 0, -cam.columns.2.z)
+
+            // Guard against degenerate vectors (phone pointing nearly straight up/down).
+            if simd_length(rightFlat) > 0.001 && simd_length(forwardFlat) > 0.001 {
+                let r = simd_normalize(rightFlat)   * manual.worldX
+                let f = simd_normalize(forwardFlat) * manual.worldZ
+                posX = r.x + f.x
+                posZ = r.z + f.z
+            }
+        }
+
+        routeGroupNode.simdPosition = SIMD3<Float>(posX, baseRouteY + manual.worldY, posZ)
         routeGroupNode.simdOrientation = simd_quatf(
             angle: manual.rotationY,
             axis: SIMD3<Float>(0, 1, 0)
