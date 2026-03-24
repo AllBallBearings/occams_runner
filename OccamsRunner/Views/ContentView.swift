@@ -5,19 +5,24 @@ struct ContentView: View {
 
     var body: some View {
         TabView {
-            RecordRunView()
+            HomeView()
                 .tabItem {
-                    Label("Record", systemImage: "figure.run")
+                    Label("Home", systemImage: "house.fill")
                 }
 
             RoutesListView()
                 .tabItem {
-                    Label("Routes", systemImage: "map")
+                    Label("Routes", systemImage: "point.bottomleft.forward.to.point.topright.scurvepath.fill")
                 }
 
             QuestsListView()
                 .tabItem {
-                    Label("Quests", systemImage: "star.circle")
+                    Label("Challenges", systemImage: "trophy")
+                }
+
+            ProfileView()
+                .tabItem {
+                    Label("Profile", systemImage: "person.circle")
                 }
         }
         .accentColor(.orange)
