@@ -3,7 +3,7 @@ import MapKit
 
 // MARK: - Route Map Snapshot
 
-private struct RouteSnapshotView: View {
+struct RouteSnapshotView: View {
     let route: RecordedRoute
     @State private var image: UIImage?
 
