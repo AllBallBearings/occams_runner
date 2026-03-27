@@ -438,25 +438,53 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
     }
 
     private func createArrowIndicatorNode() -> SCNNode {
+        // Flat arrow using UIBezierPath + SCNShape, extruded slightly for a 3D tile / embossed look.
+        // The path is centred at origin with the tip in +Y direction.
+        let halfHeadW: CGFloat = 0.040   // half-width of arrowhead
+        let halfShaftW: CGFloat = 0.016  // half-width of shaft
+        let totalLen: CGFloat  = 0.095   // total arrow length
+        let headLen: CGFloat   = 0.038   // arrowhead length
+
+        let tipY  =  totalLen / 2
+        let neckY =  tipY - headLen      // where arrowhead meets shaft
+        let baseY = -totalLen / 2
+
+        let path = UIBezierPath()
+        path.move(to: CGPoint(x:  0,          y: tipY))   // tip
+        path.addLine(to: CGPoint(x:  halfHeadW,  y: neckY))   // right shoulder
+        path.addLine(to: CGPoint(x:  halfShaftW, y: neckY))   // right neck
+        path.addLine(to: CGPoint(x:  halfShaftW, y: baseY))   // right shaft base
+        path.addLine(to: CGPoint(x: -halfShaftW, y: baseY))   // left shaft base
+        path.addLine(to: CGPoint(x: -halfShaftW, y: neckY))   // left neck
+        path.addLine(to: CGPoint(x: -halfHeadW,  y: neckY))   // left shoulder
+        path.close()
+
+        let shape = SCNShape(path: path, extrusionDepth: 0.009)
+        shape.chamferRadius = 0.003
+
         let mat = SCNMaterial()
-        mat.diffuse.contents  = UIColor.orange
-        mat.emission.contents = UIColor(red: 1.0, green: 0.5, blue: 0.0, alpha: 1.0)
+        mat.diffuse.contents  = UIColor(red: 1.0, green: 0.50, blue: 0.0, alpha: 1.0)
+        mat.emission.contents = UIColor(red: 1.0, green: 0.30, blue: 0.0, alpha: 0.45)
+        mat.metalness.contents = 0.45
+        mat.roughness.contents = 0.30
         mat.isDoubleSided = true
+        shape.materials = [mat]
 
-        // Shaft: thin cylinder along +Y
-        let shaft = SCNCylinder(radius: 0.006, height: 0.055)
-        shaft.materials = [mat]
-        let shaftNode = SCNNode(geometry: shaft)
-
-        // Head: cone with tip at +Y, base at shaft top
-        let head = SCNCone(topRadius: 0, bottomRadius: 0.018, height: 0.035)
-        head.materials = [mat]
-        let headNode = SCNNode(geometry: head)
-        headNode.position = SCNVector3(0, 0.045, 0)
+        // Rotating -90° around X maps +Y → -Z (camera forward) and extrusion (+Z) → +Y
+        // so the slab lies flat in the horizontal XZ plane, tip pointing forward by default.
+        let shapeNode = SCNNode(geometry: shape)
+        shapeNode.eulerAngles = SCNVector3(-Float.pi / 2, 0, 0)
 
         let container = SCNNode()
-        container.addChildNode(shaftNode)
-        container.addChildNode(headNode)
+        container.addChildNode(shapeNode)
+
+        // Subtle scale pulse so the arrow draws the eye
+        let pulseAction = SCNAction.sequence([
+            SCNAction.scale(to: 1.10, duration: 0.65),
+            SCNAction.scale(to: 1.00, duration: 0.65)
+        ])
+        container.runAction(SCNAction.repeatForever(pulseAction))
+
         return container
     }
 
@@ -487,27 +515,19 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
 
         arrow.isHidden = false
 
-        // Compute direction from arrow's position to the coin, in camera-local space
-        let coinCamLocal  = cameraNode.convertPosition(target.worldPosition, from: nil)
-        let arrowCamLocal = arrow.position
-        let dir = simd_float3(
-            coinCamLocal.x - arrowCamLocal.x,
-            coinCamLocal.y - arrowCamLocal.y,
-            coinCamLocal.z - arrowCamLocal.z
-        )
-        guard simd_length(dir) > 0.01 else { return }
-        let dirNorm = simd_normalize(dir)
+        // Direction to coin in camera-local space, projected onto the horizontal (XZ) plane only.
+        // Y is ignored so the flat arrow never tilts up/down — it only spins around its vertical axis.
+        let coinCamLocal = cameraNode.convertPosition(target.worldPosition, from: nil)
+        let arrowPos = arrow.position
+        let dx = coinCamLocal.x - arrowPos.x
+        let dz = coinCamLocal.z - arrowPos.z
 
-        // Rotate arrow so its +Y tip axis points toward the coin
-        let yAxis = simd_float3(0, 1, 0)
-        let dot = simd_dot(yAxis, dirNorm)
-        if dot > 0.9999 {
-            arrow.simdOrientation = simd_quatf(ix: 0, iy: 0, iz: 0, r: 1)
-        } else if dot < -0.9999 {
-            arrow.simdOrientation = simd_quatf(angle: .pi, axis: simd_float3(1, 0, 0))
-        } else {
-            arrow.simdOrientation = simd_quatf(from: yAxis, to: dirNorm)
-        }
+        guard dx * dx + dz * dz > 1e-4 else { return }
+
+        // The flat arrow geometry points in –Z (camera forward) when Y rotation is 0.
+        // atan2(-dx, -dz) maps: coin ahead → 0, coin right → –π/2, coin left → +π/2.
+        let angle = atan2(-dx, -dz)
+        arrow.simdEulerAngles = simd_float3(0, angle, 0)
     }
 
     // MARK: - Manual Alignment
