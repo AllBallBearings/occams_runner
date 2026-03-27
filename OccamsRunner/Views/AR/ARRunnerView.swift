@@ -594,64 +594,25 @@ struct ARRunnerView: View {
 
     private var questCompleteOverlay: some View {
         ZStack {
-            Color.black.opacity(0.6).ignoresSafeArea()
+            // Dim the AR scene
+            Color.black.opacity(0.72).ignoresSafeArea()
 
-            VStack(spacing: 0) {
-                ZStack {
-                    Circle()
-                        .fill(RadialGradient(
-                            colors: [Color.yellow.opacity(0.35), Color.clear],
-                            center: .center, startRadius: 20, endRadius: 80
-                        ))
-                        .frame(width: 160, height: 160)
-                    Image(systemName: "trophy.fill")
-                        .font(.system(size: 72))
-                        .foregroundStyle(LinearGradient(
-                            colors: [Color(red: 1, green: 0.84, blue: 0), .orange],
-                            startPoint: .top, endPoint: .bottom
-                        ))
+            ScrollView(showsIndicators: false) {
+                VStack(spacing: 0) {
+                    Spacer(minLength: 40)
+                    QuestCompleteCard(
+                        quest: liveQuest,
+                        route: route,
+                        onClaim: {
+                            dataStore.clearPausedSession(for: quest.id)
+                            dismiss()
+                        }
+                    )
+                    Spacer(minLength: 40)
                 }
-                .padding(.top, 36).padding(.bottom, 12)
-
-                Text("Quest Complete!")
-                    .font(.system(size: 30, weight: .bold, design: .rounded))
-                    .foregroundColor(.white)
-                Text(liveQuest.name)
-                    .font(.subheadline).foregroundColor(.white.opacity(0.75))
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 24).padding(.top, 4)
-
-                HStack(spacing: 8) {
-                    Text("🪙")
-                    Text("\(liveQuest.totalItems) of \(liveQuest.totalItems) coins collected")
-                        .fontWeight(.semibold)
-                }
-                .font(.callout).foregroundColor(.white)
-                .padding(.horizontal, 20).padding(.vertical, 10)
-                .background(Color.white.opacity(0.12))
-                .clipShape(Capsule())
-                .padding(.top, 20)
-
-                Button {
-                    dataStore.clearPausedSession(for: quest.id)
-                    dismiss()
-                } label: {
-                    Text("Finish")
-                        .font(.headline).fontWeight(.bold)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 16)
-                        .background(Color.yellow)
-                        .foregroundColor(.black)
-                        .clipShape(Capsule())
-                        .padding(.horizontal, 32)
-                }
-                .padding(.top, 28).padding(.bottom, 36)
             }
-            .background(RoundedRectangle(cornerRadius: 28, style: .continuous)
-                .fill(.ultraThinMaterial))
-            .padding(.horizontal, 28)
         }
-        .transition(.opacity.combined(with: .scale(scale: 0.92)))
+        .transition(.opacity.combined(with: .scale(scale: 0.94)))
         .animation(.spring(response: 0.45, dampingFraction: 0.8), value: showingCompletionAlert)
     }
 
@@ -700,6 +661,129 @@ struct ARRunnerView: View {
                 longitudeDelta: max((lons.max()! - lons.min()!) * 1.3, 0.0002)
             )
         )
+    }
+}
+
+// MARK: - Quest Complete Card
+
+private struct QuestCompleteCard: View {
+    let quest: Quest
+    let route: RecordedRoute?
+    let onClaim: () -> Void
+
+    @State private var starsIn = false
+
+    var body: some View {
+        VStack(spacing: 18) {
+            // Title
+            Text("Quest Complete!")
+                .font(.system(size: 34, weight: .heavy))
+                .foregroundColor(.orange)
+                .shadow(color: .orange.opacity(0.5), radius: 8)
+
+            // 5 animated stars
+            HStack(spacing: 10) {
+                ForEach(0..<5) { i in
+                    Image(systemName: "star.fill")
+                        .font(.system(size: 38))
+                        .foregroundStyle(
+                            LinearGradient(
+                                colors: [.yellow, Color(red: 1, green: 0.72, blue: 0)],
+                                startPoint: .top, endPoint: .bottom
+                            )
+                        )
+                        .shadow(color: .yellow.opacity(0.55), radius: 6)
+                        .scaleEffect(starsIn ? 1.0 : 0.25)
+                        .opacity(starsIn ? 1 : 0)
+                        .animation(
+                            .spring(response: 0.38, dampingFraction: 0.52)
+                                .delay(Double(i) * 0.09),
+                            value: starsIn
+                        )
+                }
+            }
+
+            // 3D route map
+            if let route {
+                Route3DMapPreview(route: route)
+                    .frame(height: 220)
+                    .clipShape(RoundedRectangle(cornerRadius: 16))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 16)
+                            .stroke(
+                                LinearGradient(
+                                    colors: [.orange, Color(red: 0.9, green: 0.3, blue: 0)],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                ),
+                                lineWidth: 2
+                            )
+                    )
+                    .shadow(color: .orange.opacity(0.45), radius: 12)
+            }
+
+            // Coins collected tile
+            HStack(spacing: 14) {
+                Image(systemName: "dollarsign.circle.fill")
+                    .font(.system(size: 36))
+                    .foregroundColor(.orange)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("\(quest.totalItems)")
+                        .font(.system(size: 36, weight: .bold, design: .rounded))
+                        .foregroundColor(.orange)
+                    Text("Coins Collected")
+                        .font(.subheadline)
+                        .foregroundColor(.white.opacity(0.65))
+                }
+                Spacer()
+                Text("🪙 \(quest.totalItems) / \(quest.totalItems)")
+                    .font(.callout).fontWeight(.semibold)
+                    .foregroundColor(.white.opacity(0.5))
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 16)
+            .background(Color(red: 0.22, green: 0.10, blue: 0.02))
+            .clipShape(RoundedRectangle(cornerRadius: 14))
+            .overlay(
+                RoundedRectangle(cornerRadius: 14)
+                    .stroke(Color.orange.opacity(0.35), lineWidth: 1)
+            )
+
+            // Claim Rewards button
+            Button(action: onClaim) {
+                Text("Claim Rewards")
+                    .font(.system(size: 20, weight: .bold))
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 18)
+                    .background(
+                        LinearGradient(
+                            colors: [Color(red: 1, green: 0.52, blue: 0.05),
+                                     Color(red: 0.85, green: 0.32, blue: 0)],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                    )
+                    .clipShape(RoundedRectangle(cornerRadius: 14))
+                    .shadow(color: .orange.opacity(0.45), radius: 10)
+            }
+        }
+        .padding(22)
+        .background(
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .fill(Color(white: 0.08).opacity(0.97))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .stroke(Color.orange.opacity(0.45), lineWidth: 1.5)
+        )
+        .shadow(color: .orange.opacity(0.2), radius: 20)
+        .padding(.horizontal, 20)
+        .onAppear {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                starsIn = true
+            }
+        }
     }
 }
 

@@ -3,12 +3,12 @@ import MapKit
 
 // MARK: - Neon polyline helpers (two layers: wide glow + narrow core)
 
-private final class GlowPolyline: MKPolyline {}
-private final class CorePolyline: MKPolyline {}
+final class GlowPolyline: MKPolyline {}
+final class CorePolyline: MKPolyline {}
 
 // MARK: - 3D Map Preview
 
-private struct Route3DMapPreview: UIViewRepresentable {
+struct Route3DMapPreview: UIViewRepresentable {
     let route: RecordedRoute
 
     func makeUIView(context: Context) -> MKMapView {
