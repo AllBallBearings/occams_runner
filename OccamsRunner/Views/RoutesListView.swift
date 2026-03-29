@@ -48,9 +48,11 @@ struct RouteSnapshotView: View {
             span: MKCoordinateSpan(latitudeDelta: spanLat, longitudeDelta: spanLon)
         )
         options.size = CGSize(width: 280, height: 240)
-        let mapConfig = MKStandardMapConfiguration(elevationStyle: .flat)
-        mapConfig.pointOfInterestFilter = .excludingAll
-        options.preferredConfiguration = mapConfig
+        if #available(iOS 17.0, *) {
+            let mapConfig = MKStandardMapConfiguration(elevationStyle: .flat)
+            mapConfig.pointOfInterestFilter = .excludingAll
+            options.preferredConfiguration = mapConfig
+        }
         options.traitCollection = UITraitCollection(userInterfaceStyle: .dark)
 
         return await withCheckedContinuation { continuation in
@@ -85,6 +87,10 @@ struct RoutesListView: View {
     @EnvironmentObject var dataStore: DataStore
     @State private var searchText = ""
     @State private var viewMode: RouteViewMode = .ar
+
+    // Rename state
+    @State private var renamingRoute: RecordedRoute? = nil
+    @State private var renameText = ""
 
     enum RouteViewMode { case ar, map }
 
@@ -133,6 +139,22 @@ struct RoutesListView: View {
                 }
             }
             .toolbar(.hidden, for: .navigationBar)
+            // Rename alert — presented at the NavigationStack level so it overlays correctly
+            .alert("Rename Route", isPresented: Binding(
+                get: { renamingRoute != nil },
+                set: { if !$0 { renamingRoute = nil } }
+            )) {
+                TextField("Route name", text: $renameText)
+                Button("Save") {
+                    if let route = renamingRoute, !renameText.trimmingCharacters(in: .whitespaces).isEmpty {
+                        dataStore.renameRoute(route, to: renameText.trimmingCharacters(in: .whitespaces))
+                    }
+                    renamingRoute = nil
+                }
+                Button("Cancel", role: .cancel) { renamingRoute = nil }
+            } message: {
+                Text("Enter a new name for this route.")
+            }
         }
     }
 
@@ -187,52 +209,12 @@ struct RoutesListView: View {
         let (level, levelLabel) = questLevel(coinCount: coinCount)
 
         return VStack(spacing: 0) {
-            HStack(alignment: .top, spacing: 12) {
-                // Map thumbnail
-                RouteSnapshotView(route: route)
-                    .frame(width: 140, height: 115)
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
-
-                // Route info
-                VStack(alignment: .leading, spacing: 7) {
-                    Text(route.name)
-                        .font(.system(size: 18, weight: .bold))
-                        .foregroundColor(.white)
-                        .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
-
-                    if quest != nil {
-                        questInfoRows(level: level, levelLabel: levelLabel, coinCount: coinCount)
-                    } else {
-                        Text("No quest — tap to create one")
-                            .font(.caption)
-                            .foregroundColor(.white.opacity(0.4))
-                        Text(String(format: "%.2f mi", route.totalDistanceMiles))
-                            .font(.caption)
-                            .foregroundColor(.white.opacity(0.45))
-                    }
-
-                    Spacer(minLength: 0)
-                }
-                .padding(.top, 4)
-
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 12)
-            .padding(.top, 12)
-            .padding(.bottom, quest != nil ? 10 : 14)
-
-            // Start Quest button — only when a quest exists
-            if quest != nil {
-                Text("Start Quest")
-                    .font(.system(size: 16, weight: .bold))
-                    .foregroundColor(.black)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 13)
-                    .background(Color.green)
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
-                    .padding(.horizontal, 12)
-                    .padding(.bottom, 12)
+            if viewMode == .map {
+                mapModeCardContent(route: route, quest: quest,
+                                   coinCount: coinCount, level: level, levelLabel: levelLabel)
+            } else {
+                arModeCardContent(route: route, quest: quest,
+                                  coinCount: coinCount, level: level, levelLabel: levelLabel)
             }
         }
         .background(Color(white: 0.06))
@@ -242,6 +224,120 @@ struct RoutesListView: View {
                 .stroke(Color.cyan.opacity(0.65), lineWidth: 1.5)
         )
         .shadow(color: Color.cyan.opacity(0.3), radius: 10)
+    }
+
+    // AR Mode — thumbnail left, stats right
+    @ViewBuilder
+    private func arModeCardContent(route: RecordedRoute, quest: Quest?,
+                                   coinCount: Int, level: Int, levelLabel: String) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            RouteSnapshotView(route: route)
+                .frame(width: 140, height: 115)
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+
+            VStack(alignment: .leading, spacing: 7) {
+                nameRow(route: route)
+
+                Text(route.dateRecorded, style: .date)
+                    .font(.caption2)
+                    .foregroundColor(.white.opacity(0.35))
+
+                if quest != nil {
+                    questInfoRows(level: level, levelLabel: levelLabel, coinCount: coinCount)
+                } else {
+                    Text("No quest — tap to create one")
+                        .font(.caption)
+                        .foregroundColor(.white.opacity(0.4))
+                    Text(String(format: "%.2f mi", route.totalDistanceMiles))
+                        .font(.caption)
+                        .foregroundColor(.white.opacity(0.45))
+                }
+
+                Spacer(minLength: 0)
+            }
+            .padding(.top, 4)
+
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .padding(.top, 12)
+        .padding(.bottom, 10)
+
+        reviewRouteButton
+    }
+
+    // Map Mode — full-width live 3D map, condensed info below
+    @ViewBuilder
+    private func mapModeCardContent(route: RecordedRoute, quest: Quest?,
+                                    coinCount: Int, level: Int, levelLabel: String) -> some View {
+        Route3DMapPreview(route: route)
+            .frame(height: 210)
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .padding(.horizontal, 12)
+            .padding(.top, 12)
+
+        HStack(alignment: .center, spacing: 10) {
+            VStack(alignment: .leading, spacing: 3) {
+                nameRow(route: route)
+                HStack(spacing: 8) {
+                    Text(route.dateRecorded, style: .date)
+                        .font(.caption2)
+                        .foregroundColor(.white.opacity(0.35))
+                    if quest != nil {
+                        Text("·")
+                            .foregroundColor(.white.opacity(0.2))
+                        Text("\(coinCount) coins")
+                            .font(.caption2)
+                            .foregroundColor(.orange)
+                    } else {
+                        Text("·")
+                            .foregroundColor(.white.opacity(0.2))
+                        Text(String(format: "%.2f mi", route.totalDistanceMiles))
+                            .font(.caption2)
+                            .foregroundColor(.white.opacity(0.4))
+                    }
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+
+        reviewRouteButton
+    }
+
+    private func nameRow(route: RecordedRoute) -> some View {
+        HStack(spacing: 6) {
+            Text(route.name)
+                .font(.system(size: 17, weight: .bold))
+                .foregroundColor(.white)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+            Button {
+                renameText = route.name
+                renamingRoute = route
+            } label: {
+                Image(systemName: "pencil")
+                    .font(.caption)
+                    .foregroundColor(.white.opacity(0.4))
+                    .padding(6)
+                    .background(Color.white.opacity(0.08))
+                    .clipShape(Circle())
+            }
+        }
+    }
+
+    private var reviewRouteButton: some View {
+        Text("Review Route")
+            .font(.system(size: 16, weight: .bold))
+            .foregroundColor(.black)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 13)
+            .background(Color.cyan)
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .padding(.horizontal, 12)
+            .padding(.bottom, 12)
     }
 
     @ViewBuilder

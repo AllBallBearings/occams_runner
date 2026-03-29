@@ -14,11 +14,11 @@ struct Route3DMapPreview: UIViewRepresentable {
     func makeUIView(context: Context) -> MKMapView {
         let mapView = MKMapView()
         mapView.overrideUserInterfaceStyle = .dark
-        mapView.isScrollEnabled  = false
-        mapView.isZoomEnabled    = false
-        mapView.isRotateEnabled  = false
-        mapView.isPitchEnabled   = false
-        mapView.showsBuildings   = true
+        mapView.isScrollEnabled   = true
+        mapView.isZoomEnabled     = true
+        mapView.isRotateEnabled   = false
+        mapView.isPitchEnabled    = false
+        mapView.showsBuildings    = true
         mapView.showsUserLocation = false
         mapView.pointOfInterestFilter = .excludingAll
         mapView.delegate = context.coordinator
@@ -28,14 +28,15 @@ struct Route3DMapPreview: UIViewRepresentable {
         }
         guard !coords.isEmpty else { return mapView }
 
-        // Glow layer (wide, semi-transparent)
         mapView.addOverlay(GlowPolyline(coordinates: coords, count: coords.count),
                            level: .aboveRoads)
-        // Core layer (narrow, bright)
         mapView.addOverlay(CorePolyline(coordinates: coords, count: coords.count),
                            level: .aboveRoads)
 
-        mapView.setCamera(makeCamera(coords: coords), animated: false)
+        // Defer camera fit until after SwiftUI has sized the view
+        DispatchQueue.main.async {
+            fitRoute(on: mapView, coords: coords)
+        }
         return mapView
     }
 
@@ -43,22 +44,28 @@ struct Route3DMapPreview: UIViewRepresentable {
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
-    private func makeCamera(coords: [CLLocationCoordinate2D]) -> MKMapCamera {
-        let lats = coords.map(\.latitude)
-        let lons = coords.map(\.longitude)
-        let center = CLLocationCoordinate2D(
-            latitude:  (lats.min()! + lats.max()!) / 2,
-            longitude: (lons.min()! + lons.max()!) / 2
+    private func fitRoute(on mapView: MKMapView, coords: [CLLocationCoordinate2D]) {
+        // Build the MKMapRect that tightly wraps all route coordinates
+        let points = coords.map(MKMapPoint.init)
+        var rect = MKMapRect.null
+        for p in points {
+            rect = rect.union(MKMapRect(x: p.x, y: p.y, width: 0, height: 0))
+        }
+
+        // Let MapKit pick the exact altitude needed to fill the frame with 40 pt padding
+        let padding = UIEdgeInsets(top: 40, left: 40, bottom: 40, right: 40)
+        mapView.setVisibleMapRect(rect, edgePadding: padding, animated: false)
+
+        // Re-apply 3D pitch at the altitude MapKit just chose
+        let fittedAltitude = mapView.camera.altitude
+        let center         = mapView.camera.centerCoordinate
+        mapView.setCamera(
+            MKMapCamera(lookingAtCenter: center,
+                        fromDistance: fittedAltitude,
+                        pitch: 55,
+                        heading: 0),
+            animated: false
         )
-        let latMeters = (lats.max()! - lats.min()!) * 111_000
-        let lonMeters = (lons.max()! - lons.min()!) * 111_000
-                      * cos(center.latitude * .pi / 180)
-        let diagonal  = (latMeters * latMeters + lonMeters * lonMeters).squareRoot()
-        let altitude  = max(diagonal * 1.9, 400)
-        return MKMapCamera(lookingAtCenter: center,
-                           fromDistance: altitude,
-                           pitch: 55,
-                           heading: 0)
     }
 
     // MARK: Coordinator

@@ -17,7 +17,7 @@ struct ContentView: View {
 
             QuestsListView()
                 .tabItem {
-                    Label("Challenges", systemImage: "trophy")
+                    Label("Quests", systemImage: "trophy")
                 }
 
             ProfileView()

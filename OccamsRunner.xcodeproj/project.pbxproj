@@ -27,6 +27,9 @@
 		A10021 /* ARCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20021 /* ARCoordinator.swift */; };
 		A10022 /* CollectionEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20022 /* CollectionEngine.swift */; };
 		A10023 /* ManualAlignmentState.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20023 /* ManualAlignmentState.swift */; };
+		A10024 /* SplashScreenView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20024 /* SplashScreenView.swift */; };
+		A10025 /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20025 /* HomeView.swift */; };
+		A10026 /* ProfileView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20026 /* ProfileView.swift */; };
 		A10015 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A20015 /* Assets.xcassets */; };
 		A10016 /* Preview Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A20016 /* Preview Assets.xcassets */; };
 		C10001 /* RouteModelsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20001 /* RouteModelsTests.swift */; };
@@ -77,6 +80,9 @@
 		A20021 /* ARCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ARCoordinator.swift; sourceTree = "<group>"; };
 		A20022 /* CollectionEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CollectionEngine.swift; sourceTree = "<group>"; };
 		A20023 /* ManualAlignmentState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManualAlignmentState.swift; sourceTree = "<group>"; };
+		A20024 /* SplashScreenView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SplashScreenView.swift; sourceTree = "<group>"; };
+		A20025 /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
+		A20026 /* ProfileView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileView.swift; sourceTree = "<group>"; };
 		A20015 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		A20016 /* Preview Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = "Preview Assets.xcassets"; sourceTree = "<group>"; };
 		A20017 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
@@ -174,6 +180,9 @@
 				A20011 /* QuestEditorView.swift */,
 				A20012 /* QuestsListView.swift */,
 				A20013 /* QuestDetailView.swift */,
+				A20024 /* SplashScreenView.swift */,
+				A20025 /* HomeView.swift */,
+				A20026 /* ProfileView.swift */,
 				A50009 /* AR */,
 			);
 			path = Views;
@@ -380,6 +389,9 @@
 				A10021 /* ARCoordinator.swift in Sources */,
 				A10022 /* CollectionEngine.swift in Sources */,
 				A10023 /* ManualAlignmentState.swift in Sources */,
+				A10024 /* SplashScreenView.swift in Sources */,
+				A10025 /* HomeView.swift in Sources */,
+				A10026 /* ProfileView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
