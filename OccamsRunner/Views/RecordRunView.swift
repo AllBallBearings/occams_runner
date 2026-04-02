@@ -4,6 +4,27 @@ import MapKit
 import UIKit
 #endif
 
+// Small wrapper so Map can show both track dots and the user location beacon
+// as typed annotation items.
+private enum MapPin: Identifiable {
+    case trackPoint(RoutePoint)
+    case userLocation(CLLocationCoordinate2D)
+
+    var id: String {
+        switch self {
+        case .trackPoint(let p): return p.id.uuidString
+        case .userLocation:      return "user-location"
+        }
+    }
+
+    var coordinate: CLLocationCoordinate2D {
+        switch self {
+        case .trackPoint(let p): return p.coordinate
+        case .userLocation(let c): return c
+        }
+    }
+}
+
 struct RecordRunView: View {
     @EnvironmentObject var locationService: LocationService
     @EnvironmentObject var dataStore: DataStore
@@ -19,160 +40,225 @@ struct RecordRunView: View {
     @State private var selectedMode: RecordingMode = .vast
     @State private var saveErrorMessage: String?
     @State private var didCopyDebugLog = false
+    @State private var beaconPulse = false
+
+    // MARK: - Computed map pins
+
+    private var mapPins: [MapPin] {
+        var pins: [MapPin] = locationService.isRecording
+            ? locationService.recordedPoints.map { .trackPoint($0) }
+            : []
+        if let loc = locationService.currentLocation {
+            pins.append(.userLocation(loc.coordinate))
+        }
+        return pins
+    }
+
+    // MARK: - Body
 
     var body: some View {
-        NavigationView {
-            ZStack {
+        NavigationStack {
+            ZStack(alignment: .top) {
+                // ── Full-bleed dark map ──────────────────────────────────
                 Map(coordinateRegion: $region,
-                    showsUserLocation: true,
-                    annotationItems: locationService.isRecording ? locationService.recordedPoints : []) { point in
-                    MapAnnotation(coordinate: point.coordinate) {
-                        Circle()
-                            .fill(Color.orange)
-                            .frame(width: 6, height: 6)
+                    showsUserLocation: false,
+                    annotationItems: mapPins) { pin in
+                    MapAnnotation(coordinate: pin.coordinate) {
+                        switch pin {
+                        case .trackPoint:
+                            Circle()
+                                .fill(Color.orange.opacity(0.75))
+                                .frame(width: 6, height: 6)
+                        case .userLocation:
+                            locationBeacon
+                        }
                     }
                 }
-                .ignoresSafeArea(edges: .top)
+                .environment(\.colorScheme, .dark)
+                .ignoresSafeArea()
                 .onAppear {
                     locationService.startUpdating()
-                    if let location = locationService.currentLocation {
-                        region.center = location.coordinate
+                    if let loc = locationService.currentLocation {
+                        region.center = loc.coordinate
+                    }
+                    withAnimation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true)) {
+                        beaconPulse = true
                     }
                 }
-                .onChange(of: locationService.currentLocation) { location in
-                    if let location = location {
-                        withAnimation {
-                            region.center = location.coordinate
+                .onChange(of: locationService.currentLocation) { loc in
+                    if let loc {
+                        withAnimation(.easeOut(duration: 0.4)) {
+                            region.center = loc.coordinate
                         }
                     }
                 }
 
-                VStack {
-                    if locationService.isRecording {
-                        statsOverlay
-                    }
+                // ── Stats overlay (top) ──────────────────────────────────
+                statsOverlay
+                    .padding(.horizontal, 16)
+                    .padding(.top, 8)
 
+                // ── Bottom controls ──────────────────────────────────────
+                VStack(spacing: 0) {
                     Spacer()
-
-                    modePicker
-                        .padding(.bottom, 12)
-
-                    recordButton
-                        .padding(.bottom, 30)
+                    if !locationService.isRecording {
+                        modePicker
+                            .padding(.horizontal, 40)
+                            .padding(.bottom, 14)
+                    }
+                    actionButton
+                        .padding(.horizontal, 28)
+                        .padding(.bottom, 36)
                 }
             }
             .navigationTitle("Record Run")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbarColorScheme(.dark, for: .navigationBar)
             .sheet(isPresented: $showingSaveSheet) {
                 saveRouteSheet
             }
         }
     }
 
+    // MARK: - Location Beacon
+
+    private var locationBeacon: some View {
+        ZStack {
+            // Outer pulsing ring
+            Circle()
+                .stroke(Color.orange.opacity(beaconPulse ? 0.25 : 0.55), lineWidth: 1.5)
+                .frame(width: beaconPulse ? 52 : 44, height: beaconPulse ? 52 : 44)
+                .shadow(color: .orange.opacity(0.6), radius: 8)
+
+            // Inner ring
+            Circle()
+                .stroke(Color.orange.opacity(0.8), lineWidth: 1.5)
+                .frame(width: 34, height: 34)
+
+            // Core dot with glow
+            Circle()
+                .fill(Color.orange)
+                .frame(width: 14, height: 14)
+                .shadow(color: .orange, radius: 8)
+                .shadow(color: .orange.opacity(0.5), radius: 14)
+        }
+        .animation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true), value: beaconPulse)
+    }
+
     // MARK: - Stats Overlay
 
     private var statsOverlay: some View {
-        VStack(spacing: 10) {
-            HStack(spacing: 20) {
-                statItem(
-                    title: "Distance",
-                    value: String(format: "%.2f mi", currentDistanceMiles)
-                )
-                statItem(
-                    title: "Time",
-                    value: formatTime(elapsedTime)
-                )
-                statItem(
-                    title: "Altitude",
-                    value: String(format: "%.0f ft", locationService.currentAltitude * 3.281)
-                )
-                statItem(
-                    title: "Points",
-                    value: "\(locationService.recordedPoints.count)"
-                )
+        VStack(spacing: 12) {
+            // Four stat columns
+            HStack(spacing: 0) {
+                statColumn(title: "Distance",
+                           value: String(format: "%.2f", currentDistanceMiles),
+                           unit: "mi")
+                Spacer()
+                statColumn(title: "Time",
+                           value: formatTime(elapsedTime),
+                           unit: nil)
+                Spacer()
+                statColumn(title: "Altitude",
+                           value: String(format: "%.0f", locationService.currentAltitude * 3.281),
+                           unit: "ft")
+                Spacer()
+                statColumn(title: "Points",
+                           value: "\(locationService.recordedPoints.count)",
+                           unit: nil)
             }
+            .padding(.horizontal, 4)
 
-            HStack(spacing: 10) {
-                qualityPill(
+            // Quality pills
+            HStack(spacing: 8) {
+                neonQualityPill(
                     "Match \(Int(locationService.preciseCaptureQuality.matchedSampleRatio * 100))%",
-                    ok: locationService.preciseCaptureQuality.matchedSampleRatio >= 0.65
-                )
-                qualityPill(
+                    ok: locationService.preciseCaptureQuality.matchedSampleRatio >= 0.65)
+                neonQualityPill(
                     "Features \(Int(locationService.preciseCaptureQuality.averageFeaturePoints))",
-                    ok: locationService.preciseCaptureQuality.averageFeaturePoints >= 75
-                )
-                qualityPill(
+                    ok: locationService.preciseCaptureQuality.averageFeaturePoints >= 75)
+                neonQualityPill(
                     "Track \(Int(locationService.preciseCaptureQuality.averageTrackingScore * 100))%",
-                    ok: locationService.preciseCaptureQuality.averageTrackingScore >= 0.65
-                )
-                qualityPill(
-                    "Map",
-                    ok: locationService.preciseCaptureQuality.hasEncryptedWorldMap
-                )
+                    ok: locationService.preciseCaptureQuality.averageTrackingScore >= 0.65)
             }
 
+            // Status line
             Text(locationService.preciseCaptureStatus)
-                .font(.caption2)
-                .foregroundColor(.secondary)
-                .multilineTextAlignment(.center)
+                .font(.caption)
+                .foregroundColor(.white.opacity(0.55))
         }
-        .padding()
-        .background(.ultraThinMaterial)
-        .cornerRadius(12)
-        .padding()
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
+        .background(.ultraThinMaterial.opacity(0.95))
+        .environment(\.colorScheme, .dark)
+        .clipShape(RoundedRectangle(cornerRadius: 16))
     }
 
-    private func statItem(title: String, value: String) -> some View {
-        VStack(spacing: 4) {
+    private func statColumn(title: String, value: String, unit: String?) -> some View {
+        VStack(spacing: 2) {
             Text(title)
                 .font(.caption)
-                .foregroundColor(.secondary)
-            Text(value)
-                .font(.system(.body, design: .monospaced))
-                .fontWeight(.semibold)
+                .foregroundColor(.white.opacity(0.55))
+            HStack(alignment: .lastTextBaseline, spacing: 3) {
+                Text(value)
+                    .font(.system(size: 26, weight: .semibold, design: .rounded))
+                    .foregroundColor(.white)
+                if let unit {
+                    Text(unit)
+                        .font(.caption)
+                        .foregroundColor(.white.opacity(0.6))
+                }
+            }
         }
     }
 
-    private func qualityPill(_ label: String, ok: Bool) -> some View {
+    private func neonQualityPill(_ label: String, ok: Bool) -> some View {
         Text(label)
-            .font(.caption2)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(ok ? Color.green.opacity(0.2) : Color.orange.opacity(0.2))
+            .font(.caption2).fontWeight(.medium)
             .foregroundColor(ok ? .green : .orange)
-            .clipShape(Capsule())
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .overlay(
+                Capsule()
+                    .stroke(ok ? Color.green : Color.orange, lineWidth: 1.2)
+            )
+            .shadow(color: (ok ? Color.green : Color.orange).opacity(0.7), radius: 5)
     }
 
     // MARK: - Mode Picker
 
     private var modePicker: some View {
         Picker("Mode", selection: $selectedMode) {
-            Label("Tight", systemImage: "house.fill")
-                .tag(RecordingMode.tight)
-            Label("Vast", systemImage: "figure.run")
-                .tag(RecordingMode.vast)
+            Label("Tight", systemImage: "house.fill").tag(RecordingMode.tight)
+            Label("Vast",  systemImage: "figure.run").tag(RecordingMode.vast)
         }
         .pickerStyle(.segmented)
-        .padding(.horizontal, 40)
-        .disabled(locationService.isRecording)
+        .colorMultiply(.white)
     }
 
-    // MARK: - Record Button
+    // MARK: - Action Button
 
-    private var recordButton: some View {
-        Button(action: toggleRecording) {
-            HStack {
-                Image(systemName: locationService.isRecording ? "stop.circle.fill" : "record.circle")
-                    .font(.title2)
-                Text(locationService.isRecording ? "Stop Run" : "Start Run")
-                    .fontWeight(.bold)
+    private var actionButton: some View {
+        let isRecording = locationService.isRecording
+        let label  = isRecording ? "Stop Run"  : "Start Run"
+        let icon   = isRecording ? "stop.fill"  : "record.circle.fill"
+        let color  = isRecording ? Color.red    : Color.green
+        let glow   = isRecording ? Color.red    : Color.green
+
+        return Button(action: toggleRecording) {
+            HStack(spacing: 12) {
+                Image(systemName: icon)
+                    .font(.system(size: 20, weight: .bold))
+                Text(label)
+                    .font(.system(size: 20, weight: .bold))
             }
             .foregroundColor(.white)
-            .padding(.horizontal, 32)
-            .padding(.vertical, 16)
-            .background(locationService.isRecording ? Color.red : Color.green)
-            .cornerRadius(30)
-            .shadow(radius: 4)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 20)
+            .background(color)
+            .clipShape(Capsule())
+            .shadow(color: glow.opacity(0.6), radius: 16, x: 0, y: 4)
+            .shadow(color: glow.opacity(0.35), radius: 28, x: 0, y: 8)
         }
     }
 
@@ -228,15 +314,16 @@ struct RecordRunView: View {
                     HStack {
                         Text("Encrypted World Map")
                         Spacer()
-                        Image(systemName: locationService.preciseCaptureQuality.hasEncryptedWorldMap ? "checkmark.circle.fill" : "xmark.circle")
-                            .foregroundColor(locationService.preciseCaptureQuality.hasEncryptedWorldMap ? .green : .orange)
+                        Image(systemName: locationService.preciseCaptureQuality.hasEncryptedWorldMap
+                              ? "checkmark.circle.fill" : "xmark.circle")
+                            .foregroundColor(locationService.preciseCaptureQuality.hasEncryptedWorldMap
+                                             ? .green : .orange)
                     }
 
                     Text(locationService.preciseCaptureStatus)
                         .font(.caption)
                         .foregroundColor(.secondary)
 
-                    // Show exactly which conditions are blocking the Save button.
                     let blockers = locationService.saveBlockerDescription
                     if !blockers.isEmpty {
                         Text("Save blocked:\n\(blockers)")
@@ -299,8 +386,6 @@ struct RecordRunView: View {
                         if nameOk && qualityOk {
                             saveRoute()
                         } else {
-                            // Log exactly what's blocking the save so it appears
-                            // in the debug log the user can copy and share.
                             var reasons: [String] = []
                             if !nameOk { reasons.append("route name is empty") }
                             let blockers = locationService.saveBlockerDescription
@@ -331,7 +416,6 @@ struct RecordRunView: View {
             locationService.stopRecording()
             timer?.invalidate()
             timer = nil
-
             if locationService.recordedPoints.count >= 2 {
                 routeName = "Run \(DateFormatter.localizedString(from: Date(), dateStyle: .short, timeStyle: .short))"
                 saveErrorMessage = nil
@@ -350,12 +434,10 @@ struct RecordRunView: View {
     private func saveRoute() {
         let name = routeName.trimmingCharacters(in: .whitespaces)
         guard !name.isEmpty else { return }
-
         guard let route = locationService.buildRecordedRoute(name: name) else {
             saveErrorMessage = "Route capture quality is below required threshold. Keep scanning and re-record."
             return
         }
-
         dataStore.saveRoute(route)
         locationService.recordedPoints = []
         saveErrorMessage = nil

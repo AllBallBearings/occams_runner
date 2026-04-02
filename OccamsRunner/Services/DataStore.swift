@@ -55,6 +55,12 @@ class DataStore: ObservableObject {
         persist(routes, to: routesURL)
     }
 
+    func renameRoute(_ route: RecordedRoute, to newName: String) {
+        guard let index = routes.firstIndex(where: { $0.id == route.id }) else { return }
+        routes[index].name = newName
+        persist(routes, to: routesURL)
+    }
+
     func deleteRoute(_ route: RecordedRoute) {
         routes.removeAll { $0.id == route.id }
         // Also delete associated quests and world map sidecar

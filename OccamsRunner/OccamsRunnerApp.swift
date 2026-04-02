@@ -25,16 +25,25 @@ struct OccamsRunnerApp: App {
         }
     }
 
+    @State private var showSplash = ProcessInfo.processInfo.environment["UI_TESTING"] != "1"
+
     var body: some Scene {
         WindowGroup {
-            ContentView()
-                .environmentObject(dataStore)
-                .environmentObject(locationService)
-                .onAppear {
-                    if ProcessInfo.processInfo.environment["UI_TESTING"] != "1" {
-                        locationService.requestPermission()
+            ZStack {
+                ContentView()
+                    .environmentObject(dataStore)
+                    .environmentObject(locationService)
+                    .onAppear {
+                        if ProcessInfo.processInfo.environment["UI_TESTING"] != "1" {
+                            locationService.requestPermission()
+                        }
                     }
+
+                if showSplash {
+                    SplashScreenView(isShowing: $showSplash)
+                        .zIndex(1)
                 }
+            }
         }
     }
 
