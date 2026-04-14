@@ -67,7 +67,7 @@ struct RecordRunView: View {
                         switch pin {
                         case .trackPoint:
                             Circle()
-                                .fill(Color.orange.opacity(0.75))
+                                .fill(Color.orange.opacity(0.60))
                                 .frame(width: 6, height: 6)
                         case .userLocation:
                             locationBeacon
@@ -126,103 +126,109 @@ struct RecordRunView: View {
         ZStack {
             // Outer pulsing ring
             Circle()
-                .stroke(Color.orange.opacity(beaconPulse ? 0.25 : 0.55), lineWidth: 1.5)
-                .frame(width: beaconPulse ? 52 : 44, height: beaconPulse ? 52 : 44)
-                .shadow(color: .orange.opacity(0.6), radius: 8)
+                .stroke(Color.orange.opacity(beaconPulse ? 0.10 : 0.25), lineWidth: 1)
+                .frame(width: beaconPulse ? 56 : 48, height: beaconPulse ? 56 : 48)
+                .shadow(color: .orange.opacity(0.25), radius: 10)
 
             // Inner ring
             Circle()
-                .stroke(Color.orange.opacity(0.8), lineWidth: 1.5)
-                .frame(width: 34, height: 34)
+                .stroke(Color.white.opacity(0.6), lineWidth: 1.5)
+                .frame(width: 36, height: 36)
+                .shadow(color: .white.opacity(0.2), radius: 4)
 
             // Core dot with glow
             Circle()
-                .fill(Color.orange)
-                .frame(width: 14, height: 14)
-                .shadow(color: .orange, radius: 8)
-                .shadow(color: .orange.opacity(0.5), radius: 14)
+                .fill(LinearGradient(
+                    colors: [.orange, Color(red: 1, green: 0.6, blue: 0.2)],
+                    startPoint: .top, endPoint: .bottom))
+                .frame(width: 16, height: 16)
+                .shadow(color: .orange.opacity(0.50), radius: 8)
         }
-        .animation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true), value: beaconPulse)
+        .animation(.easeInOut(duration: 1.5).repeatForever(autoreverses: true), value: beaconPulse)
     }
 
     // MARK: - Stats Overlay
 
     private var statsOverlay: some View {
-        VStack(spacing: 12) {
+        let darkText = Color(red: 0.12, green: 0.13, blue: 0.20)
+        return VStack(spacing: 14) {
             // Four stat columns
             HStack(spacing: 0) {
-                statColumn(title: "Distance",
+                statColumn(title: "DISTANCE",
                            value: String(format: "%.2f", currentDistanceMiles),
                            unit: "mi")
                 Spacer()
-                statColumn(title: "Time",
+                statColumn(title: "TIME",
                            value: formatTime(elapsedTime),
                            unit: nil)
                 Spacer()
-                statColumn(title: "Altitude",
+                statColumn(title: "ALTITUDE",
                            value: String(format: "%.0f", locationService.currentAltitude * 3.281),
                            unit: "ft")
                 Spacer()
-                statColumn(title: "Points",
+                statColumn(title: "POINTS",
                            value: "\(locationService.recordedPoints.count)",
                            unit: nil)
             }
-            .padding(.horizontal, 4)
+            .padding(.horizontal, 8)
 
             // Quality pills
-            HStack(spacing: 8) {
-                neonQualityPill(
+            HStack(spacing: 10) {
+                glassQualityPill(
                     "Match \(Int(locationService.preciseCaptureQuality.matchedSampleRatio * 100))%",
                     ok: locationService.preciseCaptureQuality.matchedSampleRatio >= 0.65)
-                neonQualityPill(
+                glassQualityPill(
                     "Features \(Int(locationService.preciseCaptureQuality.averageFeaturePoints))",
                     ok: locationService.preciseCaptureQuality.averageFeaturePoints >= 75)
-                neonQualityPill(
+                glassQualityPill(
                     "Track \(Int(locationService.preciseCaptureQuality.averageTrackingScore * 100))%",
                     ok: locationService.preciseCaptureQuality.averageTrackingScore >= 0.65)
             }
 
             // Status line
-            Text(locationService.preciseCaptureStatus)
-                .font(.caption)
-                .foregroundColor(.white.opacity(0.55))
+            Text(locationService.preciseCaptureStatus.uppercased())
+                .font(.system(size: 10, weight: .bold))
+                .foregroundColor(darkText.opacity(0.45))
+                .kerning(1.2)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 14)
-        .background(.ultraThinMaterial.opacity(0.95))
-        .environment(\.colorScheme, .dark)
-        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .padding(.horizontal, 20)
+        .padding(.vertical, 18)
+        .background(Color(red: 0.76, green: 0.78, blue: 0.88))
+        .clipShape(RoundedRectangle(cornerRadius: 24))
+        .shadow(color: Color(red: 0.01, green: 0.01, blue: 0.04), radius: 16, x: 6, y: 6)
+        .shadow(color: Color(red: 0.14, green: 0.16, blue: 0.28).opacity(0.40), radius: 12, x: -4, y: -4)
     }
 
     private func statColumn(title: String, value: String, unit: String?) -> some View {
-        VStack(spacing: 2) {
+        let darkText = Color(red: 0.12, green: 0.13, blue: 0.20)
+        return VStack(spacing: 4) {
             Text(title)
-                .font(.caption)
-                .foregroundColor(.white.opacity(0.55))
+                .font(.system(size: 10, weight: .bold))
+                .foregroundColor(darkText.opacity(0.45))
+                .kerning(1.0)
             HStack(alignment: .lastTextBaseline, spacing: 3) {
                 Text(value)
-                    .font(.system(size: 26, weight: .semibold, design: .rounded))
-                    .foregroundColor(.white)
+                    .font(.system(size: 24, weight: .bold, design: .rounded))
+                    .foregroundColor(darkText)
                 if let unit {
                     Text(unit)
-                        .font(.caption)
-                        .foregroundColor(.white.opacity(0.6))
+                        .font(.caption2).fontWeight(.bold)
+                        .foregroundColor(darkText.opacity(0.35))
                 }
             }
         }
     }
 
-    private func neonQualityPill(_ label: String, ok: Bool) -> some View {
-        Text(label)
-            .font(.caption2).fontWeight(.medium)
-            .foregroundColor(ok ? .green : .orange)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            .overlay(
-                Capsule()
-                    .stroke(ok ? Color.green : Color.orange, lineWidth: 1.2)
-            )
-            .shadow(color: (ok ? Color.green : Color.orange).opacity(0.7), radius: 5)
+    private func glassQualityPill(_ label: String, ok: Bool) -> some View {
+        let okColor   = Color(red: 0.20, green: 0.55, blue: 0.30)
+        let warnColor = Color(red: 0.75, green: 0.40, blue: 0.15)
+        return Text(label)
+            .font(.system(size: 10, weight: .bold))
+            .foregroundColor(ok ? okColor : warnColor)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(Color(red: 0.68, green: 0.70, blue: 0.82))
+            .clipShape(Capsule())
     }
 
     // MARK: - Mode Picker
@@ -233,32 +239,36 @@ struct RecordRunView: View {
             Label("Vast",  systemImage: "figure.run").tag(RecordingMode.vast)
         }
         .pickerStyle(.segmented)
-        .colorMultiply(.white)
+        .background(Color(red: 0.76, green: 0.78, blue: 0.88))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
     // MARK: - Action Button
 
     private var actionButton: some View {
         let isRecording = locationService.isRecording
-        let label  = isRecording ? "Stop Run"  : "Start Run"
-        let icon   = isRecording ? "stop.fill"  : "record.circle.fill"
-        let color  = isRecording ? Color.red    : Color.green
-        let glow   = isRecording ? Color.red    : Color.green
+        let label  = isRecording ? "STOP RUN"  : "START RUN"
+        let icon   = isRecording ? "stop.fill"  : "play.fill"
+        let color1 = isRecording ? Color(red: 0.9, green: 0.1, blue: 0.2) : Color(red: 0.1, green: 0.8, blue: 0.4)
+        let color2 = isRecording ? Color(red: 0.7, green: 0.0, blue: 0.1) : Color(red: 0.0, green: 0.6, blue: 0.3)
+        let glow   = isRecording ? Color.red : Color.green
 
         return Button(action: toggleRecording) {
-            HStack(spacing: 12) {
+            HStack(spacing: 14) {
                 Image(systemName: icon)
-                    .font(.system(size: 20, weight: .bold))
+                    .font(.system(size: 18, weight: .bold))
                 Text(label)
-                    .font(.system(size: 20, weight: .bold))
+                    .font(.system(size: 18, weight: .bold))
+                    .kerning(1.5)
             }
             .foregroundColor(.white)
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 20)
-            .background(color)
+            .padding(.vertical, 22)
+            .background(
+                LinearGradient(colors: [color1, color2], startPoint: .top, endPoint: .bottom)
+            )
             .clipShape(Capsule())
-            .shadow(color: glow.opacity(0.6), radius: 16, x: 0, y: 4)
-            .shadow(color: glow.opacity(0.35), radius: 28, x: 0, y: 8)
+            .shadow(color: glow.opacity(0.25), radius: 15, x: 0, y: 8)
         }
     }
 

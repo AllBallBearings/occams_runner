@@ -33,7 +33,6 @@ struct Route3DMapPreview: UIViewRepresentable {
         mapView.addOverlay(CorePolyline(coordinates: coords, count: coords.count),
                            level: .aboveRoads)
 
-        // Defer camera fit until after SwiftUI has sized the view
         DispatchQueue.main.async {
             fitRoute(on: mapView, coords: coords)
         }
@@ -45,48 +44,30 @@ struct Route3DMapPreview: UIViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     private func fitRoute(on mapView: MKMapView, coords: [CLLocationCoordinate2D]) {
-        // Build the MKMapRect that tightly wraps all route coordinates
         let points = coords.map(MKMapPoint.init)
         var rect = MKMapRect.null
-        for p in points {
-            rect = rect.union(MKMapRect(x: p.x, y: p.y, width: 0, height: 0))
-        }
-
-        // Let MapKit pick the exact altitude needed to fill the frame with 40 pt padding
+        for p in points { rect = rect.union(MKMapRect(x: p.x, y: p.y, width: 0, height: 0)) }
         let padding = UIEdgeInsets(top: 40, left: 40, bottom: 40, right: 40)
         mapView.setVisibleMapRect(rect, edgePadding: padding, animated: false)
-
-        // Re-apply 3D pitch at the altitude MapKit just chose
         let fittedAltitude = mapView.camera.altitude
-        let center         = mapView.camera.centerCoordinate
+        let center = mapView.camera.centerCoordinate
         mapView.setCamera(
-            MKMapCamera(lookingAtCenter: center,
-                        fromDistance: fittedAltitude,
-                        pitch: 55,
-                        heading: 0),
-            animated: false
-        )
+            MKMapCamera(lookingAtCenter: center, fromDistance: fittedAltitude, pitch: 55, heading: 0),
+            animated: false)
     }
 
-    // MARK: Coordinator
-
     final class Coordinator: NSObject, MKMapViewDelegate {
-        func mapView(_ mapView: MKMapView,
-                     rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
+        func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
             if let line = overlay as? GlowPolyline {
                 let r = MKPolylineRenderer(polyline: line)
-                r.strokeColor = UIColor.cyan.withAlphaComponent(0.28)
-                r.lineWidth   = 16
-                r.lineCap     = .round
-                r.lineJoin    = .round
+                r.strokeColor = UIColor(red: 0.18, green: 0.72, blue: 0.70, alpha: 0.28)
+                r.lineWidth = 16; r.lineCap = .round; r.lineJoin = .round
                 return r
             }
             if let line = overlay as? CorePolyline {
                 let r = MKPolylineRenderer(polyline: line)
-                r.strokeColor = UIColor.cyan
-                r.lineWidth   = 3.5
-                r.lineCap     = .round
-                r.lineJoin    = .round
+                r.strokeColor = UIColor(red: 0.18, green: 0.72, blue: 0.70, alpha: 1)
+                r.lineWidth = 3.5; r.lineCap = .round; r.lineJoin = .round
                 return r
             }
             return MKOverlayRenderer(overlay: overlay)
@@ -101,58 +82,52 @@ struct RouteDetailView: View {
     let route: RecordedRoute
 
     @State private var showingQuestCreator = false
-    @State private var coinIntervalFeet: Double = 10
 
-    // MARK: Body
+    // Design constants
+    private let surface    = Color(red: 0.76, green: 0.78, blue: 0.88)
+    private let deepSurf   = Color(red: 0.68, green: 0.70, blue: 0.82)
+    private let darkText   = Color(red: 0.12, green: 0.13, blue: 0.20)
+    private let teal       = Color(red: 0.18, green: 0.72, blue: 0.70)
+    private let indigo     = Color(red: 0.45, green: 0.35, blue: 0.80)
+    private let shadowDark = Color(red: 0.01, green: 0.01, blue: 0.04)
+    private let shadowLift = Color(red: 0.14, green: 0.16, blue: 0.28)
 
     var body: some View {
         ZStack {
-            Color.black.ignoresSafeArea()
+            appBackground.ignoresSafeArea()
 
             ScrollView {
                 VStack(spacing: 20) {
-                    // Date recorded
-                    HStack {
+                    // Date header
+                    HStack(spacing: 8) {
                         Image(systemName: "calendar")
-                            .foregroundColor(.white.opacity(0.45))
+                            .foregroundColor(teal.opacity(0.80))
+                            .font(.system(size: 14))
                         Text(route.dateRecorded, style: .date)
                             .font(.subheadline)
-                            .foregroundColor(.white.opacity(0.45))
+                            .foregroundColor(.white.opacity(0.65))
                         Spacer()
                     }
                     .padding(.horizontal, 16)
 
-                    // ── 3D map preview ──────────────────────────────────
+                    // 3D map preview
                     Route3DMapPreview(route: route)
                         .frame(height: 280)
-                        .clipShape(RoundedRectangle(cornerRadius: 18))
+                        .clipShape(RoundedRectangle(cornerRadius: 20))
                         .overlay(
-                            RoundedRectangle(cornerRadius: 18)
-                                .stroke(
-                                    LinearGradient(
-                                        colors: [.orange, Color(red: 1, green: 0.3, blue: 0.1)],
-                                        startPoint: .topLeading,
-                                        endPoint: .bottomTrailing
-                                    ),
-                                    lineWidth: 2
-                                )
+                            RoundedRectangle(cornerRadius: 20)
+                                .stroke(deepSurf, lineWidth: 1)
                         )
-                        .shadow(color: .orange.opacity(0.45), radius: 14)
+                        .shadow(color: shadowDark, radius: 16, x: 6, y: 6)
+                        .shadow(color: shadowLift.opacity(0.40), radius: 12, x: -4, y: -4)
                         .padding(.horizontal, 16)
 
-                    // ── Stats grid ──────────────────────────────────────
                     statsGrid
                         .padding(.horizontal, 16)
 
-                    Divider()
-                        .background(Color.white.opacity(0.12))
-                        .padding(.horizontal, 16)
-
-                    // ── Action buttons ──────────────────────────────────
                     actionButtons
                         .padding(.horizontal, 16)
 
-                    // ── Existing quests ─────────────────────────────────
                     existingQuestsSection
 
                     Spacer(minLength: 20)
@@ -163,7 +138,7 @@ struct RouteDetailView: View {
         .navigationTitle(route.name)
         .navigationBarTitleDisplayMode(.inline)
         .toolbarColorScheme(.dark, for: .navigationBar)
-        .toolbarBackground(Color.black, for: .navigationBar)
+        .toolbarBackground(Color(red: 0.04, green: 0.07, blue: 0.18), for: .navigationBar)
         .sheet(isPresented: $showingQuestCreator) {
             NavigationView {
                 QuestEditorView(route: route, isPresented: $showingQuestCreator)
@@ -171,58 +146,72 @@ struct RouteDetailView: View {
         }
     }
 
+    // MARK: - Background
+
+    private var appBackground: some View {
+        LinearGradient(
+            colors: [
+                Color(red: 0.04, green: 0.07, blue: 0.18),
+                Color(red: 0.86, green: 0.88, blue: 0.94)
+            ],
+            startPoint: .top, endPoint: .bottom)
+    }
+
     // MARK: - Stats Grid
 
     private var statsGrid: some View {
-        let items: [(String, String, String)] = [
+        let items: [(String, String, String, Color)] = [
             ("Distance",
              String(format: "%.2f mi", route.totalDistanceMiles),
-             "figure.run"),
+             "figure.run", teal),
             ("Duration",
              formatDuration(route.durationSeconds),
-             "clock"),
+             "clock", indigo),
             (route.netElevationChangeMeters >= 0 ? "Elev. Gain" : "Elev. Loss",
              String(format: "%.0f ft", abs(route.netElevationChangeMeters) * 3.281),
-             route.netElevationChangeMeters >= 0 ? "arrow.up.right" : "arrow.down.right"),
+             route.netElevationChangeMeters >= 0 ? "arrow.up.right" : "arrow.down.right",
+             Color(red: 0.35, green: 0.75, blue: 0.50)),
             ("GPS Points",
              "\(route.geoTrack.count)",
-             "mappin.circle"),
+             "mappin.circle",
+             Color(red: 0.95, green: 0.55, blue: 0.25)),
         ]
 
         return LazyVGrid(
-            columns: [GridItem(.flexible()), GridItem(.flexible())],
+            columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)],
             spacing: 12
         ) {
             ForEach(Array(items.enumerated()), id: \.offset) { _, item in
-                statCard(title: item.0, value: item.1, icon: item.2)
+                statCard(title: item.0, value: item.1, icon: item.2, color: item.3)
             }
         }
     }
 
-    private func statCard(title: String, value: String, icon: String) -> some View {
+    private func statCard(title: String, value: String, icon: String, color: Color) -> some View {
         HStack(spacing: 12) {
-            Image(systemName: icon)
-                .font(.title3)
-                .foregroundColor(.orange)
-                .frame(width: 28)
+            ZStack {
+                Circle().fill(deepSurf).frame(width: 38, height: 38)
+                    .shadow(color: shadowDark, radius: 4, x: 2, y: 2)
+                Image(systemName: icon)
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundColor(color)
+            }
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
                     .font(.caption)
-                    .foregroundColor(.white.opacity(0.45))
+                    .foregroundColor(darkText.opacity(0.45))
                 Text(value)
-                    .font(.system(.body, design: .rounded))
+                    .font(.system(.subheadline, design: .rounded))
                     .fontWeight(.semibold)
-                    .foregroundColor(.white)
+                    .foregroundColor(darkText)
             }
             Spacer(minLength: 0)
         }
         .padding(14)
-        .background(Color(white: 0.08))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(Color.white.opacity(0.08), lineWidth: 1)
-        )
+        .background(surface)
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .shadow(color: shadowDark, radius: 10, x: 5, y: 5)
+        .shadow(color: shadowLift.opacity(0.40), radius: 8, x: -3, y: -3)
     }
 
     // MARK: - Action Buttons
@@ -230,34 +219,38 @@ struct RouteDetailView: View {
     private var actionButtons: some View {
         VStack(spacing: 12) {
             NavigationLink(destination: Route3DView(route: route)) {
-                neonButton(label: "View in 3D", icon: "cube.fill",
-                           color: Color(red: 0.3, green: 0.5, blue: 1))
+                neuButton(label: "View in 3D", icon: "cube.fill", iconColor: indigo)
             }
 
             Button(action: { showingQuestCreator = true }) {
-                neonButton(label: "Create Quest", icon: "star.circle.fill",
-                           color: .orange)
+                neuButton(label: "Create Quest", icon: "star.circle.fill", iconColor: teal)
             }
         }
     }
 
-    private func neonButton(label: String, icon: String, color: Color) -> some View {
-        HStack(spacing: 10) {
-            Image(systemName: icon)
-                .font(.body).fontWeight(.semibold)
+    private func neuButton(label: String, icon: String, iconColor: Color) -> some View {
+        HStack(spacing: 12) {
+            ZStack {
+                Circle().fill(deepSurf).frame(width: 38, height: 38)
+                    .shadow(color: shadowDark, radius: 4, x: 2, y: 2)
+                Image(systemName: icon)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(iconColor)
+            }
             Text(label)
                 .font(.headline)
+                .foregroundColor(darkText)
+            Spacer()
+            Image(systemName: "chevron.right")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(darkText.opacity(0.30))
         }
-        .foregroundColor(.white)
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 16)
-        .background(color.opacity(0.2))
-        .clipShape(RoundedRectangle(cornerRadius: 14))
-        .overlay(
-            RoundedRectangle(cornerRadius: 14)
-                .stroke(color, lineWidth: 1.5)
-        )
-        .shadow(color: color.opacity(0.4), radius: 8)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
+        .background(surface)
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .shadow(color: shadowDark, radius: 10, x: 5, y: 5)
+        .shadow(color: shadowLift.opacity(0.40), radius: 8, x: -3, y: -3)
     }
 
     // MARK: - Existing Quests
@@ -266,7 +259,7 @@ struct RouteDetailView: View {
         let quests = dataStore.quests(for: route.id)
         return Group {
             if !quests.isEmpty {
-                VStack(alignment: .leading, spacing: 10) {
+                VStack(alignment: .leading, spacing: 12) {
                     Text("Quests")
                         .font(.title3).fontWeight(.bold)
                         .foregroundColor(.white)
@@ -285,18 +278,22 @@ struct RouteDetailView: View {
     }
 
     private func questRow(_ quest: Quest) -> some View {
-        HStack(spacing: 12) {
-            Image(systemName: "star.circle.fill")
-                .foregroundColor(.orange)
-                .font(.title2)
+        HStack(spacing: 14) {
+            ZStack {
+                Circle().fill(deepSurf).frame(width: 44, height: 44)
+                    .shadow(color: shadowDark, radius: 4, x: 2, y: 2)
+                Image(systemName: "star.circle.fill")
+                    .foregroundColor(teal)
+                    .font(.title3)
+            }
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(quest.name)
                     .font(.headline)
-                    .foregroundColor(.white)
+                    .foregroundColor(darkText)
                 Text("\(quest.totalItems) coins · \(quest.totalPoints) pts")
                     .font(.caption)
-                    .foregroundColor(.white.opacity(0.5))
+                    .foregroundColor(darkText.opacity(0.45))
             }
 
             Spacer()
@@ -304,20 +301,21 @@ struct RouteDetailView: View {
             if quest.collectedItems > 0 {
                 Text("\(quest.collectedItems)/\(quest.totalItems)")
                     .font(.caption).fontWeight(.semibold)
-                    .foregroundColor(.orange)
+                    .foregroundColor(teal)
+                    .padding(.horizontal, 8).padding(.vertical, 4)
+                    .background(deepSurf)
+                    .clipShape(Capsule())
             }
 
             Image(systemName: "chevron.right")
                 .font(.caption)
-                .foregroundColor(.white.opacity(0.3))
+                .foregroundColor(darkText.opacity(0.30))
         }
         .padding(14)
-        .background(Color(white: 0.08))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(Color.cyan.opacity(0.35), lineWidth: 1)
-        )
+        .background(surface)
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .shadow(color: shadowDark, radius: 10, x: 5, y: 5)
+        .shadow(color: shadowLift.opacity(0.40), radius: 8, x: -3, y: -3)
     }
 
     // MARK: - Helpers

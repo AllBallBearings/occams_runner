@@ -235,89 +235,108 @@ struct ARRunnerView: View {
     // MARK: - Top HUD Card
 
     private var topHUDCard: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             if runMode == .running {
                 // ── Compact running header ──────────────────────────
-                HStack(spacing: 10) {
-                    Circle().fill(Color.green).frame(width: 7, height: 7)
-                    Text("AR Quest in Progress")
-                        .font(.subheadline).fontWeight(.semibold)
+                HStack(spacing: 12) {
+                    Circle()
+                        .fill(Color.green)
+                        .frame(width: 8, height: 8)
+                        .shadow(color: .green.opacity(0.5), radius: 4)
+                    
+                    Text("QUEST ACTIVE")
+                        .font(.system(size: 12, weight: .black))
                         .foregroundColor(.white)
+                        .kerning(1.5)
+                    
                     Spacer()
-                    Text(String(format: "%.0f%%", alignmentConfidence * 100))
-                        .font(.caption2).fontWeight(.semibold)
-                        .foregroundColor(alignmentConfidence >= 0.75 ? .green : .orange)
-                    Button(action: { runMode = .realigning }) {
-                        Label("Realign", systemImage: "location.north.line")
-                            .font(.caption).fontWeight(.semibold)
-                            .padding(.horizontal, 10).padding(.vertical, 5)
-                            .background(Color.white.opacity(0.12))
-                            .clipShape(Capsule())
-                            .foregroundColor(.white)
+                    
+                    HStack(spacing: 4) {
+                        Image(systemName: "antenna.radiowaves.left.and.right")
+                            .font(.system(size: 10))
+                        Text(String(format: "%.0f%%", alignmentConfidence * 100))
+                            .font(.system(size: 12, weight: .bold, design: .rounded))
                     }
+                    .foregroundColor(alignmentConfidence >= 0.75 ? .green : .orange)
+                    
+                    Button(action: { runMode = .realigning }) {
+                        Image(systemName: "location.north.line")
+                            .font(.system(size: 14, weight: .bold))
+                            .padding(8)
+                            .background(Color.white.opacity(0.1))
+                            .clipShape(Circle())
+                    }
+                    
                     Button(action: { handleDismissTap() }) {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.title2).foregroundColor(.white.opacity(0.7))
+                        Image(systemName: "pause.fill")
+                            .font(.system(size: 14, weight: .bold))
+                            .padding(8)
+                            .background(Color.white.opacity(0.1))
+                            .clipShape(Circle())
                     }
                 }
             } else {
                 // ── Alignment detail ────────────────────────────────
                 HStack(alignment: .top) {
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text(alignmentState.rawValue)
-                            .font(.headline).foregroundColor(.white)
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(alignmentState.rawValue.uppercased())
+                            .font(.system(size: 14, weight: .black))
+                            .foregroundColor(.white)
+                            .kerning(1.2)
+                        
                         if let distanceToStart {
                             Label(
                                 String(format: "%.0f ft to start", distanceToStart * 3.281),
                                 systemImage: "mappin.and.ellipse"
                             )
-                            .font(.caption).foregroundColor(.white.opacity(0.85))
+                            .font(.caption).fontWeight(.bold)
+                            .foregroundColor(.white.opacity(0.7))
                         }
-                        Text(String(format: "Confidence: %.0f%%", alignmentConfidence * 100))
-                            .font(.caption2)
-                            .foregroundColor(alignmentReady ? .green : .orange)
-                        if let accuracy = locationService.currentLocation?.horizontalAccuracy {
-                            Text(String(format: "GPS: ±%.0f m", accuracy))
-                                .font(.caption2).foregroundColor(.orange)
+                        
+                        HStack(spacing: 12) {
+                            Text(String(format: "Confidence: %.0f%%", alignmentConfidence * 100))
+                                .foregroundColor(alignmentReady ? .green : .orange)
+                            
+                            if let accuracy = locationService.currentLocation?.horizontalAccuracy {
+                                Text(String(format: "GPS: ±%.0f m", accuracy))
+                                    .foregroundColor(.orange.opacity(0.8))
+                            }
                         }
+                        .font(.system(size: 10, weight: .bold))
+
                         if manualAlignment.hasAdjustment {
-                            Text(String(format: "X %.2f  Y %.2f  Z %.2f  R %.1f°",
-                                        manualAlignment.worldX,
-                                        manualAlignment.worldY,
-                                        manualAlignment.worldZ,
-                                        manualAlignment.rotationY * 180 / .pi))
-                                .font(.system(size: 9, design: .monospaced))
-                                .foregroundColor(.cyan.opacity(0.85))
+                            Text("MANUAL OFFSET ACTIVE")
+                                .font(.system(size: 8, weight: .black))
+                                .foregroundColor(.cyan)
+                                .padding(.horizontal, 6).padding(.vertical, 2)
+                                .background(Color.cyan.opacity(0.1))
+                                .clipShape(Capsule())
                         }
                     }
                     Spacer()
                     Button(action: { handleDismissTap() }) {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.title2).foregroundColor(.white.opacity(0.8))
+                        Image(systemName: "xmark")
+                            .font(.system(size: 16, weight: .bold))
+                            .foregroundColor(.white.opacity(0.5))
+                            .padding(8)
                     }
-                }
-
-                Divider().background(Color.white.opacity(0.2))
-
-                // Subtitle always at bottom of card
-                HStack {
-                    Spacer()
-                    Text("AR Quest in Progress")
-                        .font(.caption).foregroundColor(.white.opacity(0.5))
-                    Spacer()
                 }
             }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 16)
         .background(.ultraThinMaterial)
         .environment(\.colorScheme, .dark)
-        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .clipShape(RoundedRectangle(cornerRadius: 20))
         .overlay(
-            RoundedRectangle(cornerRadius: 14)
-                .stroke(Color.cyan.opacity(0.55), lineWidth: 1.5)
+            RoundedRectangle(cornerRadius: 20)
+                .stroke(
+                    LinearGradient(
+                        colors: [.cyan.opacity(0.5), .cyan.opacity(0.1)],
+                        startPoint: .topLeading, endPoint: .bottomTrailing),
+                    lineWidth: 1.5)
         )
-        .shadow(color: .cyan.opacity(0.25), radius: 8)
+        .shadow(color: Color.black.opacity(0.3), radius: 15, x: 0, y: 8)
     }
 
     // MARK: - Running Bottom HUD
@@ -327,122 +346,133 @@ struct ARRunnerView: View {
             // Floating badges (right-aligned, mid-screen)
             HStack {
                 Spacer()
-                VStack(alignment: .trailing, spacing: 8) {
+                VStack(alignment: .trailing, spacing: 10) {
                     coinBadge
                     distanceBadge
                 }
-                .padding(.trailing, 16)
+                .padding(.trailing, 20)
             }
-            .padding(.bottom, 14)
+            .padding(.bottom, 20)
 
             // Bottom row
-            HStack(alignment: .bottom, spacing: 8) {
+            HStack(alignment: .bottom, spacing: 12) {
                 // Left: compass + mini-map
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: 12) {
                     CompassView(heading: headingManager.degrees)
+                        .shadow(color: .black.opacity(0.3), radius: 10)
                     miniMap(route: route)
                 }
-                .padding(.leading, 16)
+                .padding(.leading, 20)
 
                 Spacer()
 
-                // Right: pace panel + pause
-                VStack(alignment: .trailing, spacing: 8) {
+                // Right: stats panel
+                VStack(alignment: .trailing, spacing: 12) {
                     statsPanel
-                    Button(action: { handleDismissTap() }) {
-                        Text("Pause")
-                            .font(.callout).fontWeight(.bold)
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 20).padding(.vertical, 12)
-                            .background(Color.white.opacity(0.15))
-                            .clipShape(RoundedRectangle(cornerRadius: 12))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 12)
-                                    .stroke(Color.white.opacity(0.25), lineWidth: 1)
-                            )
-                    }
                 }
-                .padding(.trailing, 16)
+                .padding(.trailing, 20)
             }
-            .padding(.bottom, 32)
+            .padding(.bottom, 40)
         }
     }
 
     // MARK: - Coin Badge
 
     private var coinBadge: some View {
-        HStack(spacing: 7) {
-            Text("🪙")
-                .font(.system(size: 20))
-            Text("\(liveQuest.collectedItems)")
-                .font(.system(size: 22, weight: .bold, design: .rounded))
-                .foregroundColor(.white)
-            Text("/ \(liveQuest.totalItems)")
-                .font(.caption).fontWeight(.medium)
-                .foregroundColor(.white.opacity(0.55))
+        HStack(spacing: 10) {
+            ZStack {
+                Circle().fill(Color.orange.opacity(0.2)).frame(width: 32, height: 32)
+                Text("🪙").font(.system(size: 18))
+            }
+            
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(alignment: .lastTextBaseline, spacing: 2) {
+                    Text("\(liveQuest.collectedItems)")
+                        .font(.system(size: 24, weight: .bold, design: .rounded))
+                    Text("/ \(liveQuest.totalItems)")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundColor(.white.opacity(0.4))
+                }
+                Text("COINS")
+                    .font(.system(size: 8, weight: .black))
+                    .foregroundColor(.orange)
+                    .kerning(1.0)
+            }
         }
-        .padding(.horizontal, 14).padding(.vertical, 9)
+        .padding(.leading, 8).padding(.trailing, 16).padding(.vertical, 8)
         .background(.ultraThinMaterial)
         .environment(\.colorScheme, .dark)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .clipShape(RoundedRectangle(cornerRadius: 16))
         .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(Color.orange.opacity(0.55), lineWidth: 1.5)
+            RoundedRectangle(cornerRadius: 16)
+                .stroke(Color.orange.opacity(0.3), lineWidth: 1)
         )
-        .shadow(color: .orange.opacity(0.25), radius: 6)
+        .shadow(color: .orange.opacity(0.15), radius: 10)
     }
 
     // MARK: - Distance Badge
 
     private var distanceBadge: some View {
-        HStack(spacing: 7) {
-            Image(systemName: "figure.run")
-                .font(.body).foregroundColor(.cyan)
-            Text(distanceString)
-                .font(.system(size: 16, weight: .semibold, design: .rounded))
-                .foregroundColor(.white)
+        HStack(spacing: 10) {
+            ZStack {
+                Circle().fill(Color.cyan.opacity(0.2)).frame(width: 32, height: 32)
+                Image(systemName: "figure.run")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundColor(.cyan)
+            }
+            
+            VStack(alignment: .leading, spacing: 0) {
+                Text(distanceString)
+                    .font(.system(size: 20, weight: .bold, design: .rounded))
+                Text("DISTANCE")
+                    .font(.system(size: 8, weight: .black))
+                    .foregroundColor(.cyan)
+                    .kerning(1.0)
+            }
         }
-        .padding(.horizontal, 14).padding(.vertical, 9)
+        .padding(.leading, 8).padding(.trailing, 16).padding(.vertical, 8)
         .background(.ultraThinMaterial)
         .environment(\.colorScheme, .dark)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .clipShape(RoundedRectangle(cornerRadius: 16))
         .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(Color.cyan.opacity(0.45), lineWidth: 1.5)
+            RoundedRectangle(cornerRadius: 16)
+                .stroke(Color.cyan.opacity(0.3), lineWidth: 1)
         )
-        .shadow(color: .cyan.opacity(0.2), radius: 6)
+        .shadow(color: .cyan.opacity(0.15), radius: 10)
     }
 
     // MARK: - Stats Panel (Pace + Nearest Coin)
 
     private var statsPanel: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
                 Image(systemName: "speedometer")
-                    .foregroundColor(.white.opacity(0.65))
-                Text("Pace:").foregroundColor(.white.opacity(0.55))
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundColor(.white.opacity(0.5))
                 Text(currentPaceString)
-                    .foregroundColor(.white).fontWeight(.semibold)
+                    .font(.system(size: 14, weight: .bold, design: .rounded))
             }
-            .font(.subheadline)
 
-            HStack(spacing: 8) {
-                Image(systemName: "location.circle")
+            HStack(spacing: 10) {
+                Image(systemName: "location.fill")
+                    .font(.system(size: 12, weight: .bold))
                     .foregroundColor(.orange)
-                Text("Next coin:").foregroundColor(.white.opacity(0.55))
                 Text(nearestCoinString)
-                    .foregroundColor(.white).fontWeight(.semibold)
+                    .font(.system(size: 14, weight: .bold, design: .rounded))
+                Text("to next")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundColor(.white.opacity(0.4))
             }
-            .font(.subheadline)
         }
-        .padding(.horizontal, 14).padding(.vertical, 10)
+        .padding(.horizontal, 16).padding(.vertical, 12)
         .background(.ultraThinMaterial)
         .environment(\.colorScheme, .dark)
-        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .clipShape(RoundedRectangle(cornerRadius: 18))
         .overlay(
-            RoundedRectangle(cornerRadius: 14)
-                .stroke(Color.white.opacity(0.15), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 18)
+                .stroke(Color.white.opacity(0.1), lineWidth: 1)
         )
+        .shadow(color: Color.black.opacity(0.2), radius: 12)
     }
 
     // MARK: - Mini-Map
@@ -456,84 +486,98 @@ struct ARRunnerView: View {
                 showsUserLocation: true,
                 annotationItems: route.geoTrack) { sample in
                 MapAnnotation(coordinate: sample.coordinate) {
-                    Circle().fill(Color.cyan.opacity(0.8)).frame(width: 3, height: 3)
+                    Circle().fill(Color.cyan.opacity(0.8)).frame(width: 2.5, height: 2.5)
                 }
             }
             .environment(\.colorScheme, .dark)
             .disabled(true)
-            .frame(width: 120, height: 120)
-            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .frame(width: 130, height: 130)
+            .clipShape(RoundedRectangle(cornerRadius: 18))
             .overlay(
-                RoundedRectangle(cornerRadius: 10)
-                    .stroke(Color.cyan.opacity(0.45), lineWidth: 1.5)
+                RoundedRectangle(cornerRadius: 18)
+                    .stroke(Color.white.opacity(0.15), lineWidth: 1.5)
             )
 
-            Text("Route")
-                .font(.system(size: 8, weight: .semibold))
+            Text("LIVE MAP")
+                .font(.system(size: 8, weight: .black))
                 .foregroundColor(.white)
-                .padding(.horizontal, 5).padding(.vertical, 2)
-                .background(Color.black.opacity(0.6))
-                .clipShape(RoundedRectangle(cornerRadius: 3))
-                .padding(5)
+                .padding(.horizontal, 6).padding(.vertical, 3)
+                .background(.ultraThinMaterial)
+                .clipShape(RoundedRectangle(cornerRadius: 4))
+                .padding(8)
         }
-        .shadow(color: .black.opacity(0.45), radius: 6)
+        .shadow(color: .black.opacity(0.4), radius: 12)
     }
 
     // MARK: - Alignment Bottom
 
     private var alignmentBottomLayout: some View {
-        VStack(spacing: 10) {
-            HStack(spacing: 12) {
-                Label("Drag to shift", systemImage: "arrow.up.and.down.and.arrow.left.and.right")
-                Label("Pinch for depth", systemImage: "arrow.up.left.and.arrow.down.right")
-                Label("Twist to rotate", systemImage: "arrow.2.circlepath")
+        VStack(spacing: 20) {
+            HStack(spacing: 16) {
+                alignmentHint(icon: "arrow.up.and.down.and.arrow.left.and.right", label: "SHIFT")
+                alignmentHint(icon: "arrow.up.left.and.arrow.down.right", label: "DEPTH")
+                alignmentHint(icon: "arrow.2.circlepath", label: "ROTATE")
             }
-            .font(.caption2)
-            .foregroundColor(.white.opacity(0.7))
 
             if manualAlignment.hasAdjustment {
                 Button(action: { manualAlignment.reset() }) {
-                    Label("Reset Position", systemImage: "arrow.counterclockwise")
-                        .font(.caption).fontWeight(.semibold)
-                        .padding(.horizontal, 18).padding(.vertical, 8)
+                    Label("RESET POSITION", systemImage: "arrow.counterclockwise")
+                        .font(.system(size: 10, weight: .black))
+                        .padding(.horizontal, 16).padding(.vertical, 8)
                         .background(.ultraThinMaterial)
                         .environment(\.colorScheme, .dark)
-                        .clipShape(RoundedRectangle(cornerRadius: 10))
-                        .foregroundColor(.white)
+                        .clipShape(Capsule())
+                        .overlay(Capsule().stroke(Color.white.opacity(0.2), lineWidth: 1))
                 }
             }
 
             Button(action: { runMode = .running }) {
-                Text(runMode == .realigning ? "Resume Run →" : "Start Run →")
-                    .font(.headline).fontWeight(.bold)
-                    .padding(.horizontal, 40).padding(.vertical, 16)
-                    .background(alignmentReady ? Color.green : Color.gray)
-                    .foregroundColor(.white)
-                    .clipShape(Capsule())
-                    .shadow(color: alignmentReady ? .green.opacity(0.5) : .clear, radius: 10)
+                HStack {
+                    Text(runMode == .realigning ? "RESUME QUEST" : "START QUEST")
+                    Image(systemName: "chevron.right")
+                }
+                .font(.system(size: 18, weight: .black))
+                .kerning(1.5)
+                .padding(.horizontal, 40).padding(.vertical, 20)
+                .background(
+                    alignmentReady 
+                    ? LinearGradient(colors: [Color.green, Color(red: 0, green: 0.7, blue: 0.3)], startPoint: .top, endPoint: .bottom)
+                    : LinearGradient(colors: [Color.gray.opacity(0.3), Color.gray.opacity(0.2)], startPoint: .top, endPoint: .bottom)
+                )
+                .foregroundColor(.white.opacity(alignmentReady ? 1.0 : 0.5))
+                .clipShape(Capsule())
+                .shadow(color: alignmentReady ? .green.opacity(0.4) : .clear, radius: 15, x: 0, y: 8)
             }
             .disabled(!alignmentReady)
 
             if !alignmentReady {
-                Group {
-                    switch alignmentState {
-                    case .moveToStart:
-                        Text("Walk to within 40 ft of where you started recording.")
-                    case .scanning:
-                        Text("Move your phone around slowly to scan the environment.")
-                    case .lowConfidence:
-                        Text("Low confidence — try scanning from a different angle.")
-                    case .locked:
-                        EmptyView()
-                    }
-                }
-                .font(.caption)
-                .multilineTextAlignment(.center)
-                .foregroundColor(.white.opacity(0.85))
+                Text(alignmentStateInstruction)
+                    .font(.system(size: 12, weight: .bold))
+                    .multilineTextAlignment(.center)
+                    .foregroundColor(.white.opacity(0.7))
+                    .padding(.horizontal, 40)
             }
         }
-        .padding(.horizontal, 28)
-        .padding(.bottom, 48)
+        .padding(.bottom, 50)
+    }
+
+    private func alignmentHint(icon: String, label: String) -> some View {
+        VStack(spacing: 4) {
+            Image(systemName: icon)
+                .font(.system(size: 14))
+            Text(label)
+                .font(.system(size: 8, weight: .black))
+        }
+        .foregroundColor(.white.opacity(0.5))
+    }
+
+    private var alignmentStateInstruction: String {
+        switch alignmentState {
+        case .moveToStart: return "WALK TO START POINT"
+        case .scanning:    return "SCAN SURROUNDINGS SLOWLY"
+        case .lowConfidence: return "LOW CONFIDENCE - KEEP SCANNING"
+        case .locked:      return ""
+        }
     }
 
     // MARK: - Debug Overlay
@@ -674,30 +718,36 @@ private struct QuestCompleteCard: View {
     @State private var starsIn = false
 
     var body: some View {
-        VStack(spacing: 18) {
-            // Title
-            Text("Quest Complete!")
-                .font(.system(size: 34, weight: .heavy))
-                .foregroundColor(.orange)
-                .shadow(color: .orange.opacity(0.5), radius: 8)
+        VStack(spacing: 24) {
+            // Header
+            VStack(spacing: 4) {
+                Text("QUEST")
+                    .font(.system(size: 12, weight: .black))
+                    .foregroundColor(.orange)
+                    .kerning(4)
+                Text("COMPLETE")
+                    .font(.system(size: 38, weight: .black))
+                    .foregroundColor(.white)
+            }
+            .padding(.top, 10)
 
             // 5 animated stars
-            HStack(spacing: 10) {
+            HStack(spacing: 12) {
                 ForEach(0..<5) { i in
                     Image(systemName: "star.fill")
-                        .font(.system(size: 38))
+                        .font(.system(size: 32))
                         .foregroundStyle(
                             LinearGradient(
-                                colors: [.yellow, Color(red: 1, green: 0.72, blue: 0)],
+                                colors: [.yellow, .orange],
                                 startPoint: .top, endPoint: .bottom
                             )
                         )
-                        .shadow(color: .yellow.opacity(0.55), radius: 6)
-                        .scaleEffect(starsIn ? 1.0 : 0.25)
+                        .shadow(color: .orange.opacity(0.5), radius: 8)
+                        .scaleEffect(starsIn ? 1.0 : 0.2)
                         .opacity(starsIn ? 1 : 0)
                         .animation(
-                            .spring(response: 0.38, dampingFraction: 0.52)
-                                .delay(Double(i) * 0.09),
+                            .spring(response: 0.4, dampingFraction: 0.6)
+                                .delay(Double(i) * 0.1),
                             value: starsIn
                         )
                 }
@@ -706,84 +756,100 @@ private struct QuestCompleteCard: View {
             // 3D route map
             if let route {
                 Route3DMapPreview(route: route)
-                    .frame(height: 220)
-                    .clipShape(RoundedRectangle(cornerRadius: 16))
+                    .frame(height: 240)
+                    .clipShape(RoundedRectangle(cornerRadius: 24))
                     .overlay(
-                        RoundedRectangle(cornerRadius: 16)
+                        RoundedRectangle(cornerRadius: 24)
                             .stroke(
                                 LinearGradient(
-                                    colors: [.orange, Color(red: 0.9, green: 0.3, blue: 0)],
+                                    colors: [.orange.opacity(0.6), .orange.opacity(0.1)],
                                     startPoint: .topLeading,
                                     endPoint: .bottomTrailing
                                 ),
                                 lineWidth: 2
                             )
                     )
-                    .shadow(color: .orange.opacity(0.45), radius: 12)
+                    .shadow(color: .orange.opacity(0.2), radius: 20)
             }
 
-            // Coins collected tile
-            HStack(spacing: 14) {
-                Image(systemName: "dollarsign.circle.fill")
-                    .font(.system(size: 36))
-                    .foregroundColor(.orange)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("\(quest.totalItems)")
-                        .font(.system(size: 36, weight: .bold, design: .rounded))
-                        .foregroundColor(.orange)
-                    Text("Coins Collected")
-                        .font(.subheadline)
-                        .foregroundColor(.white.opacity(0.65))
-                }
-                Spacer()
-                Text("🪙 \(quest.totalItems) / \(quest.totalItems)")
-                    .font(.callout).fontWeight(.semibold)
-                    .foregroundColor(.white.opacity(0.5))
+            // Stats row
+            HStack(spacing: 20) {
+                statTile(
+                    icon: "dollarsign.circle.fill",
+                    label: "COINS",
+                    value: "\(quest.totalItems)",
+                    color: .orange)
+                
+                statTile(
+                    icon: "figure.run",
+                    label: "DISTANCE",
+                    value: String(format: "%.1fkm", (route?.totalDistanceMeters ?? 0) / 1000),
+                    color: .cyan)
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 16)
-            .background(Color(red: 0.22, green: 0.10, blue: 0.02))
-            .clipShape(RoundedRectangle(cornerRadius: 14))
-            .overlay(
-                RoundedRectangle(cornerRadius: 14)
-                    .stroke(Color.orange.opacity(0.35), lineWidth: 1)
-            )
 
             // Claim Rewards button
             Button(action: onClaim) {
-                Text("Claim Rewards")
-                    .font(.system(size: 20, weight: .bold))
-                    .foregroundColor(.white)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 18)
-                    .background(
-                        LinearGradient(
-                            colors: [Color(red: 1, green: 0.52, blue: 0.05),
-                                     Color(red: 0.85, green: 0.32, blue: 0)],
-                            startPoint: .leading,
-                            endPoint: .trailing
-                        )
+                HStack {
+                    Text("CLAIM REWARDS")
+                    Image(systemName: "chevron.right")
+                }
+                .font(.system(size: 18, weight: .black))
+                .kerning(1.5)
+                .foregroundColor(.white)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 22)
+                .background(
+                    LinearGradient(
+                        colors: [Color(red: 1, green: 0.6, blue: 0),
+                                 Color(red: 1, green: 0.3, blue: 0)],
+                        startPoint: .top,
+                        endPoint: .bottom
                     )
-                    .clipShape(RoundedRectangle(cornerRadius: 14))
-                    .shadow(color: .orange.opacity(0.45), radius: 10)
+                )
+                .clipShape(Capsule())
+                .shadow(color: .orange.opacity(0.4), radius: 15, x: 0, y: 8)
             }
         }
-        .padding(22)
-        .background(
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .fill(Color(white: 0.08).opacity(0.97))
-        )
+        .padding(30)
+        .background(.ultraThinMaterial)
+        .environment(\.colorScheme, .dark)
+        .clipShape(RoundedRectangle(cornerRadius: 40, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .stroke(Color.orange.opacity(0.45), lineWidth: 1.5)
+            RoundedRectangle(cornerRadius: 40, style: .continuous)
+                .stroke(
+                    LinearGradient(
+                        colors: [.white.opacity(0.2), .white.opacity(0.05)],
+                        startPoint: .topLeading, endPoint: .bottomTrailing),
+                    lineWidth: 1.5)
         )
-        .shadow(color: .orange.opacity(0.2), radius: 20)
+        .shadow(color: Color.black.opacity(0.5), radius: 40)
         .padding(.horizontal, 20)
         .onAppear {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                 starsIn = true
             }
         }
+    }
+
+    private func statTile(icon: String, label: String, value: String, color: Color) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: icon)
+                    .font(.system(size: 12, weight: .bold))
+                Text(label)
+                    .font(.system(size: 10, weight: .black))
+                    .kerning(1.0)
+            }
+            .foregroundColor(color)
+            
+            Text(value)
+                .font(.system(size: 24, weight: .bold, design: .rounded))
+                .foregroundColor(.white)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
+        .background(Color.white.opacity(0.05))
+        .clipShape(RoundedRectangle(cornerRadius: 16))
     }
 }
 

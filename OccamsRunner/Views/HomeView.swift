@@ -1,17 +1,14 @@
 import SwiftUI
 
-// MARK: - Neon Card Helper
+// MARK: - Neumorphic Card Helper
 
 private extension View {
-    func neonCard(color: Color, cornerRadius: CGFloat = 16) -> some View {
+    func neuCard(cornerRadius: CGFloat = 20) -> some View {
         self
-            .background(Color(red: 0.1, green: 0.11, blue: 0.16))
+            .background(Color(red: 0.76, green: 0.78, blue: 0.88))
             .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
-            .overlay(
-                RoundedRectangle(cornerRadius: cornerRadius)
-                    .stroke(color, lineWidth: 1.5)
-            )
-            .shadow(color: color.opacity(0.5), radius: 10, x: 0, y: 0)
+            .shadow(color: Color(red: 0.01, green: 0.01, blue: 0.04), radius: 12, x: 6, y: 6)
+            .shadow(color: Color(red: 0.14, green: 0.16, blue: 0.28).opacity(0.40), radius: 10, x: -4, y: -4)
     }
 }
 
@@ -77,311 +74,282 @@ struct HomeView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(spacing: 16) {
-                    profileCard
-                    actionCardsSection
-                    dailyGoalCard
+                VStack(spacing: 24) {
+                    headerRow
+                    heroStatSection
+                    actionGrid
+                    activeQuestBanner
                     recentActivitySection
                 }
-                .padding(16)
+                .padding(.horizontal, 20)
+                .padding(.top, 4)
+                .padding(.bottom, 24)
             }
             .background(appBackground.ignoresSafeArea())
-            .navigationTitle("Dashboard Home")
-            .navigationBarTitleDisplayMode(.large)
-            .toolbarColorScheme(.dark, for: .navigationBar)
+            .toolbar(.hidden, for: .navigationBar)
         }
     }
 
-    private var appBackground: Color {
-        Color(red: 0.063, green: 0.071, blue: 0.098)
+    // MARK: Background
+
+    private var appBackground: some View {
+        LinearGradient(
+            colors: [
+                Color(red: 0.04, green: 0.07, blue: 0.18),  // midnight blue
+                Color(red: 0.86, green: 0.88, blue: 0.94)   // white/lavender
+            ],
+            startPoint: .top, endPoint: .bottom)
     }
 
-    private var cardBackground: Color {
-        Color(red: 0.1, green: 0.11, blue: 0.16)
-    }
+    // MARK: Header Row
 
-    // MARK: Profile Card
-
-    private var profileCard: some View {
-        HStack(spacing: 14) {
-            // Avatar placeholder
-            ZStack {
-                Circle()
-                    .fill(Color(red: 0.2, green: 0.22, blue: 0.3))
-                Image(systemName: "person.fill")
-                    .font(.system(size: 28))
-                    .foregroundColor(.white.opacity(0.55))
-            }
-            .frame(width: 56, height: 56)
-            .overlay(Circle().stroke(Color.white.opacity(0.15), lineWidth: 1))
-
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 8) {
-                    Text("Runner")
-                        .font(.title3).fontWeight(.bold)
-                        .foregroundColor(.white)
-                    Text("Level \(userLevel)")
-                        .font(.caption).fontWeight(.semibold)
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 8).padding(.vertical, 3)
-                        .background(Color(red: 0.45, green: 0.12, blue: 0.85))
-                        .clipShape(Capsule())
-                }
-
-                // XP progress bar
-                GeometryReader { geo in
-                    ZStack(alignment: .leading) {
-                        Capsule().fill(Color.white.opacity(0.12))
-                        Capsule()
-                            .fill(LinearGradient(
-                                colors: [Color(red: 0.2, green: 0.5, blue: 1.0),
-                                         Color(red: 0.65, green: 0.25, blue: 1.0)],
-                                startPoint: .leading, endPoint: .trailing))
-                            .frame(width: geo.size.width * CGFloat(xpInCurrentLevel) / CGFloat(xpPerLevel))
-                    }
-                    .frame(height: 8)
-                }
-                .frame(height: 8)
+    private var headerRow: some View {
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(greetingText)
+                    .font(.subheadline)
+                    .foregroundColor(.white.opacity(0.40))
+                Text("Runner")
+                    .font(.title2).fontWeight(.bold)
+                    .foregroundColor(.white)
             }
 
             Spacer()
 
-            Text("XP: \(totalXP) / \(userLevel * xpPerLevel)")
-                .font(.caption)
-                .foregroundColor(.white.opacity(0.75))
+            // Level badge — lavender surface with dark text
+            Text("Lv \(userLevel)")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundColor(Color(red: 0.12, green: 0.13, blue: 0.20))
+                .padding(.horizontal, 10).padding(.vertical, 5)
+                .background(Color(red: 0.76, green: 0.78, blue: 0.88))
+                .clipShape(Capsule())
+                .shadow(color: Color(red: 0.01, green: 0.01, blue: 0.04), radius: 4, x: 2, y: 2)
+
+            // Avatar — lavender circle
+            ZStack {
+                Circle()
+                    .fill(Color(red: 0.72, green: 0.74, blue: 0.86))
+                Image(systemName: "person.fill")
+                    .font(.system(size: 20))
+                    .foregroundColor(Color(red: 0.12, green: 0.13, blue: 0.20).opacity(0.70))
+            }
+            .frame(width: 44, height: 44)
+            .shadow(color: Color(red: 0.01, green: 0.01, blue: 0.04), radius: 6, x: 3, y: 3)
         }
-        .padding(16)
-        .overlay(
-            RoundedRectangle(cornerRadius: 16)
+        .padding(.top, 8)
+    }
+
+    private var greetingText: String {
+        let hour = Calendar.current.component(.hour, from: Date())
+        if hour < 12 { return "Good morning," }
+        if hour < 17 { return "Good afternoon," }
+        return "Good evening,"
+    }
+
+    // MARK: Hero Stat Section
+
+    private var heroStatSection: some View {
+        let progress = min(1.0, todayDistanceMeters / dailyGoalMeters)
+        let todayKm  = todayDistanceMeters / 1000.0
+
+        return ZStack {
+            // Ring track
+            Circle()
+                .stroke(Color(red: 0.76, green: 0.78, blue: 0.88).opacity(0.10), lineWidth: 14)
+            // Progress arc — indigo gradient
+            Circle()
+                .trim(from: 0, to: progress)
                 .stroke(
                     LinearGradient(
-                        colors: [.cyan, Color(red: 0.6, green: 0.2, blue: 1.0)],
+                        colors: [Color(red: 0.18, green: 0.72, blue: 0.70),
+                                 Color(red: 0.10, green: 0.50, blue: 0.75)],
                         startPoint: .topLeading, endPoint: .bottomTrailing),
-                    lineWidth: 1.5)
-        )
-        .background(cardBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 16))
-        .shadow(color: Color.cyan.opacity(0.25), radius: 12, x: 0, y: 0)
-    }
+                    style: StrokeStyle(lineWidth: 14, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+                .shadow(color: Color(red: 0.18, green: 0.72, blue: 0.70).opacity(0.30), radius: 10)
+                .animation(.spring(response: 0.6, dampingFraction: 0.7), value: progress)
 
-    // MARK: Action Cards
-
-    private var actionCardsSection: some View {
-        HStack(alignment: .top, spacing: 12) {
-            recordRouteCard
-            planQuestCard
-            activeQuestCard
-        }
-        .frame(minHeight: 200)
-    }
-
-    private var recordRouteCard: some View {
-        NavigationLink(destination: RecordRunView()) {
-            VStack(spacing: 10) {
-                Image(systemName: "arrow.triangle.swap")
-                    .font(.system(size: 34, weight: .medium))
-                    .foregroundColor(.orange)
-                    .shadow(color: .orange.opacity(0.9), radius: 8)
-                    .padding(.top, 4)
-
-                Text("Record New Route")
-                    .font(.caption).fontWeight(.bold)
+            // Center stat — white text floats on dark bg inside ring
+            VStack(spacing: 2) {
+                Text(String(format: "%.1f", todayKm))
+                    .font(.system(size: 52, weight: .black, design: .rounded))
                     .foregroundColor(.white)
-                    .multilineTextAlignment(.center)
-
-                Text("Map your run and collect AR coins.")
-                    .font(.caption2)
-                    .foregroundColor(.white.opacity(0.55))
-                    .multilineTextAlignment(.center)
-
-                Spacer()
+                Text("km today")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.35))
+                    .kerning(0.5)
+                // XP on lavender pill
+                HStack(spacing: 4) {
+                    Text("\(totalXP)")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(Color(red: 0.12, green: 0.13, blue: 0.20))
+                    Text("XP")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(Color(red: 0.12, green: 0.13, blue: 0.20).opacity(0.55))
+                }
+                .padding(.horizontal, 12).padding(.vertical, 5)
+                .background(Color(red: 0.76, green: 0.78, blue: 0.88))
+                .clipShape(Capsule())
+                .shadow(color: Color(red: 0.01, green: 0.01, blue: 0.04), radius: 4, x: 2, y: 2)
+                .padding(.top, 4)
             }
-            .padding(12)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .neonCard(color: .orange)
+        }
+        .frame(width: 210, height: 210)
+        .padding(.vertical, 8)
+    }
+
+    // MARK: Action Grid
+
+    private let actionGridColumns = [
+        GridItem(.flexible(), spacing: 16),
+        GridItem(.flexible(), spacing: 16)
+    ]
+
+    private var actionGrid: some View {
+        LazyVGrid(columns: actionGridColumns, spacing: 16) {
+            actionCircleButton(
+                icon: "arrow.triangle.swap", label: "Record",
+                iconColor: Color(red: 0.95, green: 0.55, blue: 0.25),
+                destination: AnyView(RecordRunView()))
+            actionCircleButton(
+                icon: "safari", label: "Quests",
+                iconColor: Color(red: 0.45, green: 0.35, blue: 0.80),
+                destination: AnyView(QuestsListView()))
+            actionCircleButton(
+                icon: "map", label: "Routes",
+                iconColor: Color(red: 0.18, green: 0.72, blue: 0.70),
+                destination: AnyView(RoutesListView()))
+            actionCircleButton(
+                icon: "person.fill", label: "Profile",
+                iconColor: Color(red: 0.35, green: 0.75, blue: 0.50),
+                destination: AnyView(ProfileView()))
+        }
+    }
+
+    private func actionCircleButton(icon: String, label: String, iconColor: Color, destination: AnyView) -> some View {
+        NavigationLink(destination: destination) {
+            VStack(spacing: 10) {
+                // Icon circle — darker lavender inset (recessed look)
+                ZStack {
+                    Circle()
+                        .fill(Color(red: 0.68, green: 0.70, blue: 0.82))
+                        .frame(width: 60, height: 60)
+                        .shadow(color: Color(red: 0.01, green: 0.01, blue: 0.04), radius: 6, x: 3, y: 3)
+                        .shadow(color: Color(red: 0.14, green: 0.16, blue: 0.28).opacity(0.35), radius: 5, x: -2, y: -2)
+                    Image(systemName: icon)
+                        .font(.system(size: 24, weight: .medium))
+                        .foregroundColor(iconColor)
+                }
+                Text(label)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(Color(red: 0.12, green: 0.13, blue: 0.20).opacity(0.70))
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 20)
+            .background(Color(red: 0.76, green: 0.78, blue: 0.88))
+            .clipShape(RoundedRectangle(cornerRadius: 20))
+            .shadow(color: Color(red: 0.01, green: 0.01, blue: 0.04), radius: 10, x: 5, y: 5)
+            .shadow(color: Color(red: 0.14, green: 0.16, blue: 0.28).opacity(0.40), radius: 8, x: -3, y: -3)
         }
         .buttonStyle(.plain)
     }
 
-    private var planQuestCard: some View {
-        NavigationLink(destination: RoutesListView()) {
-            VStack(spacing: 10) {
-                Image(systemName: "safari")
-                    .font(.system(size: 34, weight: .medium))
-                    .foregroundColor(.cyan)
-                    .shadow(color: .cyan.opacity(0.9), radius: 8)
-                    .padding(.top, 4)
-
-                Text("Plan a Quest")
-                    .font(.caption).fontWeight(.bold)
-                    .foregroundColor(.white)
-                    .multilineTextAlignment(.center)
-
-                Text("Set challenges and unlock rewards.")
-                    .font(.caption2)
-                    .foregroundColor(.white.opacity(0.55))
-                    .multilineTextAlignment(.center)
-
-                Spacer()
-            }
-            .padding(12)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .neonCard(color: .cyan)
-        }
-        .buttonStyle(.plain)
-    }
+    // MARK: Active Quest Banner
 
     @ViewBuilder
-    private var activeQuestCard: some View {
-        let purple = Color(red: 0.6, green: 0.2, blue: 1.0)
+    private var activeQuestBanner: some View {
         if let quest = activeQuest {
+            let accent = Color(red: 0.45, green: 0.35, blue: 0.80)
             let progress = quest.totalItems > 0
                 ? Double(quest.collectedItems) / Double(quest.totalItems) : 0.0
 
             NavigationLink(destination: QuestDetailView(quest: quest)) {
-                VStack(alignment: .leading, spacing: 8) {
-                    // Mini map placeholder
+                HStack(spacing: 14) {
                     ZStack {
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(Color(red: 0.14, green: 0.18, blue: 0.28))
-                        Image(systemName: "map.fill")
+                        Circle()
+                            .fill(Color(red: 0.68, green: 0.70, blue: 0.82))
+                            .frame(width: 44, height: 44)
+                            .shadow(color: Color(red: 0.01, green: 0.01, blue: 0.04), radius: 4, x: 2, y: 2)
+                        Image(systemName: "star.circle.fill")
                             .font(.system(size: 22))
-                            .foregroundColor(Color(red: 0.45, green: 0.6, blue: 0.85))
+                            .foregroundColor(accent)
                     }
-                    .frame(height: 60)
 
-                    Text(quest.name)
-                        .font(.caption).fontWeight(.bold)
-                        .foregroundColor(.white)
-                        .lineLimit(2)
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("ACTIVE QUEST")
+                            .font(.system(size: 9, weight: .black))
+                            .foregroundColor(accent.opacity(0.80))
+                            .kerning(0.8)
+                        Text(quest.name)
+                            .font(.subheadline).fontWeight(.semibold)
+                            .foregroundColor(Color(red: 0.12, green: 0.13, blue: 0.20))
+                            .lineLimit(1)
 
-                    // Progress bar
-                    GeometryReader { geo in
-                        ZStack(alignment: .leading) {
-                            Capsule().fill(Color.white.opacity(0.12))
-                            Capsule()
-                                .fill(LinearGradient(
-                                    colors: [.blue, purple],
-                                    startPoint: .leading, endPoint: .trailing))
-                                .frame(width: geo.size.width * progress)
+                        GeometryReader { geo in
+                            ZStack(alignment: .leading) {
+                                Capsule()
+                                    .fill(Color(red: 0.68, green: 0.70, blue: 0.82))
+                                Capsule()
+                                    .fill(LinearGradient(
+                                        colors: [Color(red: 0.18, green: 0.72, blue: 0.70), accent],
+                                        startPoint: .leading, endPoint: .trailing))
+                                    .frame(width: geo.size.width * progress)
+                            }
                         }
                         .frame(height: 4)
                     }
-                    .frame(height: 4)
-
-                    Text("\(Int(progress * 100))%")
-                        .font(.caption2)
-                        .foregroundColor(.white.opacity(0.65))
 
                     Spacer()
 
-                    Text("Resume")
-                        .font(.caption2).fontWeight(.semibold)
-                        .foregroundColor(.white)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 5)
-                        .background(purple)
-                        .clipShape(Capsule())
+                    VStack(alignment: .trailing, spacing: 2) {
+                        Text("\(Int(progress * 100))%")
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundColor(accent)
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundColor(Color(red: 0.12, green: 0.13, blue: 0.20).opacity(0.30))
+                    }
                 }
-                .padding(10)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .neonCard(color: purple)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 14)
+                .background(Color(red: 0.76, green: 0.78, blue: 0.88))
+                .clipShape(RoundedRectangle(cornerRadius: 18))
+                .shadow(color: Color(red: 0.01, green: 0.01, blue: 0.04), radius: 10, x: 5, y: 5)
+                .shadow(color: Color(red: 0.14, green: 0.16, blue: 0.28).opacity(0.40), radius: 8, x: -3, y: -3)
             }
             .buttonStyle(.plain)
-        } else {
-            VStack(spacing: 10) {
-                Image(systemName: "star.circle")
-                    .font(.system(size: 34, weight: .medium))
-                    .foregroundColor(purple)
-                    .shadow(color: purple.opacity(0.9), radius: 8)
-                    .padding(.top, 4)
-
-                Text("No Active Quest")
-                    .font(.caption).fontWeight(.bold)
-                    .foregroundColor(.white)
-                    .multilineTextAlignment(.center)
-
-                Text("Create a quest to track it here.")
-                    .font(.caption2)
-                    .foregroundColor(.white.opacity(0.55))
-                    .multilineTextAlignment(.center)
-
-                Spacer()
-            }
-            .padding(12)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .neonCard(color: purple)
         }
-    }
-
-    // MARK: Daily Goal Card
-
-    private var dailyGoalCard: some View {
-        let progress = min(1.0, todayDistanceMeters / dailyGoalMeters)
-        let todayKm  = todayDistanceMeters / 1000.0
-        let goalKm   = dailyGoalMeters / 1000.0
-
-        return HStack(spacing: 20) {
-            // Circular ring
-            ZStack {
-                Circle()
-                    .stroke(Color.green.opacity(0.18), lineWidth: 9)
-                Circle()
-                    .trim(from: 0, to: progress)
-                    .stroke(Color.green, style: StrokeStyle(lineWidth: 9, lineCap: .round))
-                    .rotationEffect(.degrees(-90))
-                    .shadow(color: .green.opacity(0.6), radius: 5)
-            }
-            .frame(width: 84, height: 84)
-            .animation(.easeOut(duration: 0.6), value: progress)
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Daily Goal: \(String(format: "%.0f", goalKm))km")
-                    .font(.subheadline).fontWeight(.semibold)
-                    .foregroundColor(.white)
-
-                HStack(alignment: .lastTextBaseline, spacing: 4) {
-                    Text(String(format: "%.1f", todayKm) + "km")
-                        .font(.title2).fontWeight(.bold)
-                        .foregroundColor(.white)
-                    Text("/ \(String(format: "%.0f", goalKm))km")
-                        .font(.title3)
-                        .foregroundColor(.white.opacity(0.45))
-                }
-
-                Text(progress >= 1.0 ? "Goal complete! Great work!" : "Keep going!")
-                    .font(.subheadline)
-                    .foregroundColor(.white.opacity(0.65))
-            }
-
-            Spacer()
-        }
-        .padding(20)
-        .neonCard(color: .green)
     }
 
     // MARK: Recent Activity
 
     private var recentActivitySection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 14) {
             Text("Recent Activity")
                 .font(.headline).fontWeight(.bold)
                 .foregroundColor(.white)
                 .padding(.horizontal, 4)
 
             if recentActivity.isEmpty {
-                Text("No activity yet. Complete a quest to see your history here.")
-                    .font(.subheadline)
-                    .foregroundColor(.white.opacity(0.45))
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 24)
-                    .multilineTextAlignment(.center)
+                VStack(spacing: 12) {
+                    Image(systemName: "figure.run.circle")
+                        .font(.system(size: 40))
+                        .foregroundColor(.white.opacity(0.15))
+                    Text("No runs yet. Start your first quest!")
+                        .font(.subheadline)
+                        .foregroundColor(.white.opacity(0.35))
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 40)
+                .background(Color(red: 0.76, green: 0.78, blue: 0.88).opacity(0.06))
+                .clipShape(RoundedRectangle(cornerRadius: 20))
             } else {
                 VStack(spacing: 0) {
                     ForEach(Array(recentActivity.enumerated()), id: \.element.session.id) { index, item in
                         if index > 0 {
                             Divider()
-                                .background(Color.white.opacity(0.08))
+                                .background(Color(red: 0.68, green: 0.70, blue: 0.82))
+                                .padding(.horizontal, 16)
                         }
                         activityRow(
                             date: item.session.startTime,
@@ -390,39 +358,51 @@ struct HomeView: View {
                             isFirst: index == 0)
                     }
                 }
-                .background(cardBackground)
-                .clipShape(RoundedRectangle(cornerRadius: 16))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16)
-                        .stroke(Color.white.opacity(0.08), lineWidth: 1))
+                .background(Color(red: 0.76, green: 0.78, blue: 0.88))
+                .clipShape(RoundedRectangle(cornerRadius: 20))
+                .shadow(color: Color(red: 0.01, green: 0.01, blue: 0.04), radius: 12, x: 6, y: 6)
+                .shadow(color: Color(red: 0.14, green: 0.16, blue: 0.28).opacity(0.40), radius: 10, x: -4, y: -4)
             }
         }
     }
 
     private func activityRow(date: Date, distanceMeters: Double, points: Int, isFirst: Bool) -> some View {
         HStack {
+            ZStack {
+                Circle()
+                    .fill(Color(red: 0.68, green: 0.70, blue: 0.82))
+                    .frame(width: 40, height: 40)
+                    .shadow(color: Color(red: 0.01, green: 0.01, blue: 0.04), radius: 3, x: 2, y: 2)
+                Image(systemName: "bolt.fill")
+                    .font(.system(size: 16))
+                    .foregroundColor(Color(red: 0.18, green: 0.72, blue: 0.70))
+            }
+
             VStack(alignment: .leading, spacing: 2) {
                 Text(relativeDay(date))
-                    .font(.subheadline)
-                    .foregroundColor(.white)
+                    .font(.subheadline).fontWeight(.semibold)
+                    .foregroundColor(Color(red: 0.12, green: 0.13, blue: 0.20))
                 Text(String(format: "%.1f", distanceMeters / 1000.0) + "km Run")
                     .font(.caption)
-                    .foregroundColor(.white.opacity(0.55))
+                    .foregroundColor(Color(red: 0.12, green: 0.13, blue: 0.20).opacity(0.50))
             }
 
             Spacer()
 
-            HStack(spacing: 5) {
+            HStack(spacing: 6) {
                 Image(systemName: "circle.fill")
-                    .font(.system(size: 11))
-                    .foregroundColor(.yellow)
-                Text("+\(points) Coins")
-                    .font(.subheadline).fontWeight(.semibold)
-                    .foregroundColor(isFirst ? .yellow : .green)
+                    .font(.system(size: 10))
+                    .foregroundColor(Color(red: 0.75, green: 0.60, blue: 0.20))
+                Text("+\(points)")
+                    .font(.subheadline).fontWeight(.bold)
+                    .foregroundColor(Color(red: 0.12, green: 0.13, blue: 0.20))
             }
+            .padding(.horizontal, 10).padding(.vertical, 5)
+            .background(Color(red: 0.68, green: 0.70, blue: 0.82))
+            .clipShape(Capsule())
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 14)
+        .padding(.vertical, 16)
     }
 
     // MARK: Helpers

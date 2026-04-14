@@ -14,26 +14,27 @@ struct QuestsListView: View {
     var body: some View {
         NavigationStack {
             ZStack {
-                Color.black.ignoresSafeArea()
+                appBackground.ignoresSafeArea()
 
                 VStack(alignment: .leading, spacing: 0) {
                     // Large display title
-                    Text("My Quests")
-                        .font(.system(size: 30, weight: .bold))
+                    Text("Quest Library")
+                        .font(.system(size: 34, weight: .black))
                         .foregroundColor(.white)
-                        .padding(.horizontal, 16)
-                        .padding(.bottom, 14)
+                        .padding(.horizontal, 20)
+                        .padding(.top, 20)
+                        .padding(.bottom, 20)
 
                     // Search bar
                     searchBar
-                        .padding(.horizontal, 16)
-                        .padding(.bottom, 16)
+                        .padding(.horizontal, 20)
+                        .padding(.bottom, 24)
 
                     if sortedQuests.isEmpty {
                         emptyState
                     } else {
                         ScrollView {
-                            VStack(spacing: 14) {
+                            VStack(spacing: 18) {
                                 ForEach(sortedQuests) { quest in
                                     NavigationLink(destination: QuestDetailView(quest: quest)) {
                                         questCard(quest)
@@ -48,8 +49,8 @@ struct QuestsListView: View {
                                     }
                                 }
                             }
-                            .padding(.horizontal, 14)
-                            .padding(.bottom, 24)
+                            .padding(.horizontal, 20)
+                            .padding(.bottom, 30)
                         }
                     }
                 }
@@ -58,20 +59,33 @@ struct QuestsListView: View {
         }
     }
 
+    private var appBackground: some View {
+        LinearGradient(
+            colors: [
+                Color(red: 0.04, green: 0.07, blue: 0.18),
+                Color(red: 0.86, green: 0.88, blue: 0.94)
+            ],
+            startPoint: .top, endPoint: .bottom)
+    }
+
     // MARK: - Search Bar
 
     private var searchBar: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 12) {
             Image(systemName: "magnifyingglass")
-                .foregroundColor(.white.opacity(0.45))
+                .foregroundColor(Color(red: 0.12, green: 0.13, blue: 0.20).opacity(0.50))
+                .font(.system(size: 16, weight: .bold))
             TextField("Search quests...", text: $searchText)
-                .foregroundColor(.white)
-                .tint(.purple)
+                .foregroundColor(Color(red: 0.12, green: 0.13, blue: 0.20))
+                .tint(Color(red: 0.45, green: 0.35, blue: 0.80))
+                .font(.body)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .background(Color.white.opacity(0.1))
+        .padding(.horizontal, 18)
+        .padding(.vertical, 14)
+        .background(Color(red: 0.76, green: 0.78, blue: 0.88))
         .clipShape(Capsule())
+        .shadow(color: Color(red: 0.01, green: 0.01, blue: 0.04), radius: 8, x: 4, y: 4)
+        .shadow(color: Color(red: 0.14, green: 0.16, blue: 0.28).opacity(0.40), radius: 6, x: -3, y: -3)
     }
 
     // MARK: - Quest Card
@@ -82,59 +96,60 @@ struct QuestsListView: View {
         let progress = quest.totalItems > 0
             ? Double(quest.collectedItems) / Double(quest.totalItems)
             : 0
+        let purple = Color(red: 0.45, green: 0.35, blue: 0.80)
+        let darkText = Color(red: 0.12, green: 0.13, blue: 0.20)
+        let darkerSurface = Color(red: 0.68, green: 0.70, blue: 0.82)
 
         return VStack(spacing: 0) {
-            HStack(alignment: .top, spacing: 12) {
+            HStack(alignment: .top, spacing: 16) {
                 // Map thumbnail
                 Group {
                     if let route {
                         RouteSnapshotView(route: route)
                     } else {
                         ZStack {
-                            Color(white: 0.12)
+                            darkerSurface
                             Image(systemName: "map.fill")
-                                .foregroundColor(.white.opacity(0.25))
+                                .foregroundColor(darkText.opacity(0.25))
                                 .font(.title)
                         }
                     }
                 }
-                .frame(width: 140, height: 115)
-                .clipShape(RoundedRectangle(cornerRadius: 10))
+                .frame(width: 140, height: 120)
+                .clipShape(RoundedRectangle(cornerRadius: 16))
+                .overlay(RoundedRectangle(cornerRadius: 16).stroke(darkerSurface, lineWidth: 1))
 
                 // Quest info
-                VStack(alignment: .leading, spacing: 7) {
+                VStack(alignment: .leading, spacing: 8) {
                     Text(quest.name)
                         .font(.system(size: 18, weight: .bold))
-                        .foregroundColor(.white)
+                        .foregroundColor(darkText)
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
 
                     if let route {
-                        Text(route.name)
-                            .font(.caption)
-                            .foregroundColor(.white.opacity(0.45))
+                        Text(route.name.uppercased())
+                            .font(.system(size: 10, weight: .black))
+                            .foregroundColor(darkText.opacity(0.40))
                             .lineLimit(1)
                     }
 
-                    // Quest level
-                    Group {
-                        Text("Quest Level: \(level): ").foregroundColor(.yellow)
-                        + Text(levelLabel).foregroundColor(.yellow)
-                    }
-                    .font(.caption).fontWeight(.medium)
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "trophy.fill")
+                                .font(.system(size: 10))
+                            Text(levelLabel.uppercased())
+                                .font(.system(size: 10, weight: .black))
+                        }
+                        .foregroundColor(Color(red: 0.65, green: 0.50, blue: 0.10))
 
-                    // Coins + points
-                    Group {
-                        Text("Coins: \(quest.totalItems) 🪙  ").foregroundColor(.white)
-                        + Text("\(quest.totalPoints) pts").foregroundColor(.orange)
-                    }
-                    .font(.caption).fontWeight(.medium)
-
-                    // Collected count if any progress
-                    if quest.collectedItems > 0 {
-                        Text("\(quest.collectedItems)/\(quest.totalItems) collected")
-                            .font(.caption2)
-                            .foregroundColor(.green)
+                        HStack(spacing: 4) {
+                            Text("🪙")
+                                .font(.system(size: 10))
+                            Text("\(quest.totalItems) COINS")
+                                .font(.system(size: 10, weight: .black))
+                        }
+                        .foregroundColor(Color(red: 0.75, green: 0.40, blue: 0.15))
                     }
 
                     Spacer(minLength: 0)
@@ -143,56 +158,76 @@ struct QuestsListView: View {
 
                 Spacer(minLength: 0)
             }
-            .padding(.horizontal, 12)
-            .padding(.top, 12)
-            .padding(.bottom, 10)
+            .padding(14)
 
             // Progress bar
             if quest.totalItems > 0 {
-                GeometryReader { geo in
-                    ZStack(alignment: .leading) {
-                        Capsule()
-                            .fill(Color.white.opacity(0.1))
-                        Capsule()
-                            .fill(progressColor(progress))
-                            .frame(width: geo.size.width * CGFloat(progress))
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Text("\(Int(progress * 100))% COMPLETE")
+                            .font(.system(size: 10, weight: .black))
+                            .foregroundColor(purple)
+                        Spacer()
+                        if quest.collectedItems > 0 {
+                            Text("\(quest.collectedItems) / \(quest.totalItems)")
+                                .font(.system(size: 10, weight: .bold, design: .rounded))
+                                .foregroundColor(darkText.opacity(0.45))
+                        }
                     }
+
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            Capsule()
+                                .fill(darkerSurface)
+                            Capsule()
+                                .fill(LinearGradient(
+                                    colors: [purple, purple.opacity(0.6)],
+                                    startPoint: .leading, endPoint: .trailing))
+                                .frame(width: geo.size.width * CGFloat(progress))
+                                .shadow(color: purple.opacity(0.18), radius: 3)
+                        }
+                    }
+                    .frame(height: 5)
                 }
-                .frame(height: 4)
-                .padding(.horizontal, 12)
-                .padding(.bottom, 10)
+                .padding(.horizontal, 14)
+                .padding(.bottom, 14)
             }
 
             // Action button
             questActionButton(quest, progress: progress)
-                .padding(.horizontal, 12)
-                .padding(.bottom, 12)
+                .padding(.horizontal, 14)
+                .padding(.bottom, 14)
         }
-        .background(Color(white: 0.06))
-        .clipShape(RoundedRectangle(cornerRadius: 16))
-        .overlay(
-            RoundedRectangle(cornerRadius: 16)
-                .stroke(Color.purple.opacity(0.65), lineWidth: 1.5)
-        )
-        .shadow(color: Color.purple.opacity(0.28), radius: 10)
+        .background(Color(red: 0.76, green: 0.78, blue: 0.88))
+        .clipShape(RoundedRectangle(cornerRadius: 24))
+        .shadow(color: Color(red: 0.01, green: 0.01, blue: 0.04), radius: 12, x: 6, y: 6)
+        .shadow(color: Color(red: 0.14, green: 0.16, blue: 0.28).opacity(0.40), radius: 10, x: -4, y: -4)
     }
 
     // MARK: - Action Button
 
     private func questActionButton(_ quest: Quest, progress: Double) -> some View {
-        let (label, color): (String, Color) = {
-            if quest.isComplete            { return ("Completed ✓",   .gray) }
-            if quest.collectedItems > 0    { return ("Resume Quest",  .orange) }
-            return ("Start Quest", .green)
+        let accent = Color(red: 0.45, green: 0.35, blue: 0.80)
+        let (label, color1, color2): (String, Color, Color) = {
+            if quest.isComplete            { return ("COMPLETED ✓",   Color(red: 0.68, green: 0.70, blue: 0.82), Color(red: 0.64, green: 0.66, blue: 0.78)) }
+            if quest.collectedItems > 0    { return ("RESUME QUEST",  Color(red: 0.95, green: 0.55, blue: 0.25), Color(red: 0.85, green: 0.40, blue: 0.10)) }
+            return ("START QUEST", accent, Color(red: 0.35, green: 0.25, blue: 0.70))
         }()
 
-        return Text(label)
-            .font(.system(size: 16, weight: .bold))
-            .foregroundColor(quest.isComplete ? .white.opacity(0.5) : .black)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 13)
-            .background(quest.isComplete ? Color.white.opacity(0.1) : color)
-            .clipShape(RoundedRectangle(cornerRadius: 10))
+        return HStack {
+            Text(label)
+            if !quest.isComplete { Image(systemName: "chevron.right") }
+        }
+        .font(.system(size: 14, weight: .black))
+        .kerning(1.2)
+        .foregroundColor(quest.isComplete ? Color(red: 0.12, green: 0.13, blue: 0.20).opacity(0.50) : .white)
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 16)
+        .background(
+            LinearGradient(colors: [color1, color2], startPoint: .top, endPoint: .bottom)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .shadow(color: quest.isComplete ? .clear : color1.opacity(0.25), radius: 10, x: 0, y: 5)
     }
 
     // MARK: - Empty State
@@ -205,10 +240,10 @@ struct QuestsListView: View {
                 .foregroundColor(.white.opacity(0.15))
             Text("No Quests Yet")
                 .font(.title2).fontWeight(.semibold)
-                .foregroundColor(.white.opacity(0.55))
+                .foregroundColor(.white.opacity(0.50))
             Text("Record a route, then create a quest from the Routes tab.")
                 .font(.body)
-                .foregroundColor(.white.opacity(0.35))
+                .foregroundColor(.white.opacity(0.30))
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 40)
             Spacer()
