@@ -132,6 +132,13 @@ struct RoutesListView: View {
                                         routeCard(route)
                                     }
                                     .buttonStyle(.plain)
+                                    .contextMenu {
+                                        Button(role: .destructive) {
+                                            dataStore.deleteRoute(route)
+                                        } label: {
+                                            Label("Delete Route", systemImage: "trash")
+                                        }
+                                    }
                                 }
                             }
                             .padding(.horizontal, 20)

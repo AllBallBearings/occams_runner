@@ -34,12 +34,12 @@ final class NavigationFlowTests: XCTestCase {
 
     func test_tapRoutesTab_showsRoutesTitle() {
         app.tabBars.buttons["Routes"].tap()
-        XCTAssertTrue(app.navigationBars["My Routes"].exists)
+        XCTAssertTrue(app.staticTexts["Routes Library"].waitForExistence(timeout: 3))
     }
 
     func test_tapQuestsTab_showsQuestsTitle() {
         app.tabBars.buttons["Quests"].tap()
-        XCTAssertTrue(app.navigationBars["My Quests"].exists)
+        XCTAssertTrue(app.staticTexts["Quest Library"].waitForExistence(timeout: 3))
     }
 
     // MARK: - Routes list
@@ -54,8 +54,8 @@ final class NavigationFlowTests: XCTestCase {
     func test_routesTab_routeRow_showsDistanceLabel() {
         app.tabBars.buttons["Routes"].tap()
         XCTAssertTrue(app.staticTexts["Morning Loop"].waitForExistence(timeout: 3))
-        // Route rows show distance in miles (e.g. "0.01 mi")
-        let miLabel = app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'mi'")).firstMatch
+        // Route rows show distance in miles (e.g. "0.19 MILES")
+        let miLabel = app.staticTexts.matching(NSPredicate(format: "label CONTAINS[c] 'mi'")).firstMatch
         XCTAssertTrue(miLabel.exists)
     }
 
@@ -143,13 +143,13 @@ final class NavigationFlowTests: XCTestCase {
 
     // MARK: - Delete
 
-    func test_swipeToDelete_route_removesFromList() {
+    func test_contextMenuDelete_route_removesFromList() {
         app.tabBars.buttons["Routes"].tap()
         XCTAssertTrue(app.staticTexts["Hill Climb"].waitForExistence(timeout: 3))
 
-        let cell = app.cells.containing(.staticText, identifier: "Hill Climb").firstMatch
-        cell.swipeLeft()
-        app.buttons["Delete"].tap()
+        app.staticTexts["Hill Climb"].press(forDuration: 1.5)
+        XCTAssertTrue(app.buttons["Delete Route"].waitForExistence(timeout: 3))
+        app.buttons["Delete Route"].tap()
 
         XCTAssertFalse(app.staticTexts["Hill Climb"].waitForExistence(timeout: 2))
     }
