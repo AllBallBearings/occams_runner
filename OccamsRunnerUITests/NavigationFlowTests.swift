@@ -23,13 +23,13 @@ final class NavigationFlowTests: XCTestCase {
 
     // MARK: - Tab bar
 
-    func test_tabBar_hasThreeTabs() {
-        XCTAssertEqual(app.tabBars.firstMatch.buttons.count, 3)
+    func test_tabBar_hasFourTabs() {
+        XCTAssertEqual(app.tabBars.firstMatch.buttons.count, 4)
     }
 
-    func test_defaultTab_showsRecordUI() {
-        // Record tab is the first tab. It shows the map or a start-recording button.
-        XCTAssertTrue(app.tabBars.buttons["Record"].isSelected)
+    func test_defaultTab_showsHomeUI() {
+        // Home tab is the first tab. It shows the dashboard.
+        XCTAssertTrue(app.tabBars.buttons["Home"].isSelected)
     }
 
     func test_tapRoutesTab_showsRoutesTitle() {
