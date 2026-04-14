@@ -2,6 +2,10 @@
 
 ## TODO
 
+- [ ] **Add splash & icon image files** — Code and asset catalog entries are in place. Two image files must be added manually:
+  - `OccamsRunner/Assets.xcassets/SplashImage.imageset/splash.png` — the full splash screen image (dark background, orange/cyan aura, "OccamsRunner" wordmark, "Loading…" text)
+  - `OccamsRunner/Assets.xcassets/AppIcon.appiconset/AppIcon.png` — cropped logo mark only at 1024×1024 px (the "C + lightning bolt + runner" with the energy aura cloud, no wordmark or loading text, dark background with breathing room around edges)
+
 - [ ] **Milestone Collection Mode** — Add a pre-run picker for "Precise" vs "Milestone" collection. Milestone treats each coin as a vertical plane (2ft left/right, 2ft up/down, no depth check) so runners collect coins as they pass through without exact coordinate matching. Full implementation plan saved in memory: `project_milestone_collection.md`.
 
 - [ ] **Punch Boxes** — Along the quest route, place a brown 3D cube (SCNBox) at every 10th coin position. Design details:
