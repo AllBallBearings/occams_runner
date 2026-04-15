@@ -20,9 +20,9 @@ struct ContentView: View {
                     Label("Quests", systemImage: "trophy")
                 }
 
-            ProfileView()
+            SettingsView()
                 .tabItem {
-                    Label("Profile", systemImage: "person.circle")
+                    Label("Settings", systemImage: "gearshape.fill")
                 }
         }
         .accentColor(.orange)

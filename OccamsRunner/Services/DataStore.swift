@@ -89,6 +89,12 @@ class DataStore: ObservableObject {
         persist(quests, to: questsURL)
     }
 
+    func renameQuest(_ quest: Quest, to newName: String) {
+        guard let index = quests.firstIndex(where: { $0.id == quest.id }) else { return }
+        quests[index].name = newName
+        persist(quests, to: questsURL)
+    }
+
     func deleteQuest(_ quest: Quest) {
         quests.removeAll { $0.id == quest.id }
         persist(quests, to: questsURL)

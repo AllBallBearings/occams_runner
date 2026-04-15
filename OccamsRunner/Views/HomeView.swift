@@ -16,6 +16,7 @@ private extension View {
 
 struct HomeView: View {
     @EnvironmentObject var dataStore: DataStore
+    @EnvironmentObject var appSettings: AppSettings
 
     // MARK: Computed user data
 
@@ -150,7 +151,8 @@ struct HomeView: View {
 
     private var heroStatSection: some View {
         let progress = min(1.0, todayDistanceMeters / dailyGoalMeters)
-        let todayKm  = todayDistanceMeters / 1000.0
+        let displayValue = appSettings.distanceValue(meters: todayDistanceMeters)
+        let unitLabel = appSettings.distanceUnitLabel + " today"
 
         return ZStack {
             // Ring track
@@ -171,10 +173,10 @@ struct HomeView: View {
 
             // Center stat — white text floats on dark bg inside ring
             VStack(spacing: 2) {
-                Text(String(format: "%.1f", todayKm))
+                Text(String(format: "%.1f", displayValue))
                     .font(.system(size: 52, weight: .black, design: .rounded))
                     .foregroundColor(.white)
-                Text("km today")
+                Text(unitLabel)
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundColor(.white.opacity(0.35))
                     .kerning(0.5)
@@ -382,7 +384,7 @@ struct HomeView: View {
                 Text(relativeDay(date))
                     .font(.subheadline).fontWeight(.semibold)
                     .foregroundColor(Color(red: 0.12, green: 0.13, blue: 0.20))
-                Text(String(format: "%.1f", distanceMeters / 1000.0) + "km Run")
+                Text(appSettings.formatDistanceShort(meters: distanceMeters) + " Run")
                     .font(.caption)
                     .foregroundColor(Color(red: 0.12, green: 0.13, blue: 0.20).opacity(0.50))
             }

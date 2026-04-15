@@ -148,7 +148,20 @@ struct RoutesListView: View {
                 }
             }
             .toolbar(.hidden, for: .navigationBar)
-            // ... (rest of alerts)
+            .alert("Rename Route", isPresented: Binding(
+                get: { renamingRoute != nil },
+                set: { if !$0 { renamingRoute = nil } }
+            )) {
+                TextField("Route name", text: $renameText)
+                Button("Save") {
+                    let trimmed = renameText.trimmingCharacters(in: .whitespaces)
+                    if let route = renamingRoute, !trimmed.isEmpty {
+                        dataStore.renameRoute(route, to: trimmed)
+                    }
+                    renamingRoute = nil
+                }
+                Button("Cancel", role: .cancel) { renamingRoute = nil }
+            }
         }
     }
 
@@ -218,15 +231,12 @@ struct RoutesListView: View {
     private func routeCard(_ route: RecordedRoute) -> some View {
         let quest = dataStore.quests(for: route.id).first
         let coinCount = quest?.items.count ?? 0
-        let (level, levelLabel) = questLevel(coinCount: coinCount)
 
         return VStack(spacing: 0) {
             if viewMode == .map {
-                mapModeCardContent(route: route, quest: quest,
-                                   coinCount: coinCount, level: level, levelLabel: levelLabel)
+                mapModeCardContent(route: route, quest: quest, coinCount: coinCount)
             } else {
-                arModeCardContent(route: route, quest: quest,
-                                  coinCount: coinCount, level: level, levelLabel: levelLabel)
+                arModeCardContent(route: route, quest: quest, coinCount: coinCount)
             }
         }
         .background(Color(red: 0.76, green: 0.78, blue: 0.88))
@@ -237,8 +247,7 @@ struct RoutesListView: View {
 
     // AR Mode — thumbnail left, stats right
     @ViewBuilder
-    private func arModeCardContent(route: RecordedRoute, quest: Quest?,
-                                   coinCount: Int, level: Int, levelLabel: String) -> some View {
+    private func arModeCardContent(route: RecordedRoute, quest: Quest?, coinCount: Int) -> some View {
         let darkText = Color(red: 0.12, green: 0.13, blue: 0.20)
         let darkerSurface = Color(red: 0.68, green: 0.70, blue: 0.82)
 
@@ -256,23 +265,13 @@ struct RoutesListView: View {
                     .foregroundColor(darkText.opacity(0.40))
 
                 if quest != nil {
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack(spacing: 4) {
-                            Image(systemName: "trophy.fill")
-                                .font(.system(size: 10))
-                            Text(levelLabel.uppercased())
-                                .font(.system(size: 10, weight: .black))
-                        }
-                        .foregroundColor(Color(red: 0.65, green: 0.50, blue: 0.10))
-
-                        HStack(spacing: 4) {
-                            Text("🪙")
-                                .font(.system(size: 10))
-                            Text("\(coinCount) COINS")
-                                .font(.system(size: 10, weight: .black))
-                        }
-                        .foregroundColor(Color(red: 0.75, green: 0.40, blue: 0.15))
+                    HStack(spacing: 4) {
+                        Text("🪙")
+                            .font(.system(size: 10))
+                        Text("\(coinCount) COINS")
+                            .font(.system(size: 10, weight: .black))
                     }
+                    .foregroundColor(Color(red: 0.75, green: 0.40, blue: 0.15))
                 } else {
                     Text("NO QUEST ACTIVE")
                         .font(.system(size: 10, weight: .black))
@@ -296,8 +295,7 @@ struct RoutesListView: View {
 
     // Map Mode — full-width live 3D map, condensed info below
     @ViewBuilder
-    private func mapModeCardContent(route: RecordedRoute, quest: Quest?,
-                                    coinCount: Int, level: Int, levelLabel: String) -> some View {
+    private func mapModeCardContent(route: RecordedRoute, quest: Quest?, coinCount: Int) -> some View {
         let darkText = Color(red: 0.12, green: 0.13, blue: 0.20)
         let darkerSurface = Color(red: 0.68, green: 0.70, blue: 0.82)
 
@@ -383,30 +381,6 @@ struct RoutesListView: View {
         .shadow(color: Color(red: 0.18, green: 0.72, blue: 0.70).opacity(0.25), radius: 10, x: 0, y: 5)
     }
 
-    @ViewBuilder
-    private func questInfoRows(level: Int, levelLabel: String, coinCount: Int) -> some View {
-        // Quest level
-        Group {
-            Text("Quest Level: \(level): ").foregroundColor(.yellow)
-            + Text(levelLabel).foregroundColor(.yellow)
-        }
-        .font(.caption).fontWeight(.medium)
-
-        // High score — placeholder until run history is tracked
-        Group {
-            Text("High Score: ").foregroundColor(.orange)
-            + Text("0 pts").foregroundColor(.white)
-        }
-        .font(.caption).fontWeight(.medium)
-
-        // Total coins
-        Group {
-            Text("Total Coins: \(coinCount) ").foregroundColor(.white)
-            + Text("🪙")
-        }
-        .font(.caption).fontWeight(.medium)
-    }
-
     // MARK: - Empty State
 
     private var emptyState: some View {
@@ -428,16 +402,4 @@ struct RoutesListView: View {
         .frame(maxWidth: .infinity)
     }
 
-    // MARK: - Quest Level
-
-    private func questLevel(coinCount: Int) -> (level: Int, label: String) {
-        switch coinCount {
-        case 0:        return (0, "No Quest")
-        case 1...10:   return (1, "Coins Only")
-        case 11...20:  return (2, "Collect Master")
-        case 21...30:  return (3, "Monsters Enabled")
-        case 31...40:  return (4, "Challenge Mode")
-        default:       return (5, "Boss Battle!")
-        }
-    }
 }
