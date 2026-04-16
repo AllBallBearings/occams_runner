@@ -201,7 +201,7 @@ struct Route3DView: View {
             let pt = points[i]
             guard pt.y > 0.2 else { continue }
 
-            let t = CGFloat(pt.y / 10.0).clamped(to: 0...1)
+        let t = max(0, min(1, CGFloat(pt.y / 10.0)))
             let curtainColor = UIColor(
                 red:   0.10 + 0.50 * t,
                 green: 0.55 - 0.20 * t,
@@ -229,7 +229,7 @@ struct Route3DView: View {
             let length = sqrt(dx*dx + dy*dy + dz*dz)
             guard length > 0.001 else { continue }
 
-            let t = CGFloat(p1.y / 10.0).clamped(to: 0...1)
+            let t = max(0, min(1, CGFloat(p1.y / 10.0)))
             let segColor: UIColor
             if t < 0.5 {
                 segColor = UIColor(red: 0.10, green: 0.50 + 0.40 * (t * 2),
@@ -357,7 +357,7 @@ struct Route3DView: View {
         let dur: Double = Double(keyPts.count) * 0.18
         posAnim.duration    = dur
         posAnim.repeatCount = .infinity
-        posAnim.calculationMode = .catmullRom
+        posAnim.calculationMode = .cubic
         runner.addAnimation(posAnim, forKey: "run")
     }
 
@@ -406,14 +406,6 @@ struct Route3DView: View {
             container.opacity = item.collected ? 0.25 : 1.0
             scene.rootNode.addChildNode(container)
         }
-    }
-}
-
-// MARK: - CGFloat clamping helper
-
-private extension CGFloat {
-    func clamped(to range: ClosedRange<CGFloat>) -> CGFloat {
-        min(max(self, range.lowerBound), range.upperBound)
     }
 }
 
