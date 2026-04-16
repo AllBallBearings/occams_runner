@@ -4,6 +4,7 @@ import SwiftUI
 struct OccamsRunnerApp: App {
     @StateObject private var dataStore: DataStore
     @StateObject private var locationService = LocationService()
+    @StateObject private var appSettings = AppSettings()
 
     init() {
         // When running UI tests, use an isolated temp directory so tests don't
@@ -33,6 +34,7 @@ struct OccamsRunnerApp: App {
                 ContentView()
                     .environmentObject(dataStore)
                     .environmentObject(locationService)
+                    .environmentObject(appSettings)
                     .onAppear {
                         if ProcessInfo.processInfo.environment["UI_TESTING"] != "1" {
                             locationService.requestPermission()

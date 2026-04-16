@@ -1,14 +1,13 @@
 import SwiftUI
 import SceneKit
 
-/// Displays a recorded route as a 3D model using SceneKit.
+/// Displays a recorded route as an enhanced 3D scene using SceneKit.
 /// The user can rotate, zoom, and examine the route including altitude changes.
 struct Route3DView: View {
     let route: RecordedRoute
     @EnvironmentObject var dataStore: DataStore
 
     @State private var showQuestItems = true
-    /// Incrementing this forces the SCNView wrapper to reset the camera.
     @State private var resetToken = 0
 
     var body: some View {
@@ -19,7 +18,6 @@ struct Route3DView: View {
             )
             .ignoresSafeArea(edges: .bottom)
 
-            // Toggle quest items visibility
             if !dataStore.quests(for: route.id).isEmpty {
                 Toggle("Show Quest Items", isOn: $showQuestItems)
                     .padding()
@@ -30,9 +28,7 @@ struct Route3DView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
-                Button {
-                    resetToken += 1
-                } label: {
+                Button { resetToken += 1 } label: {
                     Image(systemName: "arrow.counterclockwise")
                 }
                 .help("Reset Camera")
@@ -44,47 +40,60 @@ struct Route3DView: View {
 
     private func buildScene() -> SCNScene {
         let scene = SCNScene()
-        scene.background.contents = UIColor(red: 0.05, green: 0.05, blue: 0.15, alpha: 1.0)
+        scene.background.contents = makeGradientBackground()
 
         guard route.points.count >= 2 else { return scene }
 
-        // Normalize coordinates to scene space
         let normalized = normalizePoints()
 
-        // Build route path as a tube/line
+        addNeonGrid(to: scene, points: normalized)
+        addElevationCurtain(to: scene, points: normalized)
         addRoutePath(to: scene, points: normalized)
+        addStartEndMarkers(to: scene, points: normalized)
+        addAnimatedRunner(to: scene, points: normalized)
 
-        // Add start/end markers
-        addMarker(to: scene, at: normalized.first!, color: .green, label: "START")
-        addMarker(to: scene, at: normalized.last!, color: .red, label: "END")
-
-        // Add altitude grid/reference plane
-        addGroundPlane(to: scene, points: normalized)
-
-        // Add quest items if visible
         if showQuestItems {
             addQuestItems(to: scene, points: normalized)
         }
 
-        // Position camera
-        let cameraNode = SCNNode()
-        cameraNode.camera = SCNCamera()
-        cameraNode.camera?.zFar = 500
-        let center = normalized[normalized.count / 2]
-        cameraNode.position = SCNVector3(center.x, center.y + 15, center.z + 20)
-        cameraNode.look(at: SCNVector3(center.x, center.y, center.z))
-        scene.rootNode.addChildNode(cameraNode)
+        // Lighting
+        let ambient = SCNNode()
+        ambient.light = SCNLight()
+        ambient.light?.type = .ambient
+        ambient.light?.intensity = 200
+        ambient.light?.color = UIColor(white: 1, alpha: 1)
+        scene.rootNode.addChildNode(ambient)
 
-        // Ambient light
-        let ambientLight = SCNNode()
-        ambientLight.light = SCNLight()
-        ambientLight.light?.type = .ambient
-        ambientLight.light?.intensity = 400
-        ambientLight.light?.color = UIColor.white
-        scene.rootNode.addChildNode(ambientLight)
+        let directional = SCNNode()
+        directional.light = SCNLight()
+        directional.light?.type = .directional
+        directional.light?.intensity = 500
+        directional.light?.color = UIColor(red: 0.6, green: 0.8, blue: 1.0, alpha: 1)
+        directional.position = SCNVector3(10, 20, 10)
+        directional.look(at: .init(0, 0, 0))
+        scene.rootNode.addChildNode(directional)
+
+        // Camera
+        let xs = normalized.map(\.x)
+        let zs = normalized.map(\.z)
+        let ys = normalized.map(\.y)
+        let cx = (xs.min()! + xs.max()!) / 2
+        let cz = (zs.min()! + zs.max()!) / 2
+        let cy = (ys.min()! + ys.max()!) / 2
+        let span = max(xs.max()! - xs.min()!, zs.max()! - zs.min()!, 10)
+
+        let camNode = SCNNode()
+        camNode.camera = SCNCamera()
+        camNode.camera?.zFar = 500
+        camNode.camera?.zNear = 0.1
+        camNode.position = SCNVector3(cx, cy + span * 0.7, cz + span * 0.9)
+        camNode.look(at: SCNVector3(cx, cy * 0.3, cz))
+        scene.rootNode.addChildNode(camNode)
 
         return scene
     }
+
+    // MARK: - Normalized points
 
     private struct NormalizedPoint {
         let x: Float
@@ -97,163 +106,275 @@ struct Route3DView: View {
         let lons = route.points.map(\.longitude)
         let alts = route.points.map(\.altitude)
 
-        let minLat = lats.min()!
-        let maxLat = lats.max()!
-        let minLon = lons.min()!
-        let maxLon = lons.max()!
-        let minAlt = alts.min()!
-        let maxAlt = alts.max()!
+        let minLat = lats.min()!, maxLat = lats.max()!
+        let minLon = lons.min()!, maxLon = lons.max()!
+        let minAlt = alts.min()!,  maxAlt = alts.max()!
 
-        let latRange = maxLat - minLat
-        let lonRange = maxLon - minLon
-        let altRange = max(maxAlt - minAlt, 1.0)
-        let maxRange = max(latRange, lonRange)
-        let scale: Double = maxRange > 0 ? 30.0 / maxRange : 1.0
+        let maxRange = max(maxLat - minLat, maxLon - minLon)
+        let scale: Double    = maxRange > 0 ? 30.0 / maxRange : 1.0
+        let altRange: Double = max(maxAlt - minAlt, 1.0)
         let altScale: Double = 10.0 / altRange
 
         return route.points.map { pt in
             NormalizedPoint(
                 x: Float((pt.longitude - minLon) * scale),
-                y: Float((pt.altitude - minAlt) * altScale),
-                z: Float(-(pt.latitude - minLat) * scale) // negative because SceneKit Z goes into screen
+                y: Float((pt.altitude  - minAlt) * altScale),
+                z: Float(-(pt.latitude - minLat) * scale)
             )
         }
     }
+
+    // MARK: - Background gradient
+
+    private func makeGradientBackground() -> UIImage {
+        let size = CGSize(width: 1, height: 256)
+        UIGraphicsBeginImageContext(size)
+        let ctx = UIGraphicsGetCurrentContext()!
+        let colors: [UIColor] = [
+            UIColor(red: 0.02, green: 0.03, blue: 0.12, alpha: 1),
+            UIColor(red: 0.05, green: 0.08, blue: 0.22, alpha: 1)
+        ]
+        let locs: [CGFloat] = [0, 1]
+        let cgColors = colors.map(\.cgColor) as CFArray
+        let space = CGColorSpaceCreateDeviceRGB()
+        let gradient = CGGradient(colorsSpace: space, colors: cgColors, locations: locs)!
+        ctx.drawLinearGradient(gradient,
+                               start: CGPoint(x: 0, y: 0),
+                               end:   CGPoint(x: 0, y: size.height),
+                               options: [])
+        let img = UIGraphicsGetImageFromCurrentImageContext()!
+        UIGraphicsEndImageContext()
+        return img
+    }
+
+    // MARK: - Neon grid ground plane
+
+    private func addNeonGrid(to scene: SCNScene, points: [NormalizedPoint]) {
+        let xs = points.map(\.x)
+        let zs = points.map(\.z)
+        let minX = xs.min()! - 3, maxX = xs.max()! + 3
+        let minZ = zs.min()! - 3, maxZ = zs.max()! + 3
+        let gridY: Float = -0.05
+
+        let gridColor = UIColor(red: 0.10, green: 0.80, blue: 0.60, alpha: 0.45)
+        let accentColor = UIColor(red: 0.10, green: 0.80, blue: 0.60, alpha: 0.90)
+
+        let step: Float = 5.0
+        var xLines: [Float] = []
+        var zLines: [Float] = []
+        var v = minX - fmod(minX, step)
+        while v <= maxX { xLines.append(v); v += step }
+        v = minZ - fmod(minZ, step)
+        while v <= maxZ { zLines.append(v); v += step }
+
+        let lenZ = CGFloat(maxZ - minZ)
+        let lenX = CGFloat(maxX - minX)
+
+        for xPos in xLines {
+            let box = SCNBox(width: 0.03, height: 0.02, length: lenZ, chamferRadius: 0)
+            let col = xPos.truncatingRemainder(dividingBy: step * 2) == 0 ? accentColor : gridColor
+            box.firstMaterial?.diffuse.contents  = col
+            box.firstMaterial?.emission.contents = col
+            box.firstMaterial?.isDoubleSided = true
+            let n = SCNNode(geometry: box)
+            n.position = SCNVector3(xPos, gridY, (minZ + maxZ) / 2)
+            scene.rootNode.addChildNode(n)
+        }
+        for zPos in zLines {
+            let box = SCNBox(width: lenX, height: 0.02, length: 0.03, chamferRadius: 0)
+            let col = zPos.truncatingRemainder(dividingBy: step * 2) == 0 ? accentColor : gridColor
+            box.firstMaterial?.diffuse.contents  = col
+            box.firstMaterial?.emission.contents = col
+            box.firstMaterial?.isDoubleSided = true
+            let n = SCNNode(geometry: box)
+            n.position = SCNVector3((minX + maxX) / 2, gridY, zPos)
+            scene.rootNode.addChildNode(n)
+        }
+    }
+
+    // MARK: - Elevation curtain
+
+    private func addElevationCurtain(to scene: SCNScene, points: [NormalizedPoint]) {
+        // Subsample — draw a curtain drop every ~3 points for performance
+        let stride = max(1, points.count / 80)
+        for i in Swift.stride(from: 0, to: points.count, by: stride) {
+            let pt = points[i]
+            guard pt.y > 0.2 else { continue }
+
+        let t = max(0, min(1, CGFloat(pt.y / 10.0)))
+            let curtainColor = UIColor(
+                red:   0.10 + 0.50 * t,
+                green: 0.55 - 0.20 * t,
+                blue:  0.90 - 0.70 * t,
+                alpha: 0.20)
+
+            let box = SCNBox(width: 0.05, height: CGFloat(pt.y), length: 0.05, chamferRadius: 0)
+            box.firstMaterial?.diffuse.contents  = curtainColor
+            box.firstMaterial?.emission.contents = curtainColor
+            box.firstMaterial?.isDoubleSided = true
+            box.firstMaterial?.transparency = 0.6
+
+            let n = SCNNode(geometry: box)
+            n.position = SCNVector3(pt.x, pt.y / 2, pt.z)
+            scene.rootNode.addChildNode(n)
+        }
+    }
+
+    // MARK: - Route path (glowing tube)
 
     private func addRoutePath(to scene: SCNScene, points: [NormalizedPoint]) {
-        // Create segments between consecutive points
         for i in 1..<points.count {
-            let p1 = points[i - 1]
-            let p2 = points[i]
-
-            let dx = p2.x - p1.x
-            let dy = p2.y - p1.y
-            let dz = p2.z - p1.z
-            let length = sqrt(dx * dx + dy * dy + dz * dz)
-
+            let p1 = points[i - 1], p2 = points[i]
+            let dx = p2.x - p1.x, dy = p2.y - p1.y, dz = p2.z - p1.z
+            let length = sqrt(dx*dx + dy*dy + dz*dz)
             guard length > 0.001 else { continue }
 
-            let cylinder = SCNCylinder(radius: 0.08, height: CGFloat(length))
-
-            // Color by altitude (low=blue, mid=green, high=orange)
-            let altFraction = CGFloat(p1.y / 10.0)
-            let color: UIColor
-            if altFraction < 0.5 {
-                color = UIColor(
-                    red: 0.2,
-                    green: 0.4 + altFraction,
-                    blue: 1.0 - altFraction,
-                    alpha: 1.0
-                )
+            let t = max(0, min(1, CGFloat(p1.y / 10.0)))
+            let segColor: UIColor
+            if t < 0.5 {
+                segColor = UIColor(red: 0.10, green: 0.50 + 0.40 * (t * 2),
+                                   blue: 1.0 - t, alpha: 1)
             } else {
-                color = UIColor(
-                    red: altFraction,
-                    green: 1.0 - altFraction * 0.5,
-                    blue: 0.2,
-                    alpha: 1.0
-                )
+                let tt = (t - 0.5) * 2
+                segColor = UIColor(red: 0.20 + 0.75 * tt,
+                                   green: 0.90 - 0.50 * tt,
+                                   blue: 0.50 - 0.40 * tt, alpha: 1)
             }
 
-            cylinder.firstMaterial?.diffuse.contents = color
-            cylinder.firstMaterial?.emission.contents = color.withAlphaComponent(0.3)
+            // Core tube
+            let tube = SCNCylinder(radius: 0.10, height: CGFloat(length))
+            tube.firstMaterial?.diffuse.contents  = segColor
+            tube.firstMaterial?.emission.contents = segColor.withAlphaComponent(0.7)
+            tube.firstMaterial?.specular.contents = UIColor.white
 
-            let node = SCNNode(geometry: cylinder)
-            node.position = SCNVector3(
-                (p1.x + p2.x) / 2,
-                (p1.y + p2.y) / 2,
-                (p1.z + p2.z) / 2
-            )
-
-            // Align cylinder between two points
-            let direction = SCNVector3(dx, dy, dz)
+            let node = SCNNode(geometry: tube)
+            node.position = SCNVector3((p1.x+p2.x)/2, (p1.y+p2.y)/2, (p1.z+p2.z)/2)
             node.look(at: SCNVector3(p2.x, p2.y, p2.z))
             node.eulerAngles.x += .pi / 2
-
-            _ = direction // suppress unused warning
             scene.rootNode.addChildNode(node)
-        }
 
-        // Add small spheres at each point for smooth appearance
-        for point in points {
-            let sphere = SCNSphere(radius: 0.1)
-            sphere.firstMaterial?.diffuse.contents = UIColor.orange
-            let node = SCNNode(geometry: sphere)
-            node.position = SCNVector3(point.x, point.y, point.z)
-            scene.rootNode.addChildNode(node)
+            // Outer glow halo — wider, very transparent
+            let halo = SCNCylinder(radius: 0.22, height: CGFloat(length))
+            halo.firstMaterial?.diffuse.contents  = segColor.withAlphaComponent(0.0)
+            halo.firstMaterial?.emission.contents = segColor.withAlphaComponent(0.18)
+            halo.firstMaterial?.isDoubleSided = true
+
+            let haloNode = SCNNode(geometry: halo)
+            haloNode.position = node.position
+            haloNode.eulerAngles = node.eulerAngles
+            scene.rootNode.addChildNode(haloNode)
         }
     }
 
-    private func addMarker(to scene: SCNScene, at point: NormalizedPoint, color: UIColor, label: String) {
-        // Sphere marker
-        let sphere = SCNSphere(radius: 0.35)
-        sphere.firstMaterial?.diffuse.contents = color
-        sphere.firstMaterial?.emission.contents = color.withAlphaComponent(0.5)
-        let node = SCNNode(geometry: sphere)
-        node.position = SCNVector3(point.x, point.y + 0.5, point.z)
-        scene.rootNode.addChildNode(node)
+    // MARK: - Start / End markers
 
-        // Text label
-        let text = SCNText(string: label, extrusionDepth: 0.1)
-        text.font = UIFont.boldSystemFont(ofSize: 0.8)
-        text.firstMaterial?.diffuse.contents = color
+    private func addStartEndMarkers(to scene: SCNScene, points: [NormalizedPoint]) {
+        addFlagMarker(to: scene, at: points.first!, color: UIColor(red: 0.20, green: 0.85, blue: 0.45, alpha: 1), label: "S")
+        addFlagMarker(to: scene, at: points.last!,  color: UIColor(red: 0.95, green: 0.30, blue: 0.30, alpha: 1), label: "E")
+    }
+
+    private func addFlagMarker(to scene: SCNScene, at point: NormalizedPoint, color: UIColor, label: String) {
+        // Glowing base sphere
+        let sphere = SCNSphere(radius: 0.45)
+        sphere.firstMaterial?.diffuse.contents  = color
+        sphere.firstMaterial?.emission.contents = color.withAlphaComponent(0.8)
+        let sphereNode = SCNNode(geometry: sphere)
+        sphereNode.position = SCNVector3(point.x, point.y + 0.45, point.z)
+        scene.rootNode.addChildNode(sphereNode)
+
+        // Vertical post
+        let post = SCNCylinder(radius: 0.06, height: 2.0)
+        post.firstMaterial?.diffuse.contents  = color.withAlphaComponent(0.7)
+        post.firstMaterial?.emission.contents = color.withAlphaComponent(0.3)
+        let postNode = SCNNode(geometry: post)
+        postNode.position = SCNVector3(point.x, point.y + 1.9, point.z)
+        scene.rootNode.addChildNode(postNode)
+
+        // Small flag plane
+        let flag = SCNPlane(width: 0.8, height: 0.5)
+        flag.firstMaterial?.diffuse.contents  = color
+        flag.firstMaterial?.emission.contents = color.withAlphaComponent(0.5)
+        flag.firstMaterial?.isDoubleSided = true
+        let flagNode = SCNNode(geometry: flag)
+        flagNode.position = SCNVector3(point.x + 0.45, point.y + 2.65, point.z)
+        scene.rootNode.addChildNode(flagNode)
+
+        // Label
+        let text = SCNText(string: label, extrusionDepth: 0.05)
+        text.font = UIFont.boldSystemFont(ofSize: 0.6)
+        text.firstMaterial?.diffuse.contents  = color
+        text.firstMaterial?.emission.contents = color
         let textNode = SCNNode(geometry: text)
-        textNode.position = SCNVector3(point.x - 0.5, point.y + 1.2, point.z)
-        textNode.scale = SCNVector3(0.5, 0.5, 0.5)
+        textNode.position = SCNVector3(point.x + 0.18, point.y + 2.45, point.z + 0.1)
+        textNode.scale = SCNVector3(0.7, 0.7, 0.7)
         scene.rootNode.addChildNode(textNode)
     }
 
-    private func addGroundPlane(to scene: SCNScene, points: [NormalizedPoint]) {
-        let xs = points.map(\.x)
-        let zs = points.map(\.z)
-        let width = (xs.max()! - xs.min()!) + 4
-        let length = (zs.max()! - zs.min()!) + 4
+    // MARK: - Animated runner sphere
 
-        let plane = SCNPlane(width: CGFloat(width), height: CGFloat(length))
-        plane.firstMaterial?.diffuse.contents = UIColor(white: 0.15, alpha: 0.5)
-        plane.firstMaterial?.isDoubleSided = true
+    private func addAnimatedRunner(to scene: SCNScene, points: [NormalizedPoint]) {
+        guard points.count >= 2 else { return }
 
-        let planeNode = SCNNode(geometry: plane)
-        planeNode.eulerAngles.x = -.pi / 2
-        planeNode.position = SCNVector3(
-            (xs.min()! + xs.max()!) / 2,
-            -0.1,
-            (zs.min()! + zs.max()!) / 2
-        )
-        scene.rootNode.addChildNode(planeNode)
+        // Sample evenly — keep ≤60 key positions for smooth animation
+        let count  = min(points.count, 60)
+        let stride = max(1, points.count / count)
+        var keyPts: [NormalizedPoint] = []
+        for i in Swift.stride(from: 0, to: points.count, by: stride) { keyPts.append(points[i]) }
+        if keyPts.last.map({ $0.x != points.last!.x }) ?? true { keyPts.append(points.last!) }
+
+        // Runner: bright cyan glowing sphere
+        let sphere = SCNSphere(radius: 0.28)
+        sphere.firstMaterial?.diffuse.contents  = UIColor(red: 0.10, green: 0.95, blue: 1.00, alpha: 1)
+        sphere.firstMaterial?.emission.contents = UIColor(red: 0.10, green: 0.95, blue: 1.00, alpha: 1)
+
+        // Outer pulse halo
+        let halo = SCNSphere(radius: 0.50)
+        halo.firstMaterial?.diffuse.contents  = UIColor.clear
+        halo.firstMaterial?.emission.contents = UIColor(red: 0.10, green: 0.95, blue: 1.00, alpha: 0.25)
+        halo.firstMaterial?.isDoubleSided = true
+
+        let runner   = SCNNode(geometry: sphere)
+        let haloNode = SCNNode(geometry: halo)
+        runner.addChildNode(haloNode)
+        runner.position = SCNVector3(keyPts[0].x, keyPts[0].y + 0.3, keyPts[0].z)
+        scene.rootNode.addChildNode(runner)
+
+        // Pulse animation on halo
+        let pulse = CABasicAnimation(keyPath: "scale")
+        pulse.fromValue  = NSValue(scnVector3: SCNVector3(1, 1, 1))
+        pulse.toValue    = NSValue(scnVector3: SCNVector3(1.6, 1.6, 1.6))
+        pulse.duration   = 0.9
+        pulse.autoreverses = true
+        pulse.repeatCount  = .infinity
+        pulse.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        haloNode.addAnimation(pulse, forKey: "pulse")
+
+        // Position keyframe animation along route
+        let posAnim = CAKeyframeAnimation(keyPath: "position")
+        posAnim.values = keyPts.map {
+            NSValue(scnVector3: SCNVector3($0.x, $0.y + 0.3, $0.z))
+        }
+        let dur: Double = Double(keyPts.count) * 0.18
+        posAnim.duration    = dur
+        posAnim.repeatCount = .infinity
+        posAnim.calculationMode = .cubic
+        runner.addAnimation(posAnim, forKey: "run")
     }
 
-    // MARK: - Camera defaults
-
-    /// The initial camera position computed from normalized points, for reset.
-    private func defaultCameraTransform(for normalized: [NormalizedPoint]) -> (position: SCNVector3, lookAt: SCNVector3) {
-        let center = normalized[normalized.count / 2]
-        let pos = SCNVector3(center.x, center.y + 15, center.z + 20)
-        let target = SCNVector3(center.x, center.y, center.z)
-        return (pos, target)
-    }
+    // MARK: - Quest coin items
 
     private func addQuestItems(to scene: SCNScene, points: [NormalizedPoint]) {
         let quests = dataStore.quests(for: route.id)
         guard let quest = quests.first else { return }
 
-        // For each quest item, find its approximate position in normalized space
         let lats = route.points.map(\.latitude)
         let lons = route.points.map(\.longitude)
         let alts = route.points.map(\.altitude)
 
-        let minLat = lats.min()!
-        let maxLat = lats.max()!
-        let minLon = lons.min()!
-        let maxLon = lons.max()!
-        let minAlt = alts.min()!
-        let maxAlt = alts.max()!
-
-        let latRange = maxLat - minLat
-        let lonRange = maxLon - minLon
-        let altRange = max(maxAlt - minAlt, 1.0)
-        let maxRange = max(latRange, lonRange)
+        let minLat = lats.min()!, minLon = lons.min()!, minAlt = alts.min()!
+        let maxRange = max(lats.max()! - minLat, lons.max()! - minLon)
         let scale: Double = maxRange > 0 ? 30.0 / maxRange : 1.0
-        let altScale: Double = 10.0 / altRange
+        let altScale: Double = 10.0 / max(alts.max()! - minAlt, 1.0)
 
         for item in quest.items {
             guard let geo = route.geoSample(atProgress: item.routeProgress) else { continue }
@@ -262,58 +383,49 @@ struct Route3DView: View {
             let y = Float(((geo.altitude + item.verticalOffset) - minAlt) * altScale) + 0.5
             let z = Float(-(geo.latitude - minLat) * scale)
 
-            // Container holds position and spin; the disc child is rotated upright
-            let containerNode = SCNNode()
-            containerNode.position = SCNVector3(x, y, z)
+            let container = SCNNode()
+            container.position = SCNVector3(x, y, z)
 
-            // Gold coin disc
-            let coin = SCNCylinder(radius: 0.25, height: 0.05)
-            coin.firstMaterial?.diffuse.contents = UIColor(red: 1.0, green: 0.84, blue: 0.0, alpha: 1.0)
-            coin.firstMaterial?.emission.contents = UIColor(red: 0.8, green: 0.6, blue: 0.0, alpha: 0.5)
+            let coin = SCNCylinder(radius: 0.22, height: 0.05)
+            let coinColor = UIColor(red: 1.0, green: 0.84, blue: 0.0, alpha: 1.0)
+            coin.firstMaterial?.diffuse.contents  = coinColor
+            coin.firstMaterial?.emission.contents = UIColor(red: 0.9, green: 0.65, blue: 0.0, alpha: 0.6)
             coin.firstMaterial?.specular.contents = UIColor.white
             coin.firstMaterial?.isDoubleSided = true
 
-            let coinDisc = SCNNode(geometry: coin)
-            // 90° rotation on X makes the flat face point forward instead of up
-            coinDisc.eulerAngles = SCNVector3(Float.pi / 2, 0, 0)
-            containerNode.addChildNode(coinDisc)
+            let disc = SCNNode(geometry: coin)
+            disc.eulerAngles = SCNVector3(Float.pi / 2, 0, 0)
+            container.addChildNode(disc)
 
-            // Spin the container on Y — produces the Mario coin flip on the upright disc
             let spin = CABasicAnimation(keyPath: "rotation")
-            spin.toValue = NSValue(scnVector4: SCNVector4(0, 1, 0, Float.pi * 2))
-            spin.duration = 2
+            spin.toValue    = NSValue(scnVector4: SCNVector4(0, 1, 0, Float.pi * 2))
+            spin.duration   = 2
             spin.repeatCount = .infinity
-            containerNode.addAnimation(spin, forKey: "spin")
+            container.addAnimation(spin, forKey: "spin")
 
-            if item.collected {
-                containerNode.opacity = 0.3
-            }
-
-            scene.rootNode.addChildNode(containerNode)
+            container.opacity = item.collected ? 0.25 : 1.0
+            scene.rootNode.addChildNode(container)
         }
     }
 }
 
 // MARK: - SCNView wrapper with reset support
 
-/// Wraps SCNView so the parent can programmatically reset the camera by changing `resetToken`.
 private struct Route3DSceneView: UIViewRepresentable {
     let scene: SCNScene
-    /// Changing this value triggers `updateUIView`, which resets the camera to its default position.
     let resetToken: Int
 
     func makeUIView(context: Context) -> SCNView {
         let scnView = SCNView()
         scnView.scene = scene
-        scnView.allowsCameraControl = true
-        scnView.autoenablesDefaultLighting = true
-        scnView.backgroundColor = UIColor(red: 0.05, green: 0.05, blue: 0.15, alpha: 1.0)
+        scnView.allowsCameraControl    = true
+        scnView.autoenablesDefaultLighting = false
+        scnView.backgroundColor = UIColor(red: 0.02, green: 0.03, blue: 0.12, alpha: 1)
+        scnView.antialiasingMode = .multisampling4X
         return scnView
     }
 
     func updateUIView(_ scnView: SCNView, context: Context) {
-        // When resetToken changes, restore the camera to the scene's built-in camera node.
-        // Replacing the scene also resets SceneKit's internal camera controller state.
         scnView.scene = scene
     }
 }

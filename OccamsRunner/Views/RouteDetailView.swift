@@ -52,7 +52,7 @@ struct Route3DMapPreview: UIViewRepresentable {
         let fittedAltitude = mapView.camera.altitude
         let center = mapView.camera.centerCoordinate
         mapView.setCamera(
-            MKMapCamera(lookingAtCenter: center, fromDistance: fittedAltitude, pitch: 55, heading: 0),
+            MKMapCamera(lookingAtCenter: center, fromDistance: fittedAltitude, pitch: 0, heading: 0),
             animated: false)
     }
 
@@ -110,9 +110,9 @@ struct RouteDetailView: View {
                     }
                     .padding(.horizontal, 16)
 
-                    // 3D map preview
+                    // Map preview
                     Route3DMapPreview(route: route)
-                        .frame(height: 280)
+                        .frame(height: 260)
                         .clipShape(RoundedRectangle(cornerRadius: 20))
                         .overlay(
                             RoundedRectangle(cornerRadius: 20)
@@ -121,6 +121,31 @@ struct RouteDetailView: View {
                         .shadow(color: shadowDark, radius: 16, x: 6, y: 6)
                         .shadow(color: shadowLift.opacity(0.40), radius: 12, x: -4, y: -4)
                         .padding(.horizontal, 16)
+
+                    // View in 3D — lives directly below the map
+                    NavigationLink(destination: Route3DView(route: route)) {
+                        HStack(spacing: 10) {
+                            Image(systemName: "cube.fill")
+                                .font(.system(size: 15, weight: .semibold))
+                            Text("View in 3D")
+                                .font(.system(size: 15, weight: .bold))
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 12, weight: .semibold))
+                                .opacity(0.40)
+                        }
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 18)
+                        .padding(.vertical, 14)
+                        .background(
+                            LinearGradient(
+                                colors: [indigo, Color(red: 0.30, green: 0.20, blue: 0.65)],
+                                startPoint: .topLeading, endPoint: .bottomTrailing)
+                        )
+                        .clipShape(RoundedRectangle(cornerRadius: 16))
+                        .shadow(color: indigo.opacity(0.35), radius: 10, x: 0, y: 5)
+                    }
+                    .padding(.horizontal, 16)
 
                     statsGrid
                         .padding(.horizontal, 16)
@@ -218,10 +243,6 @@ struct RouteDetailView: View {
 
     private var actionButtons: some View {
         VStack(spacing: 12) {
-            NavigationLink(destination: Route3DView(route: route)) {
-                neuButton(label: "View in 3D", icon: "cube.fill", iconColor: indigo)
-            }
-
             Button(action: { showingQuestCreator = true }) {
                 neuButton(label: "Create Quest", icon: "star.circle.fill", iconColor: teal)
             }

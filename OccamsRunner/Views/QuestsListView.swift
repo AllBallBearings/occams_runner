@@ -5,6 +5,10 @@ struct QuestsListView: View {
     @EnvironmentObject var dataStore: DataStore
     @State private var searchText = ""
 
+    // Rename state
+    @State private var renamingQuest: Quest? = nil
+    @State private var renameText = ""
+
     private var sortedQuests: [Quest] {
         let sorted = dataStore.quests.sorted { $0.dateCreated > $1.dateCreated }
         guard !searchText.isEmpty else { return sorted }
@@ -41,6 +45,12 @@ struct QuestsListView: View {
                                     }
                                     .buttonStyle(.plain)
                                     .contextMenu {
+                                        Button {
+                                            renameText = quest.name
+                                            renamingQuest = quest
+                                        } label: {
+                                            Label("Rename Quest", systemImage: "pencil")
+                                        }
                                         Button(role: .destructive) {
                                             dataStore.deleteQuest(quest)
                                         } label: {
@@ -56,6 +66,20 @@ struct QuestsListView: View {
                 }
             }
             .toolbar(.hidden, for: .navigationBar)
+            .alert("Rename Quest", isPresented: Binding(
+                get: { renamingQuest != nil },
+                set: { if !$0 { renamingQuest = nil } }
+            )) {
+                TextField("Quest name", text: $renameText)
+                Button("Save") {
+                    let trimmed = renameText.trimmingCharacters(in: .whitespaces)
+                    if let quest = renamingQuest, !trimmed.isEmpty {
+                        dataStore.renameQuest(quest, to: trimmed)
+                    }
+                    renamingQuest = nil
+                }
+                Button("Cancel", role: .cancel) { renamingQuest = nil }
+            }
         }
     }
 
@@ -92,7 +116,6 @@ struct QuestsListView: View {
 
     private func questCard(_ quest: Quest) -> some View {
         let route = dataStore.routes.first(where: { $0.id == quest.routeId })
-        let (level, levelLabel) = questLevel(coinCount: quest.items.count)
         let progress = quest.totalItems > 0
             ? Double(quest.collectedItems) / Double(quest.totalItems)
             : 0
@@ -121,35 +144,34 @@ struct QuestsListView: View {
 
                 // Quest info
                 VStack(alignment: .leading, spacing: 8) {
-                    Text(quest.name)
-                        .font(.system(size: 18, weight: .bold))
-                        .foregroundColor(darkText)
-                        .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
+                    // Name row with rename button
+                    HStack(spacing: 8) {
+                        Text(quest.name)
+                            .font(.system(size: 18, weight: .bold))
+                            .foregroundColor(darkText)
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
+
+                        Spacer(minLength: 0)
+
+                        Button {
+                            renameText = quest.name
+                            renamingQuest = quest
+                        } label: {
+                            Image(systemName: "pencil")
+                                .font(.system(size: 12, weight: .bold))
+                                .foregroundColor(darkText.opacity(0.35))
+                                .padding(8)
+                                .background(darkerSurface)
+                                .clipShape(Circle())
+                        }
+                    }
 
                     if let route {
                         Text(route.name.uppercased())
                             .font(.system(size: 10, weight: .black))
                             .foregroundColor(darkText.opacity(0.40))
                             .lineLimit(1)
-                    }
-
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack(spacing: 4) {
-                            Image(systemName: "trophy.fill")
-                                .font(.system(size: 10))
-                            Text(levelLabel.uppercased())
-                                .font(.system(size: 10, weight: .black))
-                        }
-                        .foregroundColor(Color(red: 0.65, green: 0.50, blue: 0.10))
-
-                        HStack(spacing: 4) {
-                            Text("🪙")
-                                .font(.system(size: 10))
-                            Text("\(quest.totalItems) COINS")
-                                .font(.system(size: 10, weight: .black))
-                        }
-                        .foregroundColor(Color(red: 0.75, green: 0.40, blue: 0.15))
                     }
 
                     Spacer(minLength: 0)
@@ -249,24 +271,5 @@ struct QuestsListView: View {
             Spacer()
         }
         .frame(maxWidth: .infinity)
-    }
-
-    // MARK: - Helpers
-
-    private func questLevel(coinCount: Int) -> (level: Int, label: String) {
-        switch coinCount {
-        case 0:        return (0, "No Items")
-        case 1...10:   return (1, "Coins Only")
-        case 11...20:  return (2, "Collect Master")
-        case 21...30:  return (3, "Monsters Enabled")
-        case 31...40:  return (4, "Challenge Mode")
-        default:       return (5, "Boss Battle!")
-        }
-    }
-
-    private func progressColor(_ progress: Double) -> Color {
-        if progress >= 1.0 { return .green }
-        if progress > 0    { return .orange }
-        return .cyan
     }
 }
