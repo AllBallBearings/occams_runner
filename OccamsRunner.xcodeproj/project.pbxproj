@@ -41,6 +41,7 @@
 		C10005 /* FixtureLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20005 /* FixtureLoader.swift */; };
 		C10006 /* CollectionStateMachineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20006 /* CollectionStateMachineTests.swift */; };
 		C10007 /* CollectionIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20007 /* CollectionIntegrationTests.swift */; };
+		C10008 /* LocationServiceLifecycleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20008 /* LocationServiceLifecycleTests.swift */; };
 		D10001 /* NavigationFlowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20001 /* NavigationFlowTests.swift */; };
 /* End PBXBuildFile section */
 
@@ -98,6 +99,7 @@
 		C20005 /* FixtureLoader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FixtureLoader.swift; sourceTree = "<group>"; };
 		C20006 /* CollectionStateMachineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CollectionStateMachineTests.swift; sourceTree = "<group>"; };
 		C20007 /* CollectionIntegrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CollectionIntegrationTests.swift; sourceTree = "<group>"; };
+		C20008 /* LocationServiceLifecycleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocationServiceLifecycleTests.swift; sourceTree = "<group>"; };
 		C30001 /* OccamsRunnerTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = OccamsRunnerTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		D20001 /* NavigationFlowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NavigationFlowTests.swift; sourceTree = "<group>"; };
 		D30001 /* OccamsRunnerUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = OccamsRunnerUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -222,6 +224,7 @@
 				C20004 /* ARCoordinatorLogicTests.swift */,
 				C20006 /* CollectionStateMachineTests.swift */,
 				C20007 /* CollectionIntegrationTests.swift */,
+			C20008 /* LocationServiceLifecycleTests.swift */,
 				C50002 /* TestHelpers */,
 			);
 			path = OccamsRunnerTests;
@@ -413,6 +416,7 @@
 				C10004 /* ARCoordinatorLogicTests.swift in Sources */,
 				C10006 /* CollectionStateMachineTests.swift in Sources */,
 				C10007 /* CollectionIntegrationTests.swift in Sources */,
+			C10008 /* LocationServiceLifecycleTests.swift in Sources */,
 				C10005 /* FixtureLoader.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

@@ -1,0 +1,24 @@
+[2026-03-21T18:33:18.253Z] SESSION START mode=tight
+[2026-03-21T18:33:18.260Z] Thresholds: match>=65%, features>=75, tracking>=65%, worldMap=true
+[2026-03-21T18:33:18.261Z] AR precise capture started
+[2026-03-21T18:33:22.274Z] World map snapshot captured (198305 bytes, encrypted=true)
+[2026-03-21T18:33:22.275Z] live quality: match=0% features=0 tracking=0% worldMap=yes ready=no blockers=low_match,low_features,low_tracking
+[2026-03-21T18:33:24.274Z] World map snapshot captured (198305 bytes, encrypted=true)
+[2026-03-21T18:33:26.280Z] World map snapshot captured (198970 bytes, encrypted=true)
+[2026-03-21T18:33:28.281Z] World map snapshot captured (198970 bytes, encrypted=true)
+[2026-03-21T18:33:29.996Z] geoSample #1 hAcc=14m vAcc=17m matchedLocal=yes
+[2026-03-21T18:33:29.996Z] live quality: match=100% features=7 tracking=100% worldMap=yes ready=no blockers=low_features
+[2026-03-21T18:33:30.281Z] World map snapshot captured (198970 bytes, encrypted=true)
+[2026-03-21T18:33:30.394Z] geoSample #2 hAcc=19m vAcc=19m matchedLocal=yes
+[2026-03-21T18:33:30.615Z] geoSample #3 hAcc=16m vAcc=18m matchedLocal=yes
+[2026-03-21T18:33:30.815Z] geoSample #4 hAcc=16m vAcc=18m matchedLocal=yes
+[2026-03-21T18:33:31.032Z] geoSample #5 hAcc=15m vAcc=19m matchedLocal=yes
+[2026-03-21T18:33:31.033Z] live quality: match=100% features=6 tracking=100% worldMap=yes ready=no blockers=low_features
+[2026-03-21T18:33:31.834Z] live quality: match=100% features=5 tracking=100% worldMap=yes ready=no blockers=low_features
+[2026-03-21T18:33:32.032Z] geoSample #10 hAcc=11m vAcc=15m matchedLocal=yes
+[2026-03-21T18:33:32.287Z] World map snapshot captured (198970 bytes, encrypted=true)
+[2026-03-21T18:33:33.756Z] Recording stopped by user. geoSamples=14, matchedLocal=14
+[2026-03-21T18:33:33.756Z] AR precise capture paused
+[2026-03-21T18:33:33.888Z] World map snapshot captured (198970 bytes, encrypted=true)
+[2026-03-21T18:33:42.633Z] SAVE ATTEMPT BLOCKED:
+[2026-03-21T18:33:42.636Z]   • Features 5 — needs ≥75 (scan more textured surfaces)

@@ -12,10 +12,20 @@ struct ARRunnerContainerView: UIViewRepresentable {
     let runMode: ARRunMode
     /// Shared state object that carries user-applied manual alignment corrections.
     let manualAlignment: ManualAlignmentState
+    /// Current device compass heading (degrees from north, clockwise).
+    /// Updated each SwiftUI render pass so the coordinator always has a fresh value.
+    let compassHeading: Double
+    /// CLHeading.headingAccuracy in degrees. -1 = invalid / not yet calibrated.
+    let compassHeadingAccuracy: Double
     let onAlignmentUpdate: (ARAlignmentState, Double, Double?, Bool) -> Void
     let onNearestItemDistance: (Double?) -> Void
     let onItemCollected: (UUID) -> Void
     let onDebugTick: (String) -> Void
+    /// 0–1 intensity for the "camera pointing at start ring" screen glow.
+    let onRingGlowIntensity: (Double) -> Void
+    /// Signed horizontal bearing (deg) from camera forward to the GPS ring,
+    /// or nil when no meaningful direction is available.  Drives HUD compass.
+    let onRingBearing: (Double?) -> Void
 
     func makeUIView(context: Context) -> ARSCNView {
         let arView = ARSCNView()
@@ -58,6 +68,10 @@ struct ARRunnerContainerView: UIViewRepresentable {
         context.coordinator.onAlignmentUpdate     = onAlignmentUpdate
         context.coordinator.onNearestItemDistance = onNearestItemDistance
         context.coordinator.onDebugTick          = onDebugTick
+        context.coordinator.onRingGlowIntensity   = onRingGlowIntensity
+        context.coordinator.onRingBearing         = onRingBearing
+        context.coordinator.compassHeading         = compassHeading
+        context.coordinator.compassHeadingAccuracy = compassHeadingAccuracy
 
         // Keep the manual alignment reference in sync (same instance in practice,
         // but explicit assignment ensures correctness across any future refactors).

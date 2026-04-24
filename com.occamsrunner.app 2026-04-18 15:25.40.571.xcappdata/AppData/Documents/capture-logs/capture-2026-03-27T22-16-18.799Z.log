@@ -1,0 +1,17 @@
+[2026-03-27T22:16:18.805Z] SESSION START mode=tight
+[2026-03-27T22:16:18.814Z] Thresholds: match>=65%, features>=75, tracking>=65%, worldMap=true
+[2026-03-27T22:16:18.865Z] AR precise capture started
+[2026-03-27T22:16:19.047Z] geoSample #1 hAcc=5m vAcc=3m matchedLocal=no
+[2026-03-27T22:16:19.047Z] live quality: match=0% features=0 tracking=0% worldMap=no ready=no blockers=low_match,low_features,low_tracking,missing_world_map
+[2026-03-27T22:16:24.582Z] geoSample #2 hAcc=5m vAcc=3m matchedLocal=no
+[2026-03-27T22:16:25.037Z] geoSample #3 hAcc=5m vAcc=3m matchedLocal=yes
+[2026-03-27T22:16:25.038Z] live quality: match=33% features=0 tracking=35% worldMap=no ready=no blockers=low_match,low_features,low_tracking,missing_world_map
+[2026-03-27T22:16:26.892Z] World map snapshot captured (294245 bytes, encrypted=true)
+[2026-03-27T22:16:26.893Z] live quality: match=33% features=0 tracking=35% worldMap=yes ready=no blockers=low_match,low_features,low_tracking
+[2026-03-27T22:16:27.038Z] geoSample #4 hAcc=5m vAcc=3m matchedLocal=yes
+[2026-03-27T22:16:27.038Z] live quality: match=50% features=3 tracking=67% worldMap=yes ready=no blockers=low_match,low_features
+[2026-03-27T22:16:28.038Z] geoSample #5 hAcc=5m vAcc=3m matchedLocal=yes
+[2026-03-27T22:16:28.039Z] live quality: match=60% features=3 tracking=78% worldMap=yes ready=no blockers=low_match,low_features
+[2026-03-27T22:16:28.601Z] Recording stopped by user. geoSamples=5, matchedLocal=3
+[2026-03-27T22:16:28.602Z] AR precise capture paused
+[2026-03-27T22:16:28.750Z] World map snapshot captured (678585 bytes, encrypted=true)

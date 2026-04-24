@@ -1,0 +1,47 @@
+[2026-03-18T23:19:47.069Z] SESSION START mode=tight
+[2026-03-18T23:19:47.071Z] Thresholds: match>=65%, features>=75, tracking>=65%, worldMap=true
+[2026-03-18T23:19:47.098Z] AR precise capture started
+[2026-03-18T23:20:00.682Z] geoSample #1 hAcc=8m vAcc=30m matchedLocal=yes
+[2026-03-18T23:20:00.684Z] live quality: match=100% features=3 tracking=100% worldMap=no ready=no blockers=low_features,missing_world_map
+[2026-03-18T23:20:01.121Z] World map snapshot captured (295652 bytes, encrypted=true)
+[2026-03-18T23:20:01.121Z] live quality: match=100% features=3 tracking=100% worldMap=yes ready=no blockers=low_features
+[2026-03-18T23:20:03.110Z] World map snapshot captured (295652 bytes, encrypted=true)
+[2026-03-18T23:20:05.121Z] World map snapshot captured (929301 bytes, encrypted=true)
+[2026-03-18T23:20:07.130Z] World map snapshot captured (1670192 bytes, encrypted=true)
+[2026-03-18T23:20:09.133Z] World map snapshot captured (1670192 bytes, encrypted=true)
+[2026-03-18T23:20:11.135Z] World map snapshot captured (2036119 bytes, encrypted=true)
+[2026-03-18T23:20:12.697Z] geoSample #2 hAcc=10m vAcc=30m matchedLocal=yes
+[2026-03-18T23:20:12.698Z] live quality: match=100% features=6 tracking=100% worldMap=yes ready=no blockers=low_features
+[2026-03-18T23:20:13.137Z] World map snapshot captured (2185842 bytes, encrypted=true)
+[2026-03-18T23:20:15.132Z] World map snapshot captured (2184522 bytes, encrypted=true)
+[2026-03-18T23:20:17.143Z] World map snapshot captured (3314829 bytes, encrypted=true)
+[2026-03-18T23:20:19.153Z] World map snapshot captured (4332183 bytes, encrypted=true)
+[2026-03-18T23:20:21.151Z] World map snapshot captured (4736431 bytes, encrypted=true)
+[2026-03-18T23:20:23.160Z] World map snapshot captured (4784972 bytes, encrypted=true)
+[2026-03-18T23:20:25.149Z] World map snapshot captured (4794625 bytes, encrypted=true)
+[2026-03-18T23:20:27.161Z] World map snapshot captured (5527836 bytes, encrypted=true)
+[2026-03-18T23:20:29.164Z] World map snapshot captured (5560746 bytes, encrypted=true)
+[2026-03-18T23:20:31.006Z] geoSample #3 hAcc=15m vAcc=42m matchedLocal=yes
+[2026-03-18T23:20:31.007Z] live quality: match=100% features=54 tracking=100% worldMap=yes ready=no blockers=low_features
+[2026-03-18T23:20:31.177Z] World map snapshot captured (6453581 bytes, encrypted=true)
+[2026-03-18T23:20:31.227Z] geoSample #4 hAcc=12m vAcc=23m matchedLocal=yes
+[2026-03-18T23:20:31.227Z] live quality: match=100% features=85 tracking=100% worldMap=yes ready=yes blockers=none
+[2026-03-18T23:20:31.431Z] geoSample #5 hAcc=11m vAcc=18m matchedLocal=yes
+[2026-03-18T23:20:31.431Z] live quality: match=100% features=101 tracking=100% worldMap=yes ready=yes blockers=none
+[2026-03-18T23:20:31.833Z] live quality: match=100% features=118 tracking=100% worldMap=yes ready=yes blockers=none
+[2026-03-18T23:20:32.044Z] live quality: match=100% features=129 tracking=100% worldMap=yes ready=yes blockers=none
+[2026-03-18T23:20:32.232Z] live quality: match=100% features=133 tracking=100% worldMap=yes ready=yes blockers=none
+[2026-03-18T23:20:32.444Z] live quality: match=100% features=132 tracking=100% worldMap=yes ready=yes blockers=none
+[2026-03-18T23:20:32.844Z] geoSample #10 hAcc=4m vAcc=11m matchedLocal=yes
+[2026-03-18T23:20:32.845Z] live quality: match=100% features=121 tracking=100% worldMap=yes ready=yes blockers=none
+[2026-03-18T23:20:33.145Z] World map snapshot captured (6874270 bytes, encrypted=true)
+[2026-03-18T23:20:33.632Z] live quality: match=100% features=111 tracking=100% worldMap=yes ready=yes blockers=none
+[2026-03-18T23:20:34.232Z] live quality: match=100% features=103 tracking=100% worldMap=yes ready=yes blockers=none
+[2026-03-18T23:20:34.633Z] live quality: match=100% features=95 tracking=100% worldMap=yes ready=yes blockers=none
+[2026-03-18T23:20:35.162Z] World map snapshot captured (6874270 bytes, encrypted=true)
+[2026-03-18T23:20:35.885Z] Recording stopped by user. geoSamples=13, matchedLocal=13
+[2026-03-18T23:20:35.885Z] AR precise capture paused
+[2026-03-18T23:20:36.032Z] World map snapshot captured (6874270 bytes, encrypted=true)
+[2026-03-18T23:20:38.161Z] Route saved as precise-ready. name=Run 3/18/26, 7:20 PM, geoSamples=13, localSamples=13
+[2026-03-18T23:20:38.161Z] SESSION END reason=saved
+[2026-03-18T23:21:22.143Z] Location error: The operation couldn’t be completed. (kCLErrorDomain error 1.)

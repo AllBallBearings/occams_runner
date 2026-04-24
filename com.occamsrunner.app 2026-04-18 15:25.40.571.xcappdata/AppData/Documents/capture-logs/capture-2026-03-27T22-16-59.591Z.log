@@ -1,0 +1,13 @@
+[2026-03-27T22:16:59.593Z] SESSION START mode=tight
+[2026-03-27T22:16:59.600Z] Thresholds: match>=65%, features>=75, tracking>=65%, worldMap=true
+[2026-03-27T22:16:59.644Z] AR precise capture started
+[2026-03-27T22:17:01.667Z] World map snapshot captured (296659 bytes, encrypted=true)
+[2026-03-27T22:17:01.668Z] live quality: match=0% features=0 tracking=0% worldMap=yes ready=no blockers=low_match,low_features,low_tracking
+[2026-03-27T22:17:03.685Z] World map snapshot captured (2157432 bytes, encrypted=true)
+[2026-03-27T22:17:05.465Z] geoSample #1 hAcc=10m vAcc=30m matchedLocal=yes
+[2026-03-27T22:17:05.466Z] live quality: match=100% features=339 tracking=100% worldMap=yes ready=yes blockers=none
+[2026-03-27T22:17:05.686Z] World map snapshot captured (3314876 bytes, encrypted=true)
+[2026-03-27T22:17:07.701Z] World map snapshot captured (4469641 bytes, encrypted=true)
+[2026-03-27T22:17:08.710Z] Recording stopped by user. geoSamples=1, matchedLocal=1
+[2026-03-27T22:17:08.711Z] AR precise capture paused
+[2026-03-27T22:17:08.757Z] World map snapshot captured (4534922 bytes, encrypted=true)

@@ -6,6 +6,7 @@ import ARKit
 import CryptoKit
 import Security
 import simd
+import UIKit
 
 // MARK: - Location Service
 
@@ -16,6 +17,7 @@ class LocationService: NSObject, ObservableObject {
     private let fileManager = FileManager.default
 
     @Published var currentLocation: CLLocation?
+    @Published var currentHeading: Double = -1   // degrees from north; -1 = unavailable
     @Published var authorizationStatus: CLAuthorizationStatus = .notDetermined
     @Published var isRecording = false
     @Published var recordedPoints: [RoutePoint] = []
@@ -108,6 +110,7 @@ class LocationService: NSObject, ObservableObject {
         let position: SIMD3<Float>
         let trackingScore: Double
         let featurePointCount: Int
+        let compassHeading: Double   // degrees from north; -1 = unavailable
     }
 
     private struct LocalDraftSample {
@@ -116,6 +119,7 @@ class LocationService: NSObject, ObservableObject {
         let position: SIMD3<Float>
         let trackingScore: Double
         let featurePointCount: Int
+        let compassHeading: Double
     }
 
     private var geoDraftSamples: [GeoDraftSample] = []
@@ -143,7 +147,7 @@ class LocationService: NSObject, ObservableObject {
         locationManager.distanceFilter = RecordingMode.vast.distanceFilter
         locationManager.activityType = .fitness
         locationManager.allowsBackgroundLocationUpdates = false
-        locationManager.showsBackgroundLocationIndicator = true
+        locationManager.showsBackgroundLocationIndicator = false
 
         arSession.delegate = self
         arSession.delegateQueue = arCaptureQueue
@@ -157,6 +161,9 @@ class LocationService: NSObject, ObservableObject {
 
     func startUpdating() {
         locationManager.startUpdatingLocation()
+        if CLLocationManager.headingAvailable() {
+            locationManager.startUpdatingHeading()
+        }
         resetAltitudeState()
         beginAltimeterUpdates()
     }
@@ -189,6 +196,12 @@ class LocationService: NSObject, ObservableObject {
         prepareCaptureLogSession(mode: mode)
         logDebug("Thresholds: match>=65%, features>=75, tracking>=65%, worldMap=true")
 
+        locationManager.allowsBackgroundLocationUpdates = true
+        locationManager.showsBackgroundLocationIndicator = true
+        DispatchQueue.main.async {
+            UIApplication.shared.isIdleTimerDisabled = true
+        }
+
         locationManager.startUpdatingLocation()
         altimeter.stopRelativeAltitudeUpdates()
         resetAltitudeState()
@@ -206,6 +219,44 @@ class LocationService: NSObject, ObservableObject {
         logDebug("Recording stopped by user. geoSamples=\(geoDraftSamples.count), matchedLocal=\(localDraftBySampleId.count)")
         captureWorldMapSnapshot()
         stopPreciseCapture()
+
+        locationManager.allowsBackgroundLocationUpdates = false
+        locationManager.showsBackgroundLocationIndicator = false
+        DispatchQueue.main.async {
+            UIApplication.shared.isIdleTimerDisabled = false
+        }
+    }
+
+    // MARK: - Background / Foreground lifecycle
+
+    /// Called when the app moves to the background during an active recording.
+    /// ARKit pauses automatically; GPS continues via `allowsBackgroundLocationUpdates`.
+    func handleAppBackgrounded() {
+        guard isRecording else { return }
+        logDebug("App backgrounded — AR paused, GPS continues in background")
+        // ARKit pauses automatically; no explicit action needed here.
+        // World map timer keeps the last good snapshot; invalidate to prevent
+        // a getCurrentWorldMap call while the session is paused.
+        worldMapTimer?.invalidate()
+        worldMapTimer = nil
+    }
+
+    /// Called when the app returns to the foreground during an active recording.
+    /// Resumes ARKit without resetting tracking so it attempts to relocalize.
+    func handleAppForegrounded() {
+        guard isRecording else { return }
+        logDebug("App foregrounded — resuming AR capture (no tracking reset)")
+        let config = ARWorldTrackingConfiguration()
+        config.worldAlignment = .gravity
+        config.planeDetection = []
+        config.environmentTexturing = .none
+        // No resetTracking/removeExistingAnchors — continue from previous state.
+        arSession.run(config, options: [])
+        worldMapTimer?.invalidate()
+        worldMapTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+            self?.captureWorldMapSnapshot()
+        }
+        RunLoop.main.add(worldMapTimer!, forMode: .common)
     }
 
     func buildRecordedRoute(name: String) -> RecordedRoute? {
@@ -253,7 +304,8 @@ class LocationService: NSObject, ObservableObject {
                     timestamp: local.timestamp,
                     progress: geo.progress,
                     trackingScore: local.trackingScore,
-                    featurePointCount: local.featurePointCount
+                    featurePointCount: local.featurePointCount,
+                    compassHeading: local.compassHeading >= 0 ? local.compassHeading : nil
                 )
             )
         }
@@ -430,10 +482,14 @@ class LocationService: NSObject, ObservableObject {
         if !q.hasEncryptedWorldMap { blockers.append("missing_world_map") }
         if blockers.isEmpty { blockers = ["none"] }
 
+        let headingStr = currentHeading >= 0
+            ? String(format: "%.0f°", currentHeading)
+            : "n/a"
         logDebug(
             "\(context) quality: match=\(Int(q.matchedSampleRatio * 100))% " +
             "features=\(Int(q.averageFeaturePoints)) " +
             "tracking=\(Int(q.averageTrackingScore * 100))% " +
+            "heading=\(headingStr) " +
             "worldMap=\(q.hasEncryptedWorldMap ? "yes" : "no") " +
             "ready=\(q.isReadyForPreciseReplay ? "yes" : "no") " +
             "blockers=\(blockers.joined(separator: ","))"
@@ -471,7 +527,14 @@ class LocationService: NSObject, ObservableObject {
                 let archived = try NSKeyedArchiver.archivedData(withRootObject: worldMap, requiringSecureCoding: true)
                 self.lastEncryptedWorldMapData = RouteCrypto.encrypt(archived)
                 DispatchQueue.main.async {
-                    self.logDebug("World map snapshot captured (\(archived.count) bytes, encrypted=\(self.lastEncryptedWorldMapData != nil))")
+                    let sampleIdx = self.geoDraftSamples.count
+                    let headingStr = self.currentHeading >= 0
+                        ? String(format: "%.0f°", self.currentHeading)
+                        : "n/a"
+                    self.logDebug(
+                        "World map snapshot captured (\(archived.count) bytes, encrypted=\(self.lastEncryptedWorldMapData != nil))" +
+                        " at geoSample #\(sampleIdx) heading=\(headingStr)"
+                    )
                     self.recomputeCaptureQuality()
                 }
             } catch {
@@ -633,22 +696,32 @@ extension LocationService: CLLocationManagerDelegate {
                 timestamp: localFrame.timestamp,
                 position: localFrame.position,
                 trackingScore: localFrame.trackingScore,
-                featurePointCount: localFrame.featurePointCount
+                featurePointCount: localFrame.featurePointCount,
+                compassHeading: localFrame.compassHeading
             )
         }
 
         if geoDraftSamples.count <= 5 || geoDraftSamples.count % 10 == 0 {
             let matched = localDraftBySampleId[sampleId] != nil
+            let headingStr = currentHeading >= 0
+                ? String(format: "%.0f°", currentHeading)
+                : "n/a"
             logDebug(
                 "geoSample #\(geoDraftSamples.count) " +
                 "hAcc=\(Int(location.horizontalAccuracy))m " +
                 "vAcc=\(Int(max(0, location.verticalAccuracy)))m " +
+                "heading=\(headingStr) " +
                 "matchedLocal=\(matched ? "yes" : "no")"
             )
         }
 
         lastRecordedLocation = location
         recomputeCaptureQuality()
+    }
+
+    func locationManager(_ manager: CLLocationManager, didUpdateHeading newHeading: CLHeading) {
+        let degrees = newHeading.trueHeading >= 0 ? newHeading.trueHeading : newHeading.magneticHeading
+        DispatchQueue.main.async { self.currentHeading = degrees }
     }
 
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
@@ -668,13 +741,16 @@ extension LocationService: ARSessionDelegate {
         let featureCount = frame.rawFeaturePoints?.points.count ?? 0
         let tracking = trackingScore(frame.camera.trackingState)
 
+        let headingNow = currentHeading  // read on main before dispatching
+
         let sample = LocalFrameSample(
             // ARFrame timestamp is not wall-clock time; use capture receipt time
             // so correlation with CLLocation timestamps remains meaningful.
             timestamp: Date(),
             position: position,
             trackingScore: tracking,
-            featurePointCount: featureCount
+            featurePointCount: featureCount,
+            compassHeading: headingNow
         )
 
         DispatchQueue.main.async {

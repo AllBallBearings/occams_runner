@@ -1,0 +1,100 @@
+[2026-03-23T00:34:41.480Z] SESSION START mode=tight
+[2026-03-23T00:34:41.486Z] Thresholds: match>=65%, features>=75, tracking>=65%, worldMap=true
+[2026-03-23T00:34:41.511Z] AR precise capture started
+[2026-03-23T00:34:52.038Z] geoSample #1 hAcc=10m vAcc=5m matchedLocal=yes
+[2026-03-23T00:34:52.039Z] live quality: match=100% features=0 tracking=35% worldMap=no ready=no blockers=low_features,low_tracking,missing_world_map
+[2026-03-23T00:34:54.051Z] geoSample #2 hAcc=10m vAcc=4m matchedLocal=yes
+[2026-03-23T00:34:54.051Z] live quality: match=100% features=42 tracking=67% worldMap=no ready=no blockers=low_features,missing_world_map
+[2026-03-23T00:34:55.038Z] geoSample #3 hAcc=10m vAcc=4m matchedLocal=yes
+[2026-03-23T00:34:55.038Z] live quality: match=100% features=108 tracking=78% worldMap=no ready=no blockers=missing_world_map
+[2026-03-23T00:34:55.545Z] World map snapshot captured (1100950 bytes, encrypted=true)
+[2026-03-23T00:34:55.546Z] live quality: match=100% features=108 tracking=78% worldMap=yes ready=yes blockers=none
+[2026-03-23T00:34:57.044Z] geoSample #4 hAcc=9m vAcc=4m matchedLocal=yes
+[2026-03-23T00:34:57.045Z] live quality: match=100% features=122 tracking=83% worldMap=yes ready=yes blockers=none
+[2026-03-23T00:34:57.544Z] World map snapshot captured (1308404 bytes, encrypted=true)
+[2026-03-23T00:34:59.040Z] geoSample #5 hAcc=9m vAcc=5m matchedLocal=yes
+[2026-03-23T00:34:59.040Z] live quality: match=100% features=168 tracking=86% worldMap=yes ready=yes blockers=none
+[2026-03-23T00:34:59.564Z] World map snapshot captured (2570380 bytes, encrypted=true)
+[2026-03-23T00:35:00.040Z] live quality: match=100% features=189 tracking=89% worldMap=yes ready=yes blockers=none
+[2026-03-23T00:35:01.046Z] live quality: match=100% features=210 tracking=90% worldMap=yes ready=yes blockers=none
+[2026-03-23T00:35:01.550Z] World map snapshot captured (2841294 bytes, encrypted=true)
+[2026-03-23T00:35:02.046Z] live quality: match=100% features=233 tracking=91% worldMap=yes ready=yes blockers=none
+[2026-03-23T00:35:03.042Z] live quality: match=100% features=262 tracking=92% worldMap=yes ready=yes blockers=none
+[2026-03-23T00:35:03.564Z] World map snapshot captured (4352763 bytes, encrypted=true)
+[2026-03-23T00:35:04.047Z] geoSample #10 hAcc=8m vAcc=6m matchedLocal=yes
+[2026-03-23T00:35:04.048Z] live quality: match=100% features=268 tracking=93% worldMap=yes ready=yes blockers=none
+[2026-03-23T00:35:05.047Z] live quality: match=100% features=257 tracking=94% worldMap=yes ready=yes blockers=none
+[2026-03-23T00:35:05.574Z] World map snapshot captured (5504881 bytes, encrypted=true)
+[2026-03-23T00:35:06.039Z] live quality: match=100% features=253 tracking=94% worldMap=yes ready=yes blockers=none
+[2026-03-23T00:35:07.040Z] live quality: match=100% features=245 tracking=95% worldMap=yes ready=yes blockers=none
+[2026-03-23T00:35:07.287Z] Recording stopped by user. geoSamples=13, matchedLocal=13
+[2026-03-23T00:35:07.288Z] AR precise capture paused
+[2026-03-23T00:35:07.407Z] World map snapshot captured (5377844 bytes, encrypted=true)
+[2026-03-23T00:35:09.430Z] Route saved as precise-ready. name=Run 3/22/26, 8:35 PM, geoSamples=13, localSamples=13
+[2026-03-23T00:35:09.431Z] SESSION END reason=saved
+[2026-03-23T00:36:13.911Z] [Tick] t4 D077:d=1.397m far | 3A5E:d=3.067m far | 931A:d=3.953m far | EF23:d=4.569m far
+[2026-03-23T00:36:14.911Z] [Tick] t8 D077:d=0.700m far | 3A5E:d=2.592m far | 931A:d=3.760m far | EF23:d=4.530m far
+[2026-03-23T00:36:15.911Z] [Tick] t12 D077:d=0.460m far | 3A5E:d=2.398m far | 931A:d=3.649m far | EF23:d=4.464m far
+[2026-03-23T00:36:16.411Z] [Tick] t14 COLLECT×1 | D077:d=0.118m ✓ | 3A5E:d=2.061m far | 931A:d=3.374m far | EF23:d=4.232m far
+[2026-03-23T00:36:16.911Z] [Tick] t16 D077:skip(done) | 3A5E:d=1.722m far | 931A:d=3.073m far | EF23:d=3.964m far
+[2026-03-23T00:36:17.911Z] [Tick] t20 D077:skip(done) | 3A5E:d=0.912m far | 931A:d=2.434m far | EF23:d=3.425m far
+[2026-03-23T00:36:18.912Z] [Tick] t24 COLLECT×1 | D077:skip(done) | 3A5E:d=0.105m ✓ | 931A:d=1.629m far | EF23:d=2.695m far
+[2026-03-23T00:36:19.911Z] [Tick] t28 D077:skip(done) | 3A5E:skip(done) | 931A:d=0.987m far | EF23:d=2.038m far
+[2026-03-23T00:36:20.911Z] [Tick] t32 D077:skip(done) | 3A5E:skip(done) | 931A:d=0.155m far | EF23:d=1.094m far
+[2026-03-23T00:36:21.911Z] [Tick] t36 D077:skip(done) | 3A5E:skip(done) | 931A:d=0.420m far | EF23:d=0.679m far
+[2026-03-23T00:36:22.661Z] [Tick] t39 COLLECT×1 | D077:skip(done) | 3A5E:skip(done) | 931A:d=0.086m ✓ | EF23:d=1.133m far
+[2026-03-23T00:36:22.911Z] [Tick] t40 D077:skip(done) | 3A5E:skip(done) | 931A:skip(done) | EF23:d=1.309m far
+[2026-03-23T00:36:23.911Z] [Tick] t44 D077:skip(done) | 3A5E:skip(done) | 931A:skip(done) | EF23:d=1.034m far
+[2026-03-23T00:36:24.921Z] [Tick] t48 COLLECT×1 | D077:skip(done) | 3A5E:skip(done) | 931A:skip(done) | EF23:d=0.075m ✓
+[2026-03-23T00:36:25.911Z] [Tick] t52 D077:skip(done) | 3A5E:skip(done) | 931A:skip(done) | EF23:skip(done)
+[2026-03-23T00:36:26.911Z] [Tick] t56 D077:skip(done) | 3A5E:skip(done) | 931A:skip(done) | EF23:skip(done)
+[2026-03-23T00:36:27.911Z] [Tick] t60 D077:skip(done) | 3A5E:skip(done) | 931A:skip(done) | EF23:skip(done)
+[2026-03-23T00:36:28.911Z] [Tick] t64 D077:skip(done) | 3A5E:skip(done) | 931A:skip(done) | EF23:skip(done)
+[2026-03-23T00:36:29.911Z] [Tick] t68 D077:skip(done) | 3A5E:skip(done) | 931A:skip(done) | EF23:skip(done)
+[2026-03-23T00:36:47.661Z] [Tick] t72 D077:skip(done) | 3A5E:skip(done) | 931A:skip(done) | EF23:skip(done)
+[2026-03-23T00:36:48.661Z] [Tick] t76 D077:skip(done) | 3A5E:skip(done) | 931A:skip(done) | EF23:skip(done)
+[2026-03-23T00:36:49.661Z] [Tick] t80 D077:skip(done) | 3A5E:skip(done) | 931A:skip(done) | EF23:skip(done)
+[2026-03-23T00:36:50.661Z] [Tick] t84 D077:skip(done) | 3A5E:skip(done) | 931A:skip(done) | EF23:skip(done)
+[2026-03-23T00:36:51.661Z] [Tick] t88 D077:skip(done) | 3A5E:skip(done) | 931A:skip(done) | EF23:skip(done)
+[2026-03-23T00:36:52.661Z] [Tick] t92 D077:skip(done) | 3A5E:skip(done) | 931A:skip(done) | EF23:skip(done)
+[2026-03-23T00:36:53.661Z] [Tick] t96 D077:skip(done) | 3A5E:skip(done) | 931A:skip(done) | EF23:skip(done)
+[2026-03-23T00:36:54.661Z] [Tick] t100 D077:skip(done) | 3A5E:skip(done) | 931A:skip(done) | EF23:skip(done)
+[2026-03-23T00:36:55.661Z] [Tick] t104 D077:skip(done) | 3A5E:skip(done) | 931A:skip(done) | EF23:skip(done)
+[2026-03-23T00:36:56.661Z] [Tick] t108 D077:skip(done) | 3A5E:skip(done) | 931A:skip(done) | EF23:skip(done)
+[2026-03-23T00:36:57.661Z] [Tick] t112 D077:skip(done) | 3A5E:skip(done) | 931A:skip(done) | EF23:skip(done)
+[2026-03-23T00:36:58.661Z] [Tick] t116 D077:skip(done) | 3A5E:skip(done) | 931A:skip(done) | EF23:skip(done)
+[2026-03-23T00:36:59.661Z] [Tick] t120 D077:skip(done) | 3A5E:skip(done) | 931A:skip(done) | EF23:skip(done)
+[2026-03-23T00:37:00.661Z] [Tick] t124 D077:skip(done) | 3A5E:skip(done) | 931A:skip(done) | EF23:skip(done)
+[2026-03-23T00:37:26.021Z] [Tick] t4 D077:d=1.937m far | 3A5E:d=3.462m far | 931A:d=4.151m far | EF23:d=4.648m far
+[2026-03-23T00:37:27.021Z] [Tick] t8 D077:d=1.943m far | 3A5E:d=3.480m far | 931A:d=4.172m far | EF23:d=4.668m far
+[2026-03-23T00:37:28.021Z] [Tick] t12 D077:d=1.470m far | 3A5E:d=3.036m far | 931A:d=3.842m far | EF23:d=4.423m far
+[2026-03-23T00:37:29.021Z] [Tick] t16 D077:d=1.834m far | 3A5E:d=3.259m far | 931A:d=3.901m far | EF23:d=4.390m far
+[2026-03-23T00:37:30.022Z] [Tick] t20 D077:d=1.742m far | 3A5E:d=3.188m far | 931A:d=3.864m far | EF23:d=4.374m far
+[2026-03-23T00:37:31.022Z] [Tick] t24 D077:d=1.481m far | 3A5E:d=3.254m far | 931A:d=4.196m far | EF23:d=4.827m far
+[2026-03-23T00:37:32.021Z] [Tick] t28 D077:d=1.154m far | 3A5E:d=2.955m far | 931A:d=3.970m far | EF23:d=4.652m far
+[2026-03-23T00:37:33.035Z] [Tick] t32 D077:d=0.741m far | 3A5E:d=2.644m far | 931A:d=3.810m far | EF23:d=4.577m far
+[2026-03-23T00:37:34.021Z] [Tick] t36 COLLECT×1 | D077:d=0.113m ✓ | 3A5E:d=2.055m far | 931A:d=3.358m far | EF23:d=4.213m far
+[2026-03-23T00:37:35.021Z] [Tick] t40 D077:skip(done) | 3A5E:d=2.138m far | 931A:d=3.424m far | EF23:d=4.268m far
+[2026-03-23T00:37:36.021Z] [Tick] t44 D077:skip(done) | 3A5E:d=2.213m far | 931A:d=3.422m far | EF23:d=4.231m far
+[2026-03-23T00:37:37.021Z] [Tick] t48 D077:skip(done) | 3A5E:d=2.215m far | 931A:d=3.473m far | EF23:d=4.301m far
+[2026-03-23T00:37:38.021Z] [Tick] t52 D077:skip(done) | 3A5E:d=2.220m far | 931A:d=3.521m far | EF23:d=4.367m far
+[2026-03-23T00:37:39.022Z] [Tick] t56 D077:skip(done) | 3A5E:d=2.210m far | 931A:d=3.493m far | EF23:d=4.331m far
+[2026-03-23T00:37:40.021Z] [Tick] t60 D077:skip(done) | 3A5E:d=2.191m far | 931A:d=3.464m far | EF23:d=4.300m far
+[2026-03-23T00:37:41.021Z] [Tick] t64 D077:skip(done) | 3A5E:d=2.196m far | 931A:d=3.464m far | EF23:d=4.298m far
+[2026-03-23T00:37:42.020Z] [Tick] t68 D077:skip(done) | 3A5E:d=2.201m far | 931A:d=3.469m far | EF23:d=4.302m far
+[2026-03-23T00:37:43.021Z] [Tick] t72 D077:skip(done) | 3A5E:d=2.195m far | 931A:d=3.459m far | EF23:d=4.291m far
+[2026-03-23T00:37:44.021Z] [Tick] t76 D077:skip(done) | 3A5E:d=2.192m far | 931A:d=3.459m far | EF23:d=4.292m far
+[2026-03-23T00:37:45.025Z] [Tick] t80 D077:skip(done) | 3A5E:d=2.172m far | 931A:d=3.439m far | EF23:d=4.273m far
+[2026-03-23T00:37:46.021Z] [Tick] t84 D077:skip(done) | 3A5E:d=2.066m far | 931A:d=3.186m far | EF23:d=3.970m far
+[2026-03-23T00:37:47.021Z] [Tick] t88 D077:skip(done) | 3A5E:d=1.771m far | 931A:d=2.959m far | EF23:d=3.790m far
+[2026-03-23T00:37:48.021Z] [Tick] t92 D077:skip(done) | 3A5E:d=1.077m far | 931A:d=2.452m far | EF23:d=3.392m far
+[2026-03-23T00:37:49.029Z] [Tick] t96 D077:skip(done) | 3A5E:d=0.368m far | 931A:d=1.955m far | EF23:d=2.990m far
+[2026-03-23T00:37:49.522Z] [Tick] t98 COLLECT×1 | D077:skip(done) | 3A5E:d=0.094m ✓ | 931A:d=1.740m far | EF23:d=2.805m far
+[2026-03-23T00:37:50.021Z] [Tick] t100 D077:skip(done) | 3A5E:skip(done) | 931A:d=1.537m far | EF23:d=2.599m far
+[2026-03-23T00:37:51.022Z] [Tick] t104 D077:skip(done) | 3A5E:skip(done) | 931A:d=1.258m far | EF23:d=2.330m far
+[2026-03-23T00:37:52.021Z] [Tick] t108 D077:skip(done) | 3A5E:skip(done) | 931A:d=1.649m far | EF23:d=2.697m far
+[2026-03-23T00:37:53.021Z] [Tick] t112 D077:skip(done) | 3A5E:skip(done) | 931A:d=1.922m far | EF23:d=2.890m far
+[2026-03-23T00:37:54.021Z] [Tick] t116 D077:skip(done) | 3A5E:skip(done) | 931A:d=2.433m far | EF23:d=3.327m far
+[2026-03-23T00:37:55.021Z] [Tick] t120 D077:skip(done) | 3A5E:skip(done) | 931A:d=2.920m far | EF23:d=3.776m far
+[2026-03-23T00:37:56.021Z] [Tick] t124 D077:skip(done) | 3A5E:skip(done) | 931A:d=3.169m far | EF23:d=3.982m far
+[2026-03-23T00:37:57.021Z] [Tick] t128 D077:skip(done) | 3A5E:skip(done) | 931A:d=3.169m far | EF23:d=3.982m far

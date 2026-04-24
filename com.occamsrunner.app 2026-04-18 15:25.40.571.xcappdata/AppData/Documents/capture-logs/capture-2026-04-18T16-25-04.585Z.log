@@ -1,0 +1,53 @@
+[2026-04-18T16:25:04.588Z] SESSION START mode=vast
+[2026-04-18T16:25:04.595Z] Thresholds: match>=65%, features>=75, tracking>=65%, worldMap=true
+[2026-04-18T16:25:04.647Z] AR precise capture started
+[2026-04-18T16:25:04.660Z] geoSample #1 hAcc=3m vAcc=8m matchedLocal=no
+[2026-04-18T16:25:04.660Z] live quality: match=0% features=0 tracking=0% worldMap=no ready=no blockers=low_match,low_features,low_tracking,missing_world_map
+[2026-04-18T16:25:07.182Z] geoSample #2 hAcc=3m vAcc=8m matchedLocal=yes
+[2026-04-18T16:25:07.183Z] live quality: match=50% features=742 tracking=100% worldMap=no ready=no blockers=low_match,missing_world_map
+[2026-04-18T16:25:10.533Z] geoSample #3 hAcc=4m vAcc=8m matchedLocal=yes
+[2026-04-18T16:25:10.534Z] live quality: match=66% features=443 tracking=100% worldMap=no ready=no blockers=missing_world_map
+[2026-04-18T16:25:14.536Z] geoSample #4 hAcc=4m vAcc=9m matchedLocal=yes
+[2026-04-18T16:25:14.536Z] live quality: match=75% features=413 tracking=100% worldMap=no ready=no blockers=missing_world_map
+[2026-04-18T16:25:17.534Z] geoSample #5 hAcc=4m vAcc=9m matchedLocal=yes
+[2026-04-18T16:25:17.535Z] live quality: match=80% features=310 tracking=86% worldMap=no ready=no blockers=missing_world_map
+[2026-04-18T16:25:19.535Z] live quality: match=83% features=253 tracking=89% worldMap=no ready=no blockers=missing_world_map
+[2026-04-18T16:25:22.034Z] live quality: match=85% features=211 tracking=81% worldMap=no ready=no blockers=missing_world_map
+[2026-04-18T16:25:24.036Z] live quality: match=87% features=181 tracking=76% worldMap=no ready=no blockers=missing_world_map
+[2026-04-18T16:25:27.040Z] live quality: match=88% features=161 tracking=79% worldMap=no ready=no blockers=missing_world_map
+[2026-04-18T16:25:30.041Z] geoSample #10 hAcc=4m vAcc=9m matchedLocal=yes
+[2026-04-18T16:25:30.042Z] live quality: match=90% features=143 tracking=75% worldMap=no ready=no blockers=missing_world_map
+[2026-04-18T16:25:54.926Z] live quality: match=90% features=129 tracking=72% worldMap=no ready=no blockers=missing_world_map
+[2026-04-18T16:25:57.533Z] live quality: match=91% features=203 tracking=75% worldMap=no ready=no blockers=missing_world_map
+[2026-04-18T16:26:00.538Z] live quality: match=92% features=213 tracking=77% worldMap=no ready=no blockers=missing_world_map
+[2026-04-18T16:26:03.034Z] live quality: match=92% features=196 tracking=74% worldMap=no ready=no blockers=missing_world_map
+[2026-04-18T16:26:06.038Z] live quality: match=93% features=203 tracking=76% worldMap=no ready=no blockers=missing_world_map
+[2026-04-18T16:26:08.037Z] live quality: match=93% features=209 tracking=77% worldMap=no ready=no blockers=missing_world_map
+[2026-04-18T16:26:10.537Z] live quality: match=94% features=196 tracking=75% worldMap=no ready=no blockers=missing_world_map
+[2026-04-18T16:26:13.439Z] live quality: match=94% features=184 tracking=74% worldMap=no ready=no blockers=missing_world_map
+[2026-04-18T16:26:17.240Z] live quality: match=94% features=174 tracking=72% worldMap=no ready=no blockers=missing_world_map
+[2026-04-18T16:26:19.140Z] geoSample #20 hAcc=4m vAcc=3m matchedLocal=yes
+[2026-04-18T16:26:19.141Z] live quality: match=95% features=165 tracking=71% worldMap=no ready=no blockers=missing_world_map
+[2026-04-18T16:26:22.039Z] live quality: match=95% features=156 tracking=69% worldMap=no ready=no blockers=missing_world_map
+[2026-04-18T16:26:26.043Z] live quality: match=95% features=149 tracking=68% worldMap=no ready=no blockers=missing_world_map
+[2026-04-18T16:26:28.041Z] live quality: match=95% features=142 tracking=67% worldMap=no ready=no blockers=missing_world_map
+[2026-04-18T16:26:32.042Z] live quality: match=95% features=143 tracking=68% worldMap=no ready=no blockers=missing_world_map
+[2026-04-18T16:26:35.042Z] live quality: match=96% features=141 tracking=70% worldMap=no ready=no blockers=missing_world_map
+[2026-04-18T16:26:38.042Z] live quality: match=96% features=135 tracking=69% worldMap=no ready=no blockers=missing_world_map
+[2026-04-18T16:26:40.042Z] live quality: match=96% features=145 tracking=70% worldMap=no ready=no blockers=missing_world_map
+[2026-04-18T16:26:43.047Z] live quality: match=96% features=139 tracking=69% worldMap=no ready=no blockers=missing_world_map
+[2026-04-18T16:26:45.041Z] live quality: match=96% features=134 tracking=68% worldMap=no ready=no blockers=missing_world_map
+[2026-04-18T16:26:47.040Z] geoSample #30 hAcc=5m vAcc=4m matchedLocal=yes
+[2026-04-18T16:26:47.041Z] live quality: match=96% features=130 tracking=67% worldMap=no ready=no blockers=missing_world_map
+[2026-04-18T16:26:49.040Z] live quality: match=96% features=125 tracking=66% worldMap=no ready=no blockers=missing_world_map
+[2026-04-18T16:26:51.051Z] live quality: match=93% features=125 tracking=66% worldMap=no ready=no blockers=missing_world_map
+[2026-04-18T16:26:53.060Z] live quality: match=90% features=125 tracking=66% worldMap=no ready=no blockers=missing_world_map
+[2026-04-18T16:26:56.039Z] live quality: match=91% features=151 tracking=68% worldMap=no ready=no blockers=missing_world_map
+[2026-04-18T16:26:59.045Z] live quality: match=91% features=160 tracking=69% worldMap=no ready=no blockers=missing_world_map
+[2026-04-18T16:27:03.038Z] live quality: match=91% features=159 tracking=69% worldMap=no ready=no blockers=missing_world_map
+[2026-04-18T16:27:04.058Z] Recording stopped by user. geoSamples=36, matchedLocal=33
+[2026-04-18T16:27:04.059Z] AR precise capture paused
+[2026-04-18T16:27:20.646Z] SAVE ATTEMPT BLOCKED:
+[2026-04-18T16:27:20.647Z]   • No world map — AR session hasn't captured one yet (keep recording)
+[2026-04-18T16:27:22.714Z] SAVE ATTEMPT BLOCKED:
+[2026-04-18T16:27:22.714Z]   • No world map — AR session hasn't captured one yet (keep recording)

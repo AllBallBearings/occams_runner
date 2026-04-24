@@ -114,6 +114,10 @@ struct LocalRouteSample: Codable, Identifiable {
     let progress: Double
     let trackingScore: Double
     let featurePointCount: Int
+    /// Device compass heading at the moment this sample was captured (degrees from
+    /// magnetic/true north, clockwise).  nil on samples recorded before this field
+    /// was added (backwards-compatible decode via optional).
+    let compassHeading: Double?
 
     var id: UUID { sampleId }
 
@@ -375,7 +379,8 @@ struct RecordedRoute: Codable, Identifiable {
             timestamp: lower.timestamp.addingTimeInterval(upper.timestamp.timeIntervalSince(lower.timestamp) * t),
             progress: p,
             trackingScore: lower.trackingScore + (upper.trackingScore - lower.trackingScore) * t,
-            featurePointCount: Int(Double(lower.featurePointCount) + Double(upper.featurePointCount - lower.featurePointCount) * t)
+            featurePointCount: Int(Double(lower.featurePointCount) + Double(upper.featurePointCount - lower.featurePointCount) * t),
+            compassHeading: lower.compassHeading ?? upper.compassHeading
         )
     }
 }

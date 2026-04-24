@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>com.apple.SwiftUI.sceneID</key>
+	<string>SwiftUI.ZStack&lt;SwiftUI.TupleView&lt;(SwiftUI.ModifiedContent&lt;SwiftUI.ModifiedContent&lt;SwiftUI.ModifiedContent&lt;SwiftUI.ModifiedContent&lt;OccamsRunner.ContentView, SwiftUI._EnvironmentKeyWritingModifier&lt;Swift.Optional&lt;OccamsRunner.DataStore&gt;&gt;&gt;, SwiftUI._EnvironmentKeyWritingModifier&lt;Swift.Optional&lt;OccamsRunner.LocationService&gt;&gt;&gt;, SwiftUI._EnvironmentKeyWritingModifier&lt;Swift.Optional&lt;OccamsRunner.AppSettings&gt;&gt;&gt;, SwiftUI._AppearanceActionModifier&gt;, Swift.Optional&lt;SwiftUI.ModifiedContent&lt;OccamsRunner.SplashScreenView, SwiftUI._TraitWritingModifier&lt;SwiftUI.ZIndexTraitKey&gt;&gt;&gt;)&gt;&gt;-1</string>
+</dict>
+</plist>

@@ -61,7 +61,8 @@ final class CollectionIntegrationTests: XCTestCase {
                 timestamp: Date(timeIntervalSince1970: Double(i)),
                 progress: Double(i) / Double(max(1, pointCount - 1)),
                 trackingScore: 1.0,
-                featurePointCount: 100
+                featurePointCount: 100,
+                compassHeading: nil
             )
         }
         return RecordedRoute(

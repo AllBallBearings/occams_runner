@@ -7,7 +7,10 @@ import MapKit
 // MARK: - Heading Manager
 
 private final class HeadingManager: NSObject, ObservableObject, CLLocationManagerDelegate {
-    @Published var degrees: Double = 0
+    /// Degrees from north, clockwise. -1 = no reading received yet.
+    @Published var degrees: Double = -1
+    /// CLHeading.headingAccuracy in degrees. -1 = invalid / not calibrated.
+    @Published var accuracy: Double = -1
     private let manager = CLLocationManager()
 
     override init() {
@@ -20,7 +23,10 @@ private final class HeadingManager: NSObject, ObservableObject, CLLocationManage
 
     func locationManager(_ manager: CLLocationManager, didUpdateHeading newHeading: CLHeading) {
         let d = newHeading.trueHeading >= 0 ? newHeading.trueHeading : newHeading.magneticHeading
-        DispatchQueue.main.async { self.degrees = d }
+        DispatchQueue.main.async {
+            self.degrees = d
+            self.accuracy = newHeading.headingAccuracy
+        }
     }
 }
 
@@ -69,6 +75,226 @@ private struct CompassView: View {
     }
 }
 
+// MARK: - Target Compass (HUD)
+
+/// Floating 3D-looking HUD compass shown in the bottom third of the screen
+/// during the alignment phase.  The whole disc is tilted forward with a
+/// perspective transform so it reads as a compass plate hovering over the
+/// ground.  The needle points at the orange GPS ring.
+///
+/// `bearingDegrees` follows the convention used by ARCoordinator:
+///   0° = ring is straight ahead
+///   + = ring is to the right
+///   − = ring is to the left
+///   ±180 = ring is behind the runner
+/// When nil, the compass dims out (no target).
+private struct TargetCompassView: View {
+    let bearingDegrees: Double?
+
+    // Tilt applied to the whole dial for the 3D effect.
+    private let tiltDegrees: Double = 55
+    private let dialSize: CGFloat = 160
+
+    var body: some View {
+        let hasTarget = bearingDegrees != nil
+        let bearing = bearingDegrees ?? 0
+
+        VStack(spacing: 0) {
+            ZStack {
+                // ── Ground shadow pool (sits "under" the disc) ────────────
+                Ellipse()
+                    .fill(Color.black.opacity(0.45))
+                    .frame(width: dialSize * 0.95, height: dialSize * 0.2)
+                    .blur(radius: 10)
+                    .offset(y: dialSize * 0.42)
+
+                // ── Tilted dial stack ─────────────────────────────────────
+                ZStack {
+                    // Thick metallic bezel (outer ring).
+                    Circle()
+                        .fill(
+                            AngularGradient(
+                                gradient: Gradient(colors: [
+                                    Color(white: 0.35),
+                                    Color(white: 0.10),
+                                    Color(white: 0.45),
+                                    Color(white: 0.08),
+                                    Color(white: 0.35)
+                                ]),
+                                center: .center
+                            )
+                        )
+                        .overlay(
+                            Circle()
+                                .stroke(Color.white.opacity(0.35), lineWidth: 1)
+                        )
+                        .shadow(color: .black.opacity(0.6), radius: 6, x: 0, y: 3)
+
+                    // Recessed face — darker radial gradient for depth.
+                    Circle()
+                        .fill(
+                            RadialGradient(
+                                gradient: Gradient(colors: [
+                                    Color(red: 0.10, green: 0.10, blue: 0.12).opacity(0.92),
+                                    Color.black.opacity(0.92)
+                                ]),
+                                center: UnitPoint(x: 0.4, y: 0.35),
+                                startRadius: 4,
+                                endRadius: dialSize * 0.55
+                            )
+                        )
+                        .padding(10)
+                        .overlay(
+                            Circle()
+                                .stroke(Color.orange.opacity(0.35), lineWidth: 1)
+                                .padding(10)
+                        )
+
+                    // Tick marks every 30°.
+                    ForEach(0..<12) { i in
+                        Rectangle()
+                            .fill(i % 3 == 0
+                                  ? Color.white.opacity(0.8)
+                                  : Color.white.opacity(0.35))
+                            .frame(
+                                width: i % 3 == 0 ? 2.5 : 1.5,
+                                height: i % 3 == 0 ? 12 : 7
+                            )
+                            .offset(y: -(dialSize / 2 - 18))
+                            .rotationEffect(.degrees(Double(i) * 30))
+                    }
+
+                    // Fixed cardinal tick at 12 o'clock (runner's forward).
+                    Triangle()
+                        .fill(
+                            LinearGradient(
+                                colors: [Color.white, Color.white.opacity(0.6)],
+                                startPoint: .top, endPoint: .bottom
+                            )
+                        )
+                        .frame(width: 12, height: 14)
+                        .offset(y: -(dialSize / 2 - 4))
+                        .shadow(color: .white.opacity(0.5), radius: 2)
+
+                    // Rotating needle — points at the ring.
+                    compassNeedle
+                        .rotationEffect(.degrees(bearing))
+                        .animation(.easeOut(duration: 0.18), value: bearing)
+
+                    // Glass highlight overlay for a domed feel.
+                    Circle()
+                        .fill(
+                            LinearGradient(
+                                colors: [
+                                    Color.white.opacity(0.18),
+                                    Color.white.opacity(0.0),
+                                    Color.white.opacity(0.0)
+                                ],
+                                startPoint: .top, endPoint: .bottom
+                            )
+                        )
+                        .padding(10)
+                        .allowsHitTesting(false)
+
+                    // Center pivot cap (raised).
+                    ZStack {
+                        Circle()
+                            .fill(
+                                RadialGradient(
+                                    gradient: Gradient(colors: [
+                                        Color(white: 0.9),
+                                        Color(white: 0.35)
+                                    ]),
+                                    center: UnitPoint(x: 0.35, y: 0.35),
+                                    startRadius: 0, endRadius: 8
+                                )
+                            )
+                            .frame(width: 14, height: 14)
+                            .shadow(color: .black.opacity(0.8), radius: 2, x: 0, y: 1)
+                        Circle()
+                            .fill(Color.black.opacity(0.6))
+                            .frame(width: 4, height: 4)
+                    }
+                }
+                .frame(width: dialSize, height: dialSize)
+                // 3D tilt: pitch the disc forward so it looks like a
+                // compass plate hovering above the ground.
+                .rotation3DEffect(
+                    .degrees(tiltDegrees),
+                    axis: (x: 1, y: 0, z: 0),
+                    perspective: 0.7
+                )
+                .shadow(color: .black.opacity(0.5), radius: 14, x: 0, y: 14)
+            }
+
+            // Label below the dial.
+            Text("TO START")
+                .font(.system(size: 10, weight: .black))
+                .kerning(2)
+                .foregroundColor(.orange.opacity(0.9))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+                .background(
+                    Capsule()
+                        .fill(Color.black.opacity(0.55))
+                        .overlay(Capsule().stroke(Color.orange.opacity(0.4), lineWidth: 1))
+                )
+                .padding(.top, 6)
+        }
+        .opacity(hasTarget ? 1.0 : 0.35)
+        .animation(.easeInOut(duration: 0.25), value: hasTarget)
+    }
+
+    /// The rotating needle.  Rendered with orange target blade, thin tail,
+    /// and an emissive shadow so it appears to float slightly above the dial.
+    private var compassNeedle: some View {
+        ZStack {
+            // Target blade — points at +Y (up in local space; rotation 0 = up).
+            Triangle()
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            Color(red: 1.0, green: 0.85, blue: 0.35),
+                            Color(red: 1.0, green: 0.45, blue: 0.05),
+                            Color(red: 0.85, green: 0.25, blue: 0.0)
+                        ],
+                        startPoint: .top, endPoint: .bottom
+                    )
+                )
+                .frame(width: 20, height: dialSize * 0.40)
+                .offset(y: -dialSize * 0.20)
+                .shadow(color: .orange.opacity(0.85), radius: 6)
+                .shadow(color: .black.opacity(0.7), radius: 3, x: 0, y: 3)
+
+            // Tail — thin capsule with a soft gradient.
+            Capsule()
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            Color.white.opacity(0.8),
+                            Color.white.opacity(0.25)
+                        ],
+                        startPoint: .top, endPoint: .bottom
+                    )
+                )
+                .frame(width: 5, height: dialSize * 0.25)
+                .offset(y: dialSize * 0.125)
+                .shadow(color: .black.opacity(0.6), radius: 2, x: 0, y: 2)
+        }
+    }
+}
+
+private struct Triangle: Shape {
+    func path(in rect: CGRect) -> Path {
+        var p = Path()
+        p.move(to:    CGPoint(x: rect.midX, y: rect.minY))
+        p.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+        p.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
+        p.closeSubpath()
+        return p
+    }
+}
+
 // MARK: - AR Runner View
 
 struct ARRunnerView: View {
@@ -88,6 +314,13 @@ struct ARRunnerView: View {
     @State private var alignmentConfidence: Double = 0
     @State private var distanceToStart: Double?
     @State private var alignmentReady = false
+    /// 0–1 screen-glow intensity while the runner is pointing the phone at
+    /// the start ring during the navigate-to-start phase.
+    @State private var ringGlowIntensity: Double = 0
+    /// Signed horizontal bearing (degrees) from camera forward to the GPS
+    /// start ring.  0 = ahead, + = right, − = left.  Nil when not available.
+    /// Drives the HUD compass needle.
+    @State private var ringBearing: Double? = nil
 
     @State private var manualAlignment = ManualAlignmentState()
 
@@ -122,6 +355,8 @@ struct ARRunnerView: View {
                         locationService: locationService,
                         runMode: runMode,
                         manualAlignment: manualAlignment,
+                        compassHeading: headingManager.degrees,
+                        compassHeadingAccuracy: headingManager.accuracy,
                         onAlignmentUpdate: { state, confidence, distance, ready in
                             alignmentState     = state
                             alignmentConfidence = confidence
@@ -130,20 +365,56 @@ struct ARRunnerView: View {
                         },
                         onNearestItemDistance: { nearest in nearestItemDistance = nearest },
                         onItemCollected:       { itemId in handleCollection(itemId: itemId) },
-                        onDebugTick:           { log in debugTickLog = log }
+                        onDebugTick:           { log in debugTickLog = log },
+                        onRingGlowIntensity:   { intensity in ringGlowIntensity = intensity },
+                        onRingBearing:         { bearing in ringBearing = bearing }
                     )
                     .allowsHitTesting(false)
                     .ignoresSafeArea()
 
-                    if runMode == .aligning || runMode == .realigning {
+                    // Enable manual-alignment gestures only after the runner has
+                    // reached the start gate.  Phase 1 (moveToStart) is pure
+                    // navigation — nothing to drag yet.
+                    if (runMode == .aligning || runMode == .realigning)
+                        && alignmentState != .moveToStart {
                         alignmentGestureLayer
                     }
 
-                    // ── Full HUD ────────────────────────────────────────
+                    // Screen-edge hazy glow that intensifies when the camera
+                    // is pointing at the GPS ring — helps the runner spot it
+                    // on the horizon.
+                    if alignmentState == .moveToStart {
+                        ringGlowOverlay
+                            .allowsHitTesting(false)
+                    }
+
+                    // 3D-looking HUD compass anchored in the bottom third of
+                    // the screen.  Needle rotates to point at the orange GPS
+                    // ring.  Shown for the whole alignment phase so the runner
+                    // always has a visible target direction.
+                    if runMode == .aligning || runMode == .realigning {
+                        GeometryReader { geo in
+                            TargetCompassView(bearingDegrees: ringBearing)
+                                .position(
+                                    x: geo.size.width / 2,
+                                    y: geo.size.height * 0.72
+                                )
+                        }
+                        .allowsHitTesting(false)
+                        .ignoresSafeArea()
+                    }
+
+                    // ── HUD ─────────────────────────────────────────────
                     VStack(spacing: 0) {
-                        topHUDCard
-                            .padding(.top, 8)
-                            .padding(.horizontal, 16)
+                        if alignmentState == .moveToStart {
+                            moveToStartTopBar
+                                .padding(.top, 8)
+                                .padding(.horizontal, 16)
+                        } else {
+                            topHUDCard
+                                .padding(.top, 8)
+                                .padding(.horizontal, 16)
+                        }
 
                         Spacer()
 
@@ -151,7 +422,7 @@ struct ARRunnerView: View {
 
                         if runMode == .running {
                             runningBottomHUD(route: route)
-                        } else {
+                        } else if alignmentState != .moveToStart {
                             alignmentBottomLayout
                         }
                     }
@@ -573,10 +844,105 @@ struct ARRunnerView: View {
 
     private var alignmentStateInstruction: String {
         switch alignmentState {
-        case .moveToStart: return "WALK TO START POINT"
+        case .moveToStart: return "WALK TO THE START POINT"
         case .scanning:    return "SCAN SURROUNDINGS SLOWLY"
         case .lowConfidence: return "LOW CONFIDENCE - KEEP SCANNING"
         case .locked:      return ""
+        }
+    }
+
+    // MARK: - Move-to-Start Phase UI (Phase 1)
+
+    /// Minimal top bar shown during the navigate-to-start phase: just distance
+    /// + a dismiss button.  The in-AR 3D arrow + GPS ring do all the directional
+    /// work, so the screen UI stays out of the way.
+    private var moveToStartTopBar: some View {
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("WALK TO START")
+                    .font(.system(size: 12, weight: .black))
+                    .foregroundColor(.white)
+                    .kerning(2)
+
+                if headingManager.degrees < 0 || headingManager.accuracy < 0 || headingManager.accuracy >= 30 {
+                    HStack(spacing: 5) {
+                        Image(systemName: "location.north.fill")
+                            .foregroundColor(.yellow)
+                        Text("Calibrating compass – wave device in a figure-8")
+                            .foregroundColor(.yellow)
+                    }
+                    .font(.system(size: 11, weight: .semibold))
+                } else if let dist = distanceToStart {
+                    Text(String(format: "%.0f ft away", dist * 3.281))
+                        .font(.system(size: 22, weight: .bold, design: .rounded))
+                        .foregroundColor(.orange)
+                } else {
+                    Text("Acquiring GPS…")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundColor(.white.opacity(0.6))
+                }
+            }
+
+            Spacer()
+
+            Button(action: { handleDismissTap() }) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundColor(.white.opacity(0.7))
+                    .padding(10)
+                    .background(Color.black.opacity(0.45))
+                    .clipShape(Circle())
+            }
+        }
+        .padding(.horizontal, 16).padding(.vertical, 12)
+        .background(.ultraThinMaterial)
+        .environment(\.colorScheme, .dark)
+        .clipShape(RoundedRectangle(cornerRadius: 20))
+        .overlay(
+            RoundedRectangle(cornerRadius: 20)
+                .stroke(Color.orange.opacity(0.35), lineWidth: 1)
+        )
+        .shadow(color: Color.black.opacity(0.3), radius: 12, x: 0, y: 6)
+    }
+
+    /// Hazy orange edge glow that fades in as the runner aims the phone at
+    /// the GPS start ring.  Driven by `ringGlowIntensity` (0…1) from the AR
+    /// coordinator.  Thickens via a radial gradient so the centre stays
+    /// unobstructed.
+    private var ringGlowOverlay: some View {
+        GeometryReader { geo in
+            let size = max(geo.size.width, geo.size.height)
+            let alpha = max(0, min(1, ringGlowIntensity)) * 0.65
+
+            ZStack {
+                // Outer radial haze — darker at edges, clear in the middle.
+                RadialGradient(
+                    gradient: Gradient(colors: [
+                        Color.orange.opacity(0),
+                        Color.orange.opacity(alpha * 0.35),
+                        Color.orange.opacity(alpha * 0.90)
+                    ]),
+                    center: .center,
+                    startRadius: size * 0.15,
+                    endRadius: size * 0.75
+                )
+                .blendMode(.screen)
+
+                // Soft centre bloom — gives the "aimed" sensation when ring
+                // is dead-centre of the viewport.
+                RadialGradient(
+                    gradient: Gradient(colors: [
+                        Color.orange.opacity(alpha * 0.55),
+                        Color.orange.opacity(0)
+                    ]),
+                    center: .center,
+                    startRadius: 0,
+                    endRadius: size * 0.35
+                )
+                .blendMode(.plusLighter)
+            }
+            .ignoresSafeArea()
+            .animation(.easeOut(duration: 0.18), value: ringGlowIntensity)
         }
     }
 

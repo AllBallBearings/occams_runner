@@ -25,9 +25,14 @@ private enum MapPin: Identifiable {
     }
 }
 
+private enum RecordingCountdownPhase {
+    case idle, countdown, active
+}
+
 struct RecordRunView: View {
     @EnvironmentObject var locationService: LocationService
     @EnvironmentObject var dataStore: DataStore
+    @Environment(\.scenePhase) private var scenePhase
 
     @State private var region = MKCoordinateRegion(
         center: CLLocationCoordinate2D(latitude: 37.7749, longitude: -122.4194),
@@ -41,6 +46,10 @@ struct RecordRunView: View {
     @State private var saveErrorMessage: String?
     @State private var didCopyDebugLog = false
     @State private var beaconPulse = false
+
+    @State private var countdownPhase: RecordingCountdownPhase = .idle
+    @State private var countdownValue: Int = 5
+    @State private var countdownTimer: Timer?
 
     // MARK: - Computed map pins
 
@@ -116,6 +125,18 @@ struct RecordRunView: View {
             .toolbarColorScheme(.dark, for: .navigationBar)
             .sheet(isPresented: $showingSaveSheet) {
                 saveRouteSheet
+            }
+            .onChange(of: scenePhase) { phase in
+                switch phase {
+                case .background: locationService.handleAppBackgrounded()
+                case .active:     locationService.handleAppForegrounded()
+                default: break
+                }
+            }
+        }
+        .overlay {
+            if countdownPhase == .countdown {
+                holdSteadyOverlay
             }
         }
     }
@@ -409,6 +430,67 @@ struct RecordRunView: View {
         }
     }
 
+    // MARK: - Hold Steady Overlay
+
+    private var holdSteadyOverlay: some View {
+        ZStack {
+            Color.black.opacity(0.80).ignoresSafeArea()
+
+            VStack(spacing: 28) {
+                Text("HOLD STEADY")
+                    .font(.system(size: 22, weight: .black))
+                    .foregroundColor(.orange)
+                    .kerning(3)
+
+                ZStack {
+                    Circle()
+                        .stroke(Color.orange.opacity(0.25), lineWidth: 6)
+                        .frame(width: 130, height: 130)
+                    Circle()
+                        .stroke(Color.orange, lineWidth: 3)
+                        .frame(width: 130, height: 130)
+                    Text("\(countdownValue)")
+                        .font(.system(size: 72, weight: .bold, design: .rounded))
+                        .foregroundColor(.white)
+                }
+
+                VStack(spacing: 10) {
+                    instructionRow(icon: "iphone", text: "Hold phone at chest height")
+                    instructionRow(icon: "arrow.up", text: "Face forward — direction you'll start running")
+                    instructionRow(icon: "figure.stand", text: "Stand still until the countdown ends")
+                }
+
+                let tracking = Int(locationService.preciseCaptureQuality.averageTrackingScore * 100)
+                HStack(spacing: 8) {
+                    Circle()
+                        .fill(tracking >= 40 ? Color.green : Color.orange)
+                        .frame(width: 8, height: 8)
+                    Text(tracking >= 40
+                         ? "AR scanning — ready"
+                         : "Scanning environment… \(tracking)%")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(.white.opacity(0.8))
+                }
+            }
+            .padding(40)
+        }
+        .transition(.opacity)
+    }
+
+    private func instructionRow(icon: String, text: String) -> some View {
+        HStack(spacing: 14) {
+            Image(systemName: icon)
+                .font(.system(size: 18))
+                .foregroundColor(.orange)
+                .frame(width: 28)
+            Text(text)
+                .font(.system(size: 15, weight: .medium))
+                .foregroundColor(.white.opacity(0.9))
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer()
+        }
+    }
+
     // MARK: - Helpers
 
     private var currentDistanceMiles: Double {
@@ -423,6 +505,9 @@ struct RecordRunView: View {
 
     private func toggleRecording() {
         if locationService.isRecording {
+            countdownTimer?.invalidate()
+            countdownTimer = nil
+            countdownPhase = .idle
             locationService.stopRecording()
             timer?.invalidate()
             timer = nil
@@ -437,6 +522,26 @@ struct RecordRunView: View {
             locationService.startRecording(mode: selectedMode)
             timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
                 elapsedTime += 1
+            }
+            startHoldSteadyCountdown()
+        }
+    }
+
+    private func startHoldSteadyCountdown() {
+        countdownValue = 5
+        withAnimation { countdownPhase = .countdown }
+        var elapsed = 0
+        countdownTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { t in
+            elapsed += 1
+            let tracking = locationService.preciseCaptureQuality.averageTrackingScore
+            let hasGeo   = !locationService.recordedPoints.isEmpty
+            // Dismiss early only after at least 3 seconds so the user has time to read
+            if countdownValue <= 1 || (elapsed >= 3 && tracking >= 0.4 && hasGeo) {
+                t.invalidate()
+                countdownTimer = nil
+                withAnimation { countdownPhase = .active }
+            } else {
+                countdownValue -= 1
             }
         }
     }
