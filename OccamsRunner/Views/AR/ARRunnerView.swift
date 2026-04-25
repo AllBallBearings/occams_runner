@@ -285,12 +285,13 @@ struct ARRunnerView: View {
                             .kerning(1.2)
                         
                         if let distanceToStart {
-                            Label(
-                                String(format: "%.0f ft to start", distanceToStart * 3.281),
-                                systemImage: "mappin.and.ellipse"
-                            )
-                            .font(.caption).fontWeight(.bold)
-                            .foregroundColor(.white.opacity(0.7))
+                            let feet = distanceToStart * 3.281
+                            let distanceLabel = feet >= 1320
+                                ? String(format: "%.1f mi to start", feet / 5280)
+                                : String(format: "%.0f ft to start", feet)
+                            Label(distanceLabel, systemImage: "mappin.and.ellipse")
+                                .font(.caption).fontWeight(.bold)
+                                .foregroundColor(.white.opacity(0.7))
                         }
                         
                         HStack(spacing: 12) {
