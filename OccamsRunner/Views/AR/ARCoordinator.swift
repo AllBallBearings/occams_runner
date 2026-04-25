@@ -35,6 +35,23 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
     private(set) var boxNodes: [UUID: SCNNode] = [:]
     private var pendingBoxIds: Set<UUID> = []
 
+    /// ARAnchors we created, keyed by item/box id. Presence in this dict IS
+    /// the "committed" placement state — an item is `.committed` iff its
+    /// anchor exists here, otherwise it's `.pending`. See
+    /// `docs/AR_ALIGNMENT_REFACTOR.md` for the full lifecycle.
+    private var itemAnchors: [UUID: QuestItemAnchor] = [:]
+    private var boxAnchors:  [UUID: QuestBoxAnchor]  = [:]
+
+    /// Distance (m) from the camera at which a pending item commits to a
+    /// permanent ARAnchor. Tuned so coins materialize a comfortable few
+    /// strides ahead of the runner without revealing the entire route.
+    private let commitHorizonMeters: Float = 12.0
+
+    /// Throttle: don't run the horizon evaluator on every AR frame. 10 Hz is
+    /// plenty for spawning coins as a runner approaches at human speeds.
+    private var lastCommitHorizonCheckAt: TimeInterval = 0
+    private let commitHorizonCheckInterval: TimeInterval = 0.1
+
     private var arrowIndicatorNode: SCNNode?
 
     // Hand pose detection
@@ -97,8 +114,9 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
         super.init()
 
         // Both timers run on the main RunLoop so all coinNodes access
-        // (checkCollections, updateNearestItemDistance, buildCoinNodes, updateQuest)
-        // is single-threaded on main — no dictionary races possible.
+        // (checkCollections, updateNearestItemDistance, cleanupCollectedItems,
+        // updateQuest, evaluateCommitHorizon) is single-threaded on main —
+        // no dictionary races possible.
         statusTimer = Timer(timeInterval: 0.3, repeats: true) { [weak self] _ in
             self?.updateAlignmentStatusFromGPS()
             self?.updateNearestItemDistance()
@@ -127,13 +145,17 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
             arView.scene.rootNode.addChildNode(routeGroupNode)
         }
 
-        // Shift the entire route (path + coins) down ~1 ft so objects
-        // appear at chest/waist height rather than eye/head height.
+        // Shift the route's logical reference frame down ~1 ft so coins
+        // committed via that frame land at chest/waist height rather than
+        // eye/head height. (Path-ribbon nodes are still parented here for
+        // the alignment-guide preview; coin/box nodes are NOT parented here
+        // — they each get their own ARAnchor when committed.)
         routeGroupNode.position.y = baseRouteY
 
         buildRoutePath()
-        buildCoinNodes(forceRebuild: true)
-        buildBoxNodes(forceRebuild: true)
+        // No pre-spawning: coins and boxes commit just-in-time as the
+        // runner crosses each item's commit horizon during .running mode.
+        clearAllItemNodes()
         setupArrowIndicator()
         updateAlignmentStatusFromGPS()
     }
@@ -177,7 +199,9 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
         // updateUIView is called on the main thread; keep coinNodes mutations there.
         assert(Thread.isMainThread)
         self.quest = quest
-        buildCoinNodes(forceRebuild: false)
+        // Only reconcile state — never spawn from this path. Spawning is the
+        // commit-horizon evaluator's job during .running mode.
+        cleanupCollectedItems()
     }
 
     // MARK: - Route + Coins
@@ -211,62 +235,148 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
         pathNodes.append(end)
     }
 
-    func buildCoinNodes(forceRebuild: Bool) {
+    /// Tears down every coin/box node and anchor and clears placement state.
+    /// Used on initial scene setup and on full rebuilds (e.g. force-rebuild
+    /// from tests). After this call every uncollected item is treated as
+    /// `.pending` again and will re-commit when the runner crosses its
+    /// commit horizon.
+    func clearAllItemNodes() {
+        assert(Thread.isMainThread)
+
+        if let session = arView?.session {
+            for anchor in itemAnchors.values { session.remove(anchor: anchor) }
+            for anchor in boxAnchors.values  { session.remove(anchor: anchor) }
+        }
+        itemAnchors.removeAll()
+        boxAnchors.removeAll()
+
+        for node in coinNodes.values { node.removeFromParentNode() }
+        coinNodes.removeAll()
+        pendingCollectionIds.removeAll()
+
+        for node in boxNodes.values { node.removeFromParentNode() }
+        boxNodes.removeAll()
+        pendingBoxIds.removeAll()
+    }
+
+    /// Reconciles existing node/anchor state against the live quest in dataStore:
+    /// removes nodes for items that have become `collected`, and clears stale
+    /// `pendingCollectionIds`. Does NOT spawn anything — committing happens via
+    /// `evaluateCommitHorizon()` during `.running` mode. Safe to call on every
+    /// SwiftUI render pass.
+    func cleanupCollectedItems() {
         assert(Thread.isMainThread)
         let currentQuest = dataStore.quests.first(where: { $0.id == quest.id }) ?? quest
 
-        if forceRebuild {
-            for node in coinNodes.values { node.removeFromParentNode() }
-            coinNodes.removeAll()
-        }
+        for item in currentQuest.items where item.collected {
+            // Fix 1: unblock the pending slot now that the dataStore has
+            // confirmed this item is collected.
+            pendingCollectionIds.remove(item.id)
 
-        for item in currentQuest.items {
-            if item.collected {
-                // Fix 1: unblock the pending slot now that the dataStore has
-                // confirmed this item is collected. Without this remove(), the
-                // ID stays in pendingCollectionIds forever.
-                pendingCollectionIds.remove(item.id)
-                if let existing = coinNodes[item.id] {
-                    existing.removeFromParentNode()
-                    coinNodes.removeValue(forKey: item.id)
-                }
-                continue
+            if let existing = coinNodes.removeValue(forKey: item.id) {
+                existing.removeFromParentNode()
             }
-
-            // Fix 2: also skip items that are in-flight (pending collection).
-            // Between Phase 2 removing the node from coinNodes and the dataStore
-            // confirming collected=true, a SwiftUI re-render can fire this path.
-            // Without the guard, buildCoinNodes would create a ghost node for the
-            // in-flight item.
-            if coinNodes[item.id] == nil,
-               !pendingCollectionIds.contains(item.id),
-               let local = item.resolvedLocalPosition(on: route) {
-                let coinNode = createCoinNode()
-                coinNode.simdPosition = local
-                routeGroupNode.addChildNode(coinNode)
-                coinNodes[item.id] = coinNode
+            if let anchor = itemAnchors.removeValue(forKey: item.id) {
+                arView?.session.remove(anchor: anchor)
             }
         }
     }
 
-    func buildBoxNodes(forceRebuild: Bool) {
+    #if DEBUG
+    /// Test-only synchronous spawn path. ARKit cannot run in unit tests, so
+    /// there is no `ARSession` to add anchors to. This helper bypasses the
+    /// commit-horizon evaluator and the anchor mechanism entirely: it directly
+    /// creates SCNNodes for every uncollected item and parents them to
+    /// `routeGroupNode` (the legacy parent). Production code never calls
+    /// this — `evaluateCommitHorizon()` is the production spawn path.
+    func legacyForceSpawnPendingItems() {
         assert(Thread.isMainThread)
         let currentQuest = dataStore.quests.first(where: { $0.id == quest.id }) ?? quest
 
-        if forceRebuild {
-            for node in boxNodes.values { node.removeFromParentNode() }
-            boxNodes.removeAll()
-            pendingBoxIds.removeAll()
+        for item in currentQuest.items {
+            guard !item.collected,
+                  coinNodes[item.id] == nil,
+                  !pendingCollectionIds.contains(item.id),
+                  let local = item.resolvedLocalPosition(on: route) else { continue }
+            let coinNode = createCoinNode()
+            coinNode.simdPosition = local
+            routeGroupNode.addChildNode(coinNode)
+            coinNodes[item.id] = coinNode
         }
 
         for box in currentQuest.boxes {
-            if boxNodes[box.id] == nil,
-               !pendingBoxIds.contains(box.id),
-               let local = box.resolvedLocalPosition(on: route) {
-                let node = createBoxNode()
-                node.simdPosition = local
-                routeGroupNode.addChildNode(node)
-                boxNodes[box.id] = node
+            guard boxNodes[box.id] == nil,
+                  !pendingBoxIds.contains(box.id),
+                  let local = box.resolvedLocalPosition(on: route) else { continue }
+            let node = createBoxNode()
+            node.simdPosition = local
+            routeGroupNode.addChildNode(node)
+            boxNodes[box.id] = node
+        }
+    }
+    #endif
+
+    // MARK: - Commit Horizon (Just-In-Time Anchored Placement)
+
+    /// For every still-`pending` item whose best-guess world position is within
+    /// `commitHorizonMeters` of the camera, create a permanent `QuestItemAnchor`
+    /// at that position. Box equivalents get `QuestBoxAnchor`. The actual scene
+    /// node is attached in `renderer(_:didAdd:for:)` once ARKit creates the
+    /// anchor's node.
+    ///
+    /// Called from the AR frame callback during `.running` mode, throttled to
+    /// `commitHorizonCheckInterval` so we don't recompute every coin's distance
+    /// 60×/second.
+    private func evaluateCommitHorizon(cameraWorldPos: SIMD3<Float>) {
+        guard let arView else { return }
+        let currentQuest = dataStore.quests.first(where: { $0.id == quest.id }) ?? quest
+        let groupTransform = routeGroupNode.simdWorldTransform
+
+        for item in currentQuest.items {
+            guard !item.collected,
+                  itemAnchors[item.id] == nil,
+                  !pendingCollectionIds.contains(item.id),
+                  let local = item.resolvedLocalPosition(on: route) else { continue }
+
+            let world = (groupTransform * SIMD4<Float>(local, 1)).translationXYZ
+            if simd_distance(world, cameraWorldPos) <= commitHorizonMeters {
+                let anchor = QuestItemAnchor(itemId: item.id, transform: .translation(world))
+                arView.session.add(anchor: anchor)
+                itemAnchors[item.id] = anchor
+            }
+        }
+
+        for box in currentQuest.boxes {
+            guard boxAnchors[box.id] == nil,
+                  !pendingBoxIds.contains(box.id),
+                  let local = box.resolvedLocalPosition(on: route) else { continue }
+
+            let world = (groupTransform * SIMD4<Float>(local, 1)).translationXYZ
+            if simd_distance(world, cameraWorldPos) <= commitHorizonMeters {
+                let anchor = QuestBoxAnchor(boxId: box.id, transform: .translation(world))
+                arView.session.add(anchor: anchor)
+                boxAnchors[box.id] = anchor
+            }
+        }
+    }
+
+    // MARK: - ARSCNViewDelegate
+
+    /// Called by ARKit immediately after it adds a scene node for one of our
+    /// custom anchors. We attach the coin or box geometry as a child of that
+    /// node. From this moment forward the node's world position is maintained
+    /// by ARKit's world tracking — we never reposition it.
+    func renderer(_ renderer: SCNSceneRenderer, didAdd node: SCNNode, for anchor: ARAnchor) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            if let q = anchor as? QuestItemAnchor {
+                let coinNode = self.createCoinNode()
+                node.addChildNode(coinNode)
+                self.coinNodes[q.itemId] = coinNode
+            } else if let b = anchor as? QuestBoxAnchor {
+                let boxNode = self.createBoxNode()
+                node.addChildNode(boxNode)
+                self.boxNodes[b.boxId] = boxNode
             }
         }
     }
@@ -326,10 +436,9 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
     /// Estimates the 3D world position of the fist as camera position + forward × arm length.
     private func fistWorldPosition(frame: ARFrame) -> SIMD3<Float> {
         let t = frame.camera.transform
-        let cameraPos = SIMD3<Float>(t.columns.3.x, t.columns.3.y, t.columns.3.z)
-        // Camera looks along its -Z axis in world space
+        // Camera looks along its -Z axis in world space.
         let forward = SIMD3<Float>(-t.columns.2.x, -t.columns.2.y, -t.columns.2.z)
-        return cameraPos + simd_normalize(forward) * 0.6  // ~arm's length
+        return t.translationXYZ + simd_normalize(forward) * 0.6  // ~arm's length
     }
 
     private func checkPunchDetection(fistPosition: SIMD3<Float>) {
@@ -610,6 +719,15 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
                 lastHandPoseTime = now
                 processHandPose(frame: frame)
             }
+
+            // Just-in-time placement: as the camera advances, commit any
+            // pending coins/boxes that have entered the commit horizon.
+            // Throttled to ~10 Hz — far more often than necessary for a
+            // human-speed runner, but cheap (a SIMD distance per item).
+            if now - lastCommitHorizonCheckAt >= commitHorizonCheckInterval {
+                lastCommitHorizonCheckAt = now
+                evaluateCommitHorizon(cameraWorldPos: frame.camera.transform.translationXYZ)
+            }
             return
         }
         guard runMode == .aligning || runMode == .realigning else { return }
@@ -777,12 +895,16 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
         collectionTickSerial &+= 1
         let currentQuest = dataStore.quests.first(where: { $0.id == quest.id }) ?? quest
 
-        // Self-heal: clean up confirmed-collected items from coinNodes/pendingIds.
-        // This runs before the engine so stale state doesn't accumulate.
+        // Self-heal: clean up confirmed-collected items from coinNodes/pendingIds
+        // and remove their ARAnchors. This runs before the engine so stale state
+        // doesn't accumulate.
         for item in currentQuest.items where item.collected {
             pendingCollectionIds.remove(item.id)
             if let staleNode = coinNodes.removeValue(forKey: item.id) {
                 staleNode.removeFromParentNode()
+            }
+            if let anchor = itemAnchors.removeValue(forKey: item.id) {
+                arView?.session.remove(anchor: anchor)
             }
         }
 
@@ -830,6 +952,12 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
                 node?.removeFromParentNode()
             }
 
+            // Remove the ARAnchor too — its job is done. The anchor's parent
+            // scene node is removed automatically by ARKit on session.remove.
+            if let anchor = itemAnchors.removeValue(forKey: itemId) {
+                arView?.session.remove(anchor: anchor)
+            }
+
             dataStore.updateQuestItem(questId: quest.id, itemId: itemId, collected: true)
             onItemCollected(itemId)
             #if DEBUG
@@ -845,9 +973,17 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
     var testPendingIds: Set<UUID> { pendingCollectionIds }
     var testCoinNodeCount: Int { coinNodes.count }
 
-    /// Build coin nodes without needing configureInitialScene (no arView).
+    /// Synchronously spawn nodes for the test path. Production uses the
+    /// commit-horizon evaluator + ARAnchor mechanism, neither of which can
+    /// run in unit tests. `legacyForceSpawnPendingItems()` parents nodes
+    /// directly to `routeGroupNode` so collection-engine tests can exercise
+    /// the post-placement pipeline.
     func testBuildCoinNodes(forceRebuild: Bool) {
-        buildCoinNodes(forceRebuild: forceRebuild)
+        if forceRebuild {
+            clearAllItemNodes()
+        }
+        cleanupCollectedItems()
+        legacyForceSpawnPendingItems()
     }
     #endif
 
@@ -970,7 +1106,8 @@ extension ARCoordinator {
         }
     }
 
-    /// Returns whether `buildCoinNodes` should create a new node for `item`.
+    /// Returns whether the legacy/test spawn path should create a new node
+    /// for `item`. Production uses `evaluateCommitHorizon()` instead.
     static func shouldCreateNode(
         for item: QuestItem,
         coinNodes: [UUID: SCNNode],
@@ -980,4 +1117,93 @@ extension ARCoordinator {
         !pendingIds.contains(item.id) &&
         coinNodes[item.id] == nil
     }
+}
+
+// MARK: - SIMD Helpers
+
+extension SIMD4 where Scalar == Float {
+    /// The xyz components, i.e. the homogeneous-coordinate position.
+    var translationXYZ: SIMD3<Float> { SIMD3<Float>(x, y, z) }
+}
+
+extension simd_float4x4 {
+    /// The translation column (m41/m42/m43) of an affine transform.
+    var translationXYZ: SIMD3<Float> { columns.3.translationXYZ }
+
+    /// Pure-translation transform: identity rotation, position at `t`.
+    static func translation(_ t: SIMD3<Float>) -> simd_float4x4 {
+        var m = matrix_identity_float4x4
+        m.columns.3 = SIMD4<Float>(t, 1)
+        return m
+    }
+}
+
+// MARK: - Per-Item Placement Anchors
+
+/// Custom ARAnchor subclass that carries the QuestItem id it represents.
+/// Required so renderer(_:didAdd:for:) can identify which item a freshly
+/// created scene node belongs to.
+final class QuestItemAnchor: ARAnchor {
+    let itemId: UUID
+
+    init(itemId: UUID, transform: simd_float4x4) {
+        self.itemId = itemId
+        super.init(name: "QuestItemAnchor", transform: transform)
+    }
+
+    required init(anchor: ARAnchor) {
+        if let q = anchor as? QuestItemAnchor {
+            self.itemId = q.itemId
+        } else {
+            self.itemId = UUID()
+        }
+        super.init(anchor: anchor)
+    }
+
+    required init?(coder: NSCoder) {
+        guard let raw = coder.decodeObject(of: NSString.self, forKey: "questItemId") as String?,
+              let id  = UUID(uuidString: raw) else { return nil }
+        self.itemId = id
+        super.init(coder: coder)
+    }
+
+    override func encode(with coder: NSCoder) {
+        super.encode(with: coder)
+        coder.encode(itemId.uuidString as NSString, forKey: "questItemId")
+    }
+
+    override class var supportsSecureCoding: Bool { true }
+}
+
+/// Custom ARAnchor subclass for punchable boxes.
+final class QuestBoxAnchor: ARAnchor {
+    let boxId: UUID
+
+    init(boxId: UUID, transform: simd_float4x4) {
+        self.boxId = boxId
+        super.init(name: "QuestBoxAnchor", transform: transform)
+    }
+
+    required init(anchor: ARAnchor) {
+        if let b = anchor as? QuestBoxAnchor {
+            self.boxId = b.boxId
+        } else {
+            self.boxId = UUID()
+        }
+        super.init(anchor: anchor)
+    }
+
+    required init?(coder: NSCoder) {
+        guard let raw = coder.decodeObject(of: NSString.self, forKey: "questBoxId") as String?,
+              let id  = UUID(uuidString: raw) else { return nil }
+        self.boxId = id
+        super.init(coder: coder)
+    }
+
+    override func encode(with coder: NSCoder) {
+        super.encode(with: coder)
+        coder.encode(boxId.uuidString as NSString, forKey: "questBoxId")
+    }
+
+    override class var supportsSecureCoding: Bool { true }
 }
