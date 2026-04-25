@@ -54,7 +54,12 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
     private var lastHeartbeatAt: Date = .distantPast
     private var frozenRouteWorldTransform: simd_float4x4?
 
-    private var alignmentState: ARAlignmentState = .moveToStart
+    private var alignmentState: ARAlignmentState = .moveToStart {
+        didSet {
+            guard oldValue != alignmentState else { return }
+            DispatchQueue.main.async { self.updateRouteNodeVisibility() }
+        }
+    }
     private var alignmentConfidence: Double = 0
     /// Exponential moving average of per-frame raw confidence — smooths out
     /// transient tracking blips without introducing too much lag.
@@ -167,9 +172,22 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
             alignmentState = .scanning
         }
 
-        let showPath = (newMode == .aligning || newMode == .realigning)
+        updateRouteNodeVisibility()
+    }
+
+    private func updateRouteNodeVisibility() {
+        assert(Thread.isMainThread)
+        // Nothing rendered until the user is near the start gate.
+        let nearStart = alignmentState != .moveToStart
+        let showPath = nearStart && (runMode == .aligning || runMode == .realigning)
         for node in pathNodes {
             node.isHidden = !showPath
+        }
+        for node in coinNodes.values {
+            node.isHidden = !nearStart
+        }
+        for node in boxNodes.values {
+            node.isHidden = !nearStart
         }
     }
 
@@ -243,6 +261,7 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
                let local = item.resolvedLocalPosition(on: route) {
                 let coinNode = createCoinNode()
                 coinNode.simdPosition = local
+                coinNode.isHidden = alignmentState == .moveToStart
                 routeGroupNode.addChildNode(coinNode)
                 coinNodes[item.id] = coinNode
             }
@@ -265,6 +284,7 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
                let local = box.resolvedLocalPosition(on: route) {
                 let node = createBoxNode()
                 node.simdPosition = local
+                node.isHidden = alignmentState == .moveToStart
                 routeGroupNode.addChildNode(node)
                 boxNodes[box.id] = node
             }
