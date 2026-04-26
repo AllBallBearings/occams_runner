@@ -109,24 +109,40 @@ changes to its protocol.
   whether the node is parented to `routeGroupNode` (legacy) or to an anchor's
   node (new).
 
+## Slice 2 — GPS + heading rigid transform (LANDED)
+
+Commit: `c87746a` "GPS+heading rigid transform as AR alignment seed".
+
+**What it does:** at run start (and on each realign), compute a rigid transform
+from the runner's current GPS+true-heading to the route's recorded
+GPS+true-heading and use that as the *base pose* for `routeGroupNode`. Manual
+alignment gestures are applied on top of this base, so the user's drag/rotate
+becomes a fine adjustment instead of placing the route from AR-world origin
+every time.
+
+Key additions:
+- `RecordedRoute.recordedHeadingDegrees: Double?` — captured at recording start
+  (latched from the first `CLHeading` after `startRecording()`).
+- `LocationService.currentHeadingDegrees` (`@Published`) — single source of
+  heading; replaces the old per-view `HeadingManager` in `ARRunnerView`.
+- `ARCoordinator.routeSeed: RouteSeed?` and `seedAlignmentFromGPSHeading(frame:)`.
+- `applyManualAlignment` composes manual offsets on top of `routeSeed`.
+
+Routes saved before Slice 2 have no recorded heading; the seed no-ops for those
+and the user must align manually as before. Subsumes Slice 5 (compass-yaw
+auto-rotate is now the default behaviour, not a separate quick-fix).
+
 ## What is explicitly NOT in this slice
 
 These are the next slices on the roadmap (write each as its own PR/commit):
 
-- **Slice 2: GPS + heading rigid transform** as the source of `routeGroupNode`'s
-  initial pose, replacing world-map relocalization as the primary alignment
-  hypothesis. Compass yaw seeded from `CLHeading.trueHeading`.
 - **Slice 3: `ARGeoAnchor` path** for items where `ARGeoTrackingConfiguration`
   reports availability. Detect at run start; commit items as `ARGeoAnchor`
-  instead of `QuestItemAnchor` where supported. Fall back to slice-2 transform
+  instead of `QuestItemAnchor` where supported. Fall back to Slice 2 transform
   outside coverage.
-- **Slice 4: GPS feedback for uncommitted items only.** Continuously refine the
-  `routeGroupNode` transform during the run; never reposition an item the player
-  has already seen.
-- **Slice 5: Compass-yaw quick-fix for manual alignment.** Auto-rotate
-  `routeGroupNode` so the recorded heading aligns with current `trueHeading`
-  before the user has to touch anything. Pure UX improvement, independent of the
-  above.
+- **Slice 4: GPS feedback for uncommitted items only.** Continuously refine
+  `routeSeed` during the run; never reposition an item the player has already
+  seen (committed items are anchored to the AR world, not to `routeGroupNode`).
 
 ## How to resume from here
 
