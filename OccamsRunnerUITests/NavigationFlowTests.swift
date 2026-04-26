@@ -151,6 +151,10 @@ final class NavigationFlowTests: XCTestCase {
         XCTAssertTrue(app.buttons["Delete Route"].waitForExistence(timeout: 3))
         app.buttons["Delete Route"].tap()
 
+        // Confirm the deletion alert
+        XCTAssertTrue(app.alerts["Delete Route?"].waitForExistence(timeout: 3))
+        app.alerts["Delete Route?"].buttons["Delete"].tap()
+
         XCTAssertFalse(app.staticTexts["Hill Climb"].waitForExistence(timeout: 2))
     }
 }

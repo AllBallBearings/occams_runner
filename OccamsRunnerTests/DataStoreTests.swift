@@ -294,8 +294,8 @@ final class DataStoreTests: XCTestCase {
         let loadedQuest = loaded.quests.first!
         XCTAssertEqual(loadedQuest.collectedItems, 2)
         XCTAssertFalse(loadedQuest.isComplete)
-        XCTAssertEqual(loadedQuest.items.filter { $0.collected }.map { $0.id }.sorted(by: <),
-                       [items[0].id, items[1].id].sorted(by: <))
+        XCTAssertEqual(loadedQuest.items.filter { $0.collected }.map { $0.id }.sorted { $0.uuidString < $1.uuidString },
+                       [items[0].id, items[1].id].sorted { $0.uuidString < $1.uuidString })
 
         XCTAssertEqual(loaded.runSessions.count, 1)
         XCTAssertEqual(loaded.runSessions.first?.questId, quest.id)
