@@ -92,6 +92,9 @@ struct RoutesListView: View {
     @State private var renamingRoute: RecordedRoute? = nil
     @State private var renameText = ""
 
+    // Delete confirmation state
+    @State private var routeToDelete: RecordedRoute? = nil
+
     enum RouteViewMode { case ar, map }
 
     private var filteredRoutes: [RecordedRoute] {
@@ -161,6 +164,18 @@ struct RoutesListView: View {
                     renamingRoute = nil
                 }
                 Button("Cancel", role: .cancel) { renamingRoute = nil }
+            }
+            .alert("Delete Route?", isPresented: Binding(
+                get: { routeToDelete != nil },
+                set: { if !$0 { routeToDelete = nil } }
+            ), presenting: routeToDelete) { route in
+                Button("Delete", role: .destructive) {
+                    dataStore.deleteRoute(route)
+                    routeToDelete = nil
+                }
+                Button("Cancel", role: .cancel) { routeToDelete = nil }
+            } message: { route in
+                Text("\"\(route.name)\" and any quests on this route will be removed. This cannot be undone.")
             }
         }
     }
@@ -337,6 +352,7 @@ struct RoutesListView: View {
 
     private func nameRow(route: RecordedRoute) -> some View {
         let darkText = Color(red: 0.12, green: 0.13, blue: 0.20)
+        let darkerSurface = Color(red: 0.68, green: 0.70, blue: 0.82)
         return HStack(spacing: 8) {
             Text(route.name)
                 .font(.system(size: 18, weight: .bold))
@@ -353,9 +369,21 @@ struct RoutesListView: View {
                     .font(.system(size: 12, weight: .bold))
                     .foregroundColor(darkText.opacity(0.35))
                     .padding(8)
-                    .background(Color(red: 0.68, green: 0.70, blue: 0.82))
+                    .background(darkerSurface)
                     .clipShape(Circle())
             }
+
+            Button(role: .destructive) {
+                routeToDelete = route
+            } label: {
+                Image(systemName: "trash")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundColor(Color(red: 0.78, green: 0.20, blue: 0.20))
+                    .padding(8)
+                    .background(darkerSurface)
+                    .clipShape(Circle())
+            }
+            .accessibilityLabel("Delete route")
         }
     }
 

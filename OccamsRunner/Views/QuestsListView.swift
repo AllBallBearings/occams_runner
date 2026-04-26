@@ -9,6 +9,9 @@ struct QuestsListView: View {
     @State private var renamingQuest: Quest? = nil
     @State private var renameText = ""
 
+    // Delete confirmation state
+    @State private var questToDelete: Quest? = nil
+
     private var sortedQuests: [Quest] {
         let sorted = dataStore.quests.sorted { $0.dateCreated > $1.dateCreated }
         guard !searchText.isEmpty else { return sorted }
@@ -80,6 +83,18 @@ struct QuestsListView: View {
                 }
                 Button("Cancel", role: .cancel) { renamingQuest = nil }
             }
+            .alert("Delete Quest?", isPresented: Binding(
+                get: { questToDelete != nil },
+                set: { if !$0 { questToDelete = nil } }
+            ), presenting: questToDelete) { quest in
+                Button("Delete", role: .destructive) {
+                    dataStore.deleteQuest(quest)
+                    questToDelete = nil
+                }
+                Button("Cancel", role: .cancel) { questToDelete = nil }
+            } message: { quest in
+                Text("\"\(quest.name)\" and its progress will be removed. The underlying route will be kept.")
+            }
         }
     }
 
@@ -144,7 +159,7 @@ struct QuestsListView: View {
 
                 // Quest info
                 VStack(alignment: .leading, spacing: 8) {
-                    // Name row with rename button
+                    // Name row with rename / delete buttons
                     HStack(spacing: 8) {
                         Text(quest.name)
                             .font(.system(size: 18, weight: .bold))
@@ -165,6 +180,18 @@ struct QuestsListView: View {
                                 .background(darkerSurface)
                                 .clipShape(Circle())
                         }
+
+                        Button(role: .destructive) {
+                            questToDelete = quest
+                        } label: {
+                            Image(systemName: "trash")
+                                .font(.system(size: 12, weight: .bold))
+                                .foregroundColor(Color(red: 0.78, green: 0.20, blue: 0.20))
+                                .padding(8)
+                                .background(darkerSurface)
+                                .clipShape(Circle())
+                        }
+                        .accessibilityLabel("Delete quest")
                     }
 
                     if let route {
