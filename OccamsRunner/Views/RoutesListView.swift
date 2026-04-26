@@ -128,25 +128,34 @@ struct RoutesListView: View {
                     if filteredRoutes.isEmpty {
                         emptyState
                     } else {
-                        ScrollView {
-                            VStack(spacing: 18) {
-                                ForEach(filteredRoutes) { route in
-                                    NavigationLink(destination: RouteDetailView(route: route)) {
-                                        routeCard(route)
+                        swipeHint
+                        List {
+                            ForEach(filteredRoutes) { route in
+                                NavigationLink(destination: RouteDetailView(route: route)) {
+                                    routeCard(route)
+                                }
+                                .buttonStyle(.plain)
+                                .listRowBackground(Color.clear)
+                                .listRowSeparator(.hidden)
+                                .listRowInsets(EdgeInsets(top: 9, leading: 20, bottom: 9, trailing: 20))
+                                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                                    Button(role: .destructive) {
+                                        routeToDelete = route
+                                    } label: {
+                                        Label("Delete", systemImage: "trash")
                                     }
-                                    .buttonStyle(.plain)
-                                    .contextMenu {
-                                        Button(role: .destructive) {
-                                            dataStore.deleteRoute(route)
-                                        } label: {
-                                            Label("Delete Route", systemImage: "trash")
-                                        }
+                                }
+                                .contextMenu {
+                                    Button(role: .destructive) {
+                                        routeToDelete = route
+                                    } label: {
+                                        Label("Delete Route", systemImage: "trash")
                                     }
                                 }
                             }
-                            .padding(.horizontal, 20)
-                            .padding(.bottom, 30)
                         }
+                        .listStyle(.plain)
+                        .scrollContentBackground(.hidden)
                     }
                 }
             }
@@ -352,12 +361,12 @@ struct RoutesListView: View {
 
     private func nameRow(route: RecordedRoute) -> some View {
         let darkText = Color(red: 0.12, green: 0.13, blue: 0.20)
-        let darkerSurface = Color(red: 0.68, green: 0.70, blue: 0.82)
         return HStack(spacing: 8) {
             Text(route.name)
                 .font(.system(size: 18, weight: .bold))
                 .foregroundColor(darkText)
                 .lineLimit(1)
+                .minimumScaleFactor(0.85)
 
             Spacer(minLength: 0)
 
@@ -369,22 +378,24 @@ struct RoutesListView: View {
                     .font(.system(size: 12, weight: .bold))
                     .foregroundColor(darkText.opacity(0.35))
                     .padding(8)
-                    .background(darkerSurface)
+                    .background(Color(red: 0.68, green: 0.70, blue: 0.82))
                     .clipShape(Circle())
             }
-
-            Button(role: .destructive) {
-                routeToDelete = route
-            } label: {
-                Image(systemName: "trash")
-                    .font(.system(size: 12, weight: .bold))
-                    .foregroundColor(Color(red: 0.78, green: 0.20, blue: 0.20))
-                    .padding(8)
-                    .background(darkerSurface)
-                    .clipShape(Circle())
-            }
-            .accessibilityLabel("Delete route")
         }
+    }
+
+    private var swipeHint: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "hand.draw")
+                .font(.system(size: 10, weight: .bold))
+            Text("SWIPE LEFT ON A CARD TO DELETE")
+                .font(.system(size: 10, weight: .black))
+                .kerning(0.8)
+        }
+        .foregroundColor(.white.opacity(0.45))
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 20)
+        .padding(.bottom, 10)
     }
 
     private var reviewRouteButton: some View {

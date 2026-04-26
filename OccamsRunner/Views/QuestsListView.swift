@@ -40,31 +40,40 @@ struct QuestsListView: View {
                     if sortedQuests.isEmpty {
                         emptyState
                     } else {
-                        ScrollView {
-                            VStack(spacing: 18) {
-                                ForEach(sortedQuests) { quest in
-                                    NavigationLink(destination: QuestDetailView(quest: quest)) {
-                                        questCard(quest)
+                        swipeHint
+                        List {
+                            ForEach(sortedQuests) { quest in
+                                NavigationLink(destination: QuestDetailView(quest: quest)) {
+                                    questCard(quest)
+                                }
+                                .buttonStyle(.plain)
+                                .listRowBackground(Color.clear)
+                                .listRowSeparator(.hidden)
+                                .listRowInsets(EdgeInsets(top: 9, leading: 20, bottom: 9, trailing: 20))
+                                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                                    Button(role: .destructive) {
+                                        questToDelete = quest
+                                    } label: {
+                                        Label("Delete", systemImage: "trash")
                                     }
-                                    .buttonStyle(.plain)
-                                    .contextMenu {
-                                        Button {
-                                            renameText = quest.name
-                                            renamingQuest = quest
-                                        } label: {
-                                            Label("Rename Quest", systemImage: "pencil")
-                                        }
-                                        Button(role: .destructive) {
-                                            dataStore.deleteQuest(quest)
-                                        } label: {
-                                            Label("Delete Quest", systemImage: "trash")
-                                        }
+                                }
+                                .contextMenu {
+                                    Button {
+                                        renameText = quest.name
+                                        renamingQuest = quest
+                                    } label: {
+                                        Label("Rename Quest", systemImage: "pencil")
+                                    }
+                                    Button(role: .destructive) {
+                                        questToDelete = quest
+                                    } label: {
+                                        Label("Delete Quest", systemImage: "trash")
                                     }
                                 }
                             }
-                            .padding(.horizontal, 20)
-                            .padding(.bottom, 30)
                         }
+                        .listStyle(.plain)
+                        .scrollContentBackground(.hidden)
                     }
                 }
             }
@@ -105,6 +114,20 @@ struct QuestsListView: View {
                 Color(red: 0.86, green: 0.88, blue: 0.94)
             ],
             startPoint: .top, endPoint: .bottom)
+    }
+
+    private var swipeHint: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "hand.draw")
+                .font(.system(size: 10, weight: .bold))
+            Text("SWIPE LEFT ON A CARD TO DELETE")
+                .font(.system(size: 10, weight: .black))
+                .kerning(0.8)
+        }
+        .foregroundColor(.white.opacity(0.45))
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 20)
+        .padding(.bottom, 10)
     }
 
     // MARK: - Search Bar
@@ -159,12 +182,13 @@ struct QuestsListView: View {
 
                 // Quest info
                 VStack(alignment: .leading, spacing: 8) {
-                    // Name row with rename / delete buttons
+                    // Name row with rename button
                     HStack(spacing: 8) {
                         Text(quest.name)
                             .font(.system(size: 18, weight: .bold))
                             .foregroundColor(darkText)
                             .lineLimit(2)
+                            .minimumScaleFactor(0.85)
                             .fixedSize(horizontal: false, vertical: true)
 
                         Spacer(minLength: 0)
@@ -180,18 +204,6 @@ struct QuestsListView: View {
                                 .background(darkerSurface)
                                 .clipShape(Circle())
                         }
-
-                        Button(role: .destructive) {
-                            questToDelete = quest
-                        } label: {
-                            Image(systemName: "trash")
-                                .font(.system(size: 12, weight: .bold))
-                                .foregroundColor(Color(red: 0.78, green: 0.20, blue: 0.20))
-                                .padding(8)
-                                .background(darkerSurface)
-                                .clipShape(Circle())
-                        }
-                        .accessibilityLabel("Delete quest")
                     }
 
                     if let route {
