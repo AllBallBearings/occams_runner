@@ -9,6 +9,9 @@ struct QuestsListView: View {
     @State private var renamingQuest: Quest? = nil
     @State private var renameText = ""
 
+    // Delete confirmation state
+    @State private var questToDelete: Quest? = nil
+
     private var sortedQuests: [Quest] {
         let sorted = dataStore.quests.sorted { $0.dateCreated > $1.dateCreated }
         guard !searchText.isEmpty else { return sorted }
@@ -37,31 +40,44 @@ struct QuestsListView: View {
                     if sortedQuests.isEmpty {
                         emptyState
                     } else {
-                        ScrollView {
-                            VStack(spacing: 18) {
-                                ForEach(sortedQuests) { quest in
+                        swipeHint
+                        List {
+                            ForEach(sortedQuests) { quest in
+                                ZStack {
                                     NavigationLink(destination: QuestDetailView(quest: quest)) {
-                                        questCard(quest)
+                                        EmptyView()
                                     }
-                                    .buttonStyle(.plain)
-                                    .contextMenu {
-                                        Button {
-                                            renameText = quest.name
-                                            renamingQuest = quest
-                                        } label: {
-                                            Label("Rename Quest", systemImage: "pencil")
-                                        }
-                                        Button(role: .destructive) {
-                                            dataStore.deleteQuest(quest)
-                                        } label: {
-                                            Label("Delete Quest", systemImage: "trash")
-                                        }
+                                    .opacity(0)
+
+                                    questCard(quest)
+                                }
+                                .listRowBackground(Color.clear)
+                                .listRowSeparator(.hidden)
+                                .listRowInsets(EdgeInsets(top: 9, leading: 20, bottom: 9, trailing: 20))
+                                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                                    Button(role: .destructive) {
+                                        questToDelete = quest
+                                    } label: {
+                                        Label("Delete", systemImage: "trash")
+                                    }
+                                }
+                                .contextMenu {
+                                    Button {
+                                        renameText = quest.name
+                                        renamingQuest = quest
+                                    } label: {
+                                        Label("Rename Quest", systemImage: "pencil")
+                                    }
+                                    Button(role: .destructive) {
+                                        questToDelete = quest
+                                    } label: {
+                                        Label("Delete Quest", systemImage: "trash")
                                     }
                                 }
                             }
-                            .padding(.horizontal, 20)
-                            .padding(.bottom, 30)
                         }
+                        .listStyle(.plain)
+                        .scrollContentBackground(.hidden)
                     }
                 }
             }
@@ -80,6 +96,18 @@ struct QuestsListView: View {
                 }
                 Button("Cancel", role: .cancel) { renamingQuest = nil }
             }
+            .alert("Delete Quest?", isPresented: Binding(
+                get: { questToDelete != nil },
+                set: { if !$0 { questToDelete = nil } }
+            ), presenting: questToDelete) { quest in
+                Button("Delete", role: .destructive) {
+                    dataStore.deleteQuest(quest)
+                    questToDelete = nil
+                }
+                Button("Cancel", role: .cancel) { questToDelete = nil }
+            } message: { quest in
+                Text("\"\(quest.name)\" and its progress will be removed. The underlying route will be kept.")
+            }
         }
     }
 
@@ -90,6 +118,20 @@ struct QuestsListView: View {
                 Color(red: 0.86, green: 0.88, blue: 0.94)
             ],
             startPoint: .top, endPoint: .bottom)
+    }
+
+    private var swipeHint: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "hand.draw")
+                .font(.system(size: 10, weight: .bold))
+            Text("SWIPE LEFT ON A CARD TO DELETE")
+                .font(.system(size: 10, weight: .black))
+                .kerning(0.8)
+        }
+        .foregroundColor(.white.opacity(0.45))
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 20)
+        .padding(.bottom, 10)
     }
 
     // MARK: - Search Bar
@@ -150,6 +192,7 @@ struct QuestsListView: View {
                             .font(.system(size: 18, weight: .bold))
                             .foregroundColor(darkText)
                             .lineLimit(2)
+                            .minimumScaleFactor(0.85)
                             .fixedSize(horizontal: false, vertical: true)
 
                         Spacer(minLength: 0)

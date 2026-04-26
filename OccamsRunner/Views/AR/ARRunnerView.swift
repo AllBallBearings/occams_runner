@@ -28,6 +28,7 @@ private final class HeadingManager: NSObject, ObservableObject, CLLocationManage
 
 private struct CompassView: View {
     let heading: Double
+    var startBearing: Double? = nil // absolute true-north bearing to start point
 
     var body: some View {
         ZStack {
@@ -59,6 +60,14 @@ private struct CompassView: View {
                     Circle().fill(Color.white).frame(width: 4, height: 4)
                     Capsule().fill(Color.white.opacity(0.65)).frame(width: 3, height: 10)
                 }
+                // Orange dot marking the direction to the start point
+                if let startBearing {
+                    Circle()
+                        .fill(Color.orange)
+                        .frame(width: 5, height: 5)
+                        .offset(y: -16)
+                        .rotationEffect(.degrees(startBearing))
+                }
             }
             .rotationEffect(.degrees(-heading))
 
@@ -66,6 +75,61 @@ private struct CompassView: View {
             Circle().fill(Color.white).frame(width: 3, height: 3)
         }
         .frame(width: 54, height: 54)
+    }
+}
+
+// MARK: - Start Beacon Overlay
+
+private struct StartBeaconView: View {
+    let relativeBearing: Double // 0=straight ahead, 90=right, 180=behind, 270=left
+    let distanceText: String
+    @State private var pulse = false
+
+    var body: some View {
+        GeometryReader { geo in
+            let size = geo.size
+            let radius = min(size.width, size.height) * 0.38
+            let angleRad = (relativeBearing - 90) * .pi / 180
+            let cx = size.width / 2
+            let cy = size.height / 2
+            let bx = cx + radius * CGFloat(cos(angleRad))
+            let by = cy + radius * CGFloat(sin(angleRad))
+            let d = size.width * 0.10
+
+            ZStack {
+                // Pulsing outer glow
+                Circle()
+                    .fill(Color.orange.opacity(pulse ? 0.07 : 0.22))
+                    .frame(width: d * 1.8, height: d * 1.8)
+                // Ring
+                Circle()
+                    .stroke(Color.orange.opacity(0.80), lineWidth: 2)
+                    .frame(width: d, height: d)
+                // Core
+                Circle()
+                    .fill(RadialGradient(
+                        colors: [.white.opacity(0.95), .orange],
+                        center: .center, startRadius: 0, endRadius: d * 0.25))
+                    .frame(width: d * 0.5, height: d * 0.5)
+                // Labels
+                VStack(spacing: 1) {
+                    Text("START")
+                        .font(.system(size: 7, weight: .black))
+                        .foregroundColor(.orange)
+                    Text(distanceText)
+                        .font(.system(size: 7, weight: .bold))
+                        .foregroundColor(.white.opacity(0.85))
+                }
+                .offset(y: d * 0.78)
+            }
+            .position(x: bx, y: by)
+        }
+        .onAppear {
+            withAnimation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true)) {
+                pulse = true
+            }
+        }
+        .allowsHitTesting(false)
     }
 }
 
@@ -105,6 +169,34 @@ struct ARRunnerView: View {
     private var route: RecordedRoute? { dataStore.route(for: quest.routeId) }
     private var liveQuest: Quest {
         dataStore.quests.first(where: { $0.id == quest.id }) ?? quest
+    }
+
+    // Absolute true-north bearing from current GPS to the route start point (0–360°).
+    private var bearingToStart: Double? {
+        guard let current = locationService.currentLocation,
+              let startLoc = route?.startLocation else { return nil }
+        let from = current.coordinate
+        let to = startLoc.coordinate
+        let lat1 = from.latitude * .pi / 180
+        let lat2 = to.latitude * .pi / 180
+        let dLon = (to.longitude - from.longitude) * .pi / 180
+        let y = sin(dLon) * cos(lat2)
+        let x = cos(lat1) * sin(lat2) - sin(lat1) * cos(lat2) * cos(dLon)
+        return (atan2(y, x) * 180 / .pi + 360).truncatingRemainder(dividingBy: 360)
+    }
+
+    // Bearing relative to the direction the camera is facing (0=ahead, 90=right …).
+    private var relativeBearingToStart: Double? {
+        guard let b = bearingToStart else { return nil }
+        return (b - headingManager.degrees + 360).truncatingRemainder(dividingBy: 360)
+    }
+
+    private var startDistanceText: String {
+        guard let d = distanceToStart else { return "" }
+        let feet = d * 3.281
+        return feet >= 1320
+            ? String(format: "%.1f mi", feet / 5280)
+            : String(format: "%.0f ft", feet)
     }
 
     // MARK: - Body
@@ -154,6 +246,16 @@ struct ARRunnerView: View {
                         } else {
                             alignmentBottomLayout
                         }
+                    }
+
+                    // ── Start beacon: orange orb floating at bearing to start ──
+                    if alignmentState == .moveToStart,
+                       let relBearing = relativeBearingToStart {
+                        StartBeaconView(
+                            relativeBearing: relBearing,
+                            distanceText: startDistanceText
+                        )
+                        .ignoresSafeArea()
                     }
                 }
             } else {
@@ -285,12 +387,13 @@ struct ARRunnerView: View {
                             .kerning(1.2)
                         
                         if let distanceToStart {
-                            Label(
-                                String(format: "%.0f ft to start", distanceToStart * 3.281),
-                                systemImage: "mappin.and.ellipse"
-                            )
-                            .font(.caption).fontWeight(.bold)
-                            .foregroundColor(.white.opacity(0.7))
+                            let feet = distanceToStart * 3.281
+                            let distanceLabel = feet >= 1320
+                                ? String(format: "%.1f mi to start", feet / 5280)
+                                : String(format: "%.0f ft to start", feet)
+                            Label(distanceLabel, systemImage: "mappin.and.ellipse")
+                                .font(.caption).fontWeight(.bold)
+                                .foregroundColor(.white.opacity(0.7))
                         }
                         
                         HStack(spacing: 12) {
@@ -512,53 +615,63 @@ struct ARRunnerView: View {
     // MARK: - Alignment Bottom
 
     private var alignmentBottomLayout: some View {
-        VStack(spacing: 20) {
-            HStack(spacing: 16) {
-                alignmentHint(icon: "arrow.up.and.down.and.arrow.left.and.right", label: "SHIFT")
-                alignmentHint(icon: "arrow.up.left.and.arrow.down.right", label: "DEPTH")
-                alignmentHint(icon: "arrow.2.circlepath", label: "ROTATE")
-            }
+        ZStack(alignment: .bottomLeading) {
+            // Centered action controls
+            VStack(spacing: 20) {
+                HStack(spacing: 16) {
+                    alignmentHint(icon: "arrow.up.and.down.and.arrow.left.and.right", label: "SHIFT")
+                    alignmentHint(icon: "arrow.up.left.and.arrow.down.right", label: "DEPTH")
+                    alignmentHint(icon: "arrow.2.circlepath", label: "ROTATE")
+                }
 
-            if manualAlignment.hasAdjustment {
-                Button(action: { manualAlignment.reset() }) {
-                    Label("RESET POSITION", systemImage: "arrow.counterclockwise")
-                        .font(.system(size: 10, weight: .black))
-                        .padding(.horizontal, 16).padding(.vertical, 8)
-                        .background(.ultraThinMaterial)
-                        .environment(\.colorScheme, .dark)
-                        .clipShape(Capsule())
-                        .overlay(Capsule().stroke(Color.white.opacity(0.2), lineWidth: 1))
+                if manualAlignment.hasAdjustment {
+                    Button(action: { manualAlignment.reset() }) {
+                        Label("RESET POSITION", systemImage: "arrow.counterclockwise")
+                            .font(.system(size: 10, weight: .black))
+                            .padding(.horizontal, 16).padding(.vertical, 8)
+                            .background(.ultraThinMaterial)
+                            .environment(\.colorScheme, .dark)
+                            .clipShape(Capsule())
+                            .overlay(Capsule().stroke(Color.white.opacity(0.2), lineWidth: 1))
+                    }
+                }
+
+                Button(action: { runMode = .running }) {
+                    HStack {
+                        Text(runMode == .realigning ? "RESUME QUEST" : "START QUEST")
+                        Image(systemName: "chevron.right")
+                    }
+                    .font(.system(size: 18, weight: .black))
+                    .kerning(1.5)
+                    .padding(.horizontal, 40).padding(.vertical, 20)
+                    .background(
+                        alignmentReady
+                        ? LinearGradient(colors: [Color.green, Color(red: 0, green: 0.7, blue: 0.3)], startPoint: .top, endPoint: .bottom)
+                        : LinearGradient(colors: [Color.gray.opacity(0.3), Color.gray.opacity(0.2)], startPoint: .top, endPoint: .bottom)
+                    )
+                    .foregroundColor(.white.opacity(alignmentReady ? 1.0 : 0.5))
+                    .clipShape(Capsule())
+                    .shadow(color: alignmentReady ? .green.opacity(0.4) : .clear, radius: 15, x: 0, y: 8)
+                }
+                .disabled(!alignmentReady)
+
+                if !alignmentReady {
+                    Text(alignmentStateInstruction)
+                        .font(.system(size: 12, weight: .bold))
+                        .multilineTextAlignment(.center)
+                        .foregroundColor(.white.opacity(0.7))
+                        .padding(.horizontal, 40)
                 }
             }
+            .frame(maxWidth: .infinity)
+            .padding(.bottom, 50)
 
-            Button(action: { runMode = .running }) {
-                HStack {
-                    Text(runMode == .realigning ? "RESUME QUEST" : "START QUEST")
-                    Image(systemName: "chevron.right")
-                }
-                .font(.system(size: 18, weight: .black))
-                .kerning(1.5)
-                .padding(.horizontal, 40).padding(.vertical, 20)
-                .background(
-                    alignmentReady 
-                    ? LinearGradient(colors: [Color.green, Color(red: 0, green: 0.7, blue: 0.3)], startPoint: .top, endPoint: .bottom)
-                    : LinearGradient(colors: [Color.gray.opacity(0.3), Color.gray.opacity(0.2)], startPoint: .top, endPoint: .bottom)
-                )
-                .foregroundColor(.white.opacity(alignmentReady ? 1.0 : 0.5))
-                .clipShape(Capsule())
-                .shadow(color: alignmentReady ? .green.opacity(0.4) : .clear, radius: 15, x: 0, y: 8)
-            }
-            .disabled(!alignmentReady)
-
-            if !alignmentReady {
-                Text(alignmentStateInstruction)
-                    .font(.system(size: 12, weight: .bold))
-                    .multilineTextAlignment(.center)
-                    .foregroundColor(.white.opacity(0.7))
-                    .padding(.horizontal, 40)
-            }
+            // Compass — bottom-left, always visible during alignment
+            CompassView(heading: headingManager.degrees, startBearing: bearingToStart)
+                .shadow(color: .black.opacity(0.3), radius: 10)
+                .padding(.leading, 20)
+                .padding(.bottom, 54)
         }
-        .padding(.bottom, 50)
     }
 
     private func alignmentHint(icon: String, label: String) -> some View {
