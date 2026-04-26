@@ -92,6 +92,9 @@ struct RoutesListView: View {
     @State private var renamingRoute: RecordedRoute? = nil
     @State private var renameText = ""
 
+    // Delete confirmation state
+    @State private var routeToDelete: RecordedRoute? = nil
+
     enum RouteViewMode { case ar, map }
 
     private var filteredRoutes: [RecordedRoute] {
@@ -125,25 +128,38 @@ struct RoutesListView: View {
                     if filteredRoutes.isEmpty {
                         emptyState
                     } else {
-                        ScrollView {
-                            VStack(spacing: 18) {
-                                ForEach(filteredRoutes) { route in
+                        swipeHint
+                        List {
+                            ForEach(filteredRoutes) { route in
+                                ZStack {
                                     NavigationLink(destination: RouteDetailView(route: route)) {
-                                        routeCard(route)
+                                        EmptyView()
                                     }
-                                    .buttonStyle(.plain)
-                                    .contextMenu {
-                                        Button(role: .destructive) {
-                                            dataStore.deleteRoute(route)
-                                        } label: {
-                                            Label("Delete Route", systemImage: "trash")
-                                        }
+                                    .opacity(0)
+
+                                    routeCard(route)
+                                }
+                                .listRowBackground(Color.clear)
+                                .listRowSeparator(.hidden)
+                                .listRowInsets(EdgeInsets(top: 9, leading: 20, bottom: 9, trailing: 20))
+                                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                                    Button(role: .destructive) {
+                                        routeToDelete = route
+                                    } label: {
+                                        Label("Delete", systemImage: "trash")
+                                    }
+                                }
+                                .contextMenu {
+                                    Button(role: .destructive) {
+                                        routeToDelete = route
+                                    } label: {
+                                        Label("Delete Route", systemImage: "trash")
                                     }
                                 }
                             }
-                            .padding(.horizontal, 20)
-                            .padding(.bottom, 30)
                         }
+                        .listStyle(.plain)
+                        .scrollContentBackground(.hidden)
                     }
                 }
             }
@@ -161,6 +177,18 @@ struct RoutesListView: View {
                     renamingRoute = nil
                 }
                 Button("Cancel", role: .cancel) { renamingRoute = nil }
+            }
+            .alert("Delete Route?", isPresented: Binding(
+                get: { routeToDelete != nil },
+                set: { if !$0 { routeToDelete = nil } }
+            ), presenting: routeToDelete) { route in
+                Button("Delete", role: .destructive) {
+                    dataStore.deleteRoute(route)
+                    routeToDelete = nil
+                }
+                Button("Cancel", role: .cancel) { routeToDelete = nil }
+            } message: { route in
+                Text("\"\(route.name)\" and any quests on this route will be removed. This cannot be undone.")
             }
         }
     }
@@ -342,6 +370,7 @@ struct RoutesListView: View {
                 .font(.system(size: 18, weight: .bold))
                 .foregroundColor(darkText)
                 .lineLimit(1)
+                .minimumScaleFactor(0.85)
 
             Spacer(minLength: 0)
 
@@ -357,6 +386,20 @@ struct RoutesListView: View {
                     .clipShape(Circle())
             }
         }
+    }
+
+    private var swipeHint: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "hand.draw")
+                .font(.system(size: 10, weight: .bold))
+            Text("SWIPE LEFT ON A CARD TO DELETE")
+                .font(.system(size: 10, weight: .black))
+                .kerning(0.8)
+        }
+        .foregroundColor(.white.opacity(0.45))
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 20)
+        .padding(.bottom, 10)
     }
 
     private var reviewRouteButton: some View {
