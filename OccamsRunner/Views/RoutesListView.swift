@@ -131,10 +131,14 @@ struct RoutesListView: View {
                         swipeHint
                         List {
                             ForEach(filteredRoutes) { route in
-                                NavigationLink(destination: RouteDetailView(route: route)) {
+                                ZStack {
+                                    NavigationLink(destination: RouteDetailView(route: route)) {
+                                        EmptyView()
+                                    }
+                                    .opacity(0)
+
                                     routeCard(route)
                                 }
-                                .buttonStyle(.plain)
                                 .listRowBackground(Color.clear)
                                 .listRowSeparator(.hidden)
                                 .listRowInsets(EdgeInsets(top: 9, leading: 20, bottom: 9, trailing: 20))

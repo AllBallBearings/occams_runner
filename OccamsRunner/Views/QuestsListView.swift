@@ -43,10 +43,14 @@ struct QuestsListView: View {
                         swipeHint
                         List {
                             ForEach(sortedQuests) { quest in
-                                NavigationLink(destination: QuestDetailView(quest: quest)) {
+                                ZStack {
+                                    NavigationLink(destination: QuestDetailView(quest: quest)) {
+                                        EmptyView()
+                                    }
+                                    .opacity(0)
+
                                     questCard(quest)
                                 }
-                                .buttonStyle(.plain)
                                 .listRowBackground(Color.clear)
                                 .listRowSeparator(.hidden)
                                 .listRowInsets(EdgeInsets(top: 9, leading: 20, bottom: 9, trailing: 20))
