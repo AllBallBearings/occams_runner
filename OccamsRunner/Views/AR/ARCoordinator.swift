@@ -52,6 +52,13 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
     private var lastCommitHorizonCheckAt: TimeInterval = 0
     private let commitHorizonCheckInterval: TimeInterval = 0.1
 
+    /// GPS+heading-derived base pose for `routeGroupNode`. Manual alignment
+    /// gestures add their offsets on top. `nil` when any input was missing
+    /// (no GPS, no heading, route lacks recorded heading) — in that case the
+    /// route node sits at the AR origin and the user must align manually.
+    private struct RouteSeed { var offsetXZ: SIMD2<Float>; var yaw: Float }
+    private var routeSeed: RouteSeed?
+
     private var arrowIndicatorNode: SCNNode?
 
     // Hand pose detection
@@ -163,6 +170,7 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
         clearAllItemNodes()
         setupArrowIndicator()
         updateAlignmentStatusFromGPS()
+        seedAlignmentFromGPSHeading()
     }
 
     func applyRunMode(_ newMode: ARRunMode) {
@@ -192,6 +200,9 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
             consecutiveOutOfRangeGPS = 0
             scanStartedAt = nil
             alignmentState = .scanning
+            // Re-seed on each (re)alignment so the base pose tracks current GPS.
+            routeSeed = nil
+            seedAlignmentFromGPSHeading()
         }
 
         updateRouteNodeVisibility()
@@ -639,34 +650,95 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
         }
     }
 
+    // MARK: - GPS + Heading Seed
+
+    /// Computes a coarsely-correct base pose for `routeGroupNode` from the
+    /// recorded route-start GPS+heading vs. the runner's current GPS+heading.
+    /// No-op (returns false) when any input is missing.
+    ///
+    /// Math: ENU(current → routeStart) projected into AR-world XZ via the
+    /// camera's current yaw, plus a rotation so recording-frame -Z lines up
+    /// with the recorded compass heading. The rotated `localTrack[0]` is
+    /// subtracted so recorded sample 0 lands exactly on the GPS-derived
+    /// route-start point.
+    @discardableResult
+    func seedAlignmentFromGPSHeading(frame: ARFrame? = nil) -> Bool {
+        guard let recordedHeading = route.recordedHeadingDegrees,
+              let currentHeading = locationService.currentHeadingDegrees,
+              let currentLoc = locationService.currentLocation,
+              let routeStart = route.startLocation,
+              let firstLocal = route.localTrack.first else {
+            return false
+        }
+        guard let cam = (frame ?? arView?.session.currentFrame)?.camera.transform else {
+            return false
+        }
+
+        let earthRadius = 6_378_137.0
+        let curLatRad = currentLoc.coordinate.latitude * .pi / 180
+        let dLat = (routeStart.coordinate.latitude - currentLoc.coordinate.latitude) * .pi / 180
+        let dLon = (routeStart.coordinate.longitude - currentLoc.coordinate.longitude) * .pi / 180
+        let east  = Float(dLon * cos(curLatRad) * earthRadius)
+        let north = Float(dLat * earthRadius)
+
+        // The camera's flattened forward in AR world corresponds to compass
+        // `currentHeading`. ARKit yaw is CCW around +Y (viewed from above);
+        // compass is CW. forward = (-sin(yaw), 0, -cos(yaw)).
+        let fwd = simd_normalize(SIMD3<Float>(-cam.columns.2.x, 0, -cam.columns.2.z))
+        let camYawAR = atan2(-fwd.x, -fwd.z)
+        let curHeadingRad = Float(currentHeading) * .pi / 180
+
+        // Direction in AR-world XZ for compass θ: yaw = camYawAR - (θ - curHeading).
+        // Pre-compute the two we need (north and east).
+        let yawN = camYawAR + curHeadingRad
+        let yawE = camYawAR + curHeadingRad - .pi / 2
+        let northDir = SIMD2<Float>(-sin(yawN), -cos(yawN))
+        let eastDir  = SIMD2<Float>(-sin(yawE), -cos(yawE))
+
+        let camPos = SIMD2<Float>(cam.columns.3.x, cam.columns.3.z)
+        let routeStartXZ = camPos + east * eastDir + north * northDir
+
+        let routeYaw = camYawAR - Float((recordedHeading - currentHeading) * .pi / 180)
+
+        let lp = SIMD3<Float>(Float(firstLocal.x), Float(firstLocal.y), Float(firstLocal.z))
+        let cy = cos(routeYaw)
+        let sy = sin(routeYaw)
+        let rotatedLP = SIMD2<Float>(cy * lp.x + sy * lp.z, -sy * lp.x + cy * lp.z)
+
+        let wasSeeded = (routeSeed != nil)
+        routeSeed = RouteSeed(offsetXZ: routeStartXZ - rotatedLP, yaw: routeYaw)
+
+        if !wasSeeded {
+            locationService.logRunEvent(
+                "AR seed: ENU=(e=\(String(format: "%.1f", east)) n=\(String(format: "%.1f", north)))" +
+                " yaw=\(String(format: "%.1f°", Double(routeYaw * 180 / .pi)))" +
+                " (recHdg=\(String(format: "%.1f", recordedHeading))° curHdg=\(String(format: "%.1f", currentHeading))°)"
+            )
+        }
+        return true
+    }
+
     // MARK: - Manual Alignment
 
     /// Applies the user's manual position and rotation corrections to the route group.
     /// Called every AR frame while in aligning/realigning mode so the adjustments
-    /// are visible in real-time as the user drags/rotates.
+    /// are visible in real-time as the user drags/rotates. Manual offsets are
+    /// applied **on top of** the GPS+heading seed (when available), so the user's
+    /// gestures fine-tune a coarsely-correct base pose rather than starting from
+    /// AR-world origin every time.
     private func applyManualAlignment() {
         guard let manual = manualAlignment else { return }
 
         // Convert camera-relative offsets to AR world-space coordinates so the
         // route slides in the direction the user actually dragged regardless of
         // which way the camera is facing.
-        //
-        //   manual.worldX  = "screen right" offset  (drag right → route goes right on screen)
-        //   manual.worldZ  = "screen depth" offset  (spread → closer, pinch → further)
-        //   manual.worldY  = vertical offset         (drag up → route goes up; Y is up in both spaces)
-        //
-        // We flatten the camera's right and forward vectors onto the horizontal
-        // plane so that tilting the phone doesn't cause vertical drift during
-        // a horizontal drag.
         var posX: Float = manual.worldX
         var posZ: Float = manual.worldZ
 
         if let cam = arView?.session.currentFrame?.camera.transform {
-            // Camera's right vector is its X column; forward is -Z column (ARKit looks in -Z).
             let rightFlat   = SIMD3<Float>( cam.columns.0.x, 0,  cam.columns.0.z)
             let forwardFlat = SIMD3<Float>(-cam.columns.2.x, 0, -cam.columns.2.z)
 
-            // Guard against degenerate vectors (phone pointing nearly straight up/down).
             if simd_length(rightFlat) > 0.001 && simd_length(forwardFlat) > 0.001 {
                 let r = simd_normalize(rightFlat)   * manual.worldX
                 let f = simd_normalize(forwardFlat) * manual.worldZ
@@ -675,9 +747,16 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
             }
         }
 
-        routeGroupNode.simdPosition = SIMD3<Float>(posX, baseRouteY + manual.worldY, posZ)
+        let seedXZ = routeSeed?.offsetXZ ?? SIMD2<Float>(0, 0)
+        let seedYaw = routeSeed?.yaw ?? 0
+
+        routeGroupNode.simdPosition = SIMD3<Float>(
+            seedXZ.x + posX,
+            baseRouteY + manual.worldY,
+            seedXZ.y + posZ
+        )
         routeGroupNode.simdOrientation = simd_quatf(
-            angle: manual.rotationY,
+            angle: seedYaw + manual.rotationY,
             axis: SIMD3<Float>(0, 1, 0)
         )
     }
@@ -752,8 +831,12 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
         }
         guard runMode == .aligning || runMode == .realigning else { return }
 
-        // Apply manual position/rotation corrections every frame so the
-        // AR view updates in real-time as the user adjusts.
+        // Keep retrying the seed until it succeeds — first attempts often fire
+        // before CLHeading delivers or the camera transform is ready.
+        if routeSeed == nil {
+            seedAlignmentFromGPSHeading(frame: frame)
+        }
+
         applyManualAlignment()
 
         guard (distanceToRouteStart() ?? 0) <= startGateDistanceMeters else { return }

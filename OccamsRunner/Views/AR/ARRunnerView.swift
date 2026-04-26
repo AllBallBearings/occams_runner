@@ -4,26 +4,6 @@ import SceneKit
 import CoreLocation
 import MapKit
 
-// MARK: - Heading Manager
-
-private final class HeadingManager: NSObject, ObservableObject, CLLocationManagerDelegate {
-    @Published var degrees: Double = 0
-    private let manager = CLLocationManager()
-
-    override init() {
-        super.init()
-        manager.delegate = self
-        if CLLocationManager.headingAvailable() {
-            manager.startUpdatingHeading()
-        }
-    }
-
-    func locationManager(_ manager: CLLocationManager, didUpdateHeading newHeading: CLHeading) {
-        let d = newHeading.trueHeading >= 0 ? newHeading.trueHeading : newHeading.magneticHeading
-        DispatchQueue.main.async { self.degrees = d }
-    }
-}
-
 // MARK: - Compass View
 
 private struct CompassView: View {
@@ -156,7 +136,6 @@ struct ARRunnerView: View {
     @State private var manualAlignment = ManualAlignmentState()
 
     // Run tracking
-    @StateObject private var headingManager = HeadingManager()
     @State private var runDistanceKm: Double = 0
     @State private var lastRunLocation: CLLocation?
 
@@ -188,7 +167,8 @@ struct ARRunnerView: View {
     // Bearing relative to the direction the camera is facing (0=ahead, 90=right …).
     private var relativeBearingToStart: Double? {
         guard let b = bearingToStart else { return nil }
-        return (b - headingManager.degrees + 360).truncatingRemainder(dividingBy: 360)
+        let h = locationService.currentHeadingDegrees ?? 0
+        return (b - h + 360).truncatingRemainder(dividingBy: 360)
     }
 
     private var startDistanceText: String {
@@ -461,7 +441,7 @@ struct ARRunnerView: View {
             HStack(alignment: .bottom, spacing: 12) {
                 // Left: compass + mini-map
                 VStack(alignment: .leading, spacing: 12) {
-                    CompassView(heading: headingManager.degrees)
+                    CompassView(heading: locationService.currentHeadingDegrees ?? 0)
                         .shadow(color: .black.opacity(0.3), radius: 10)
                     miniMap(route: route)
                 }
@@ -667,7 +647,7 @@ struct ARRunnerView: View {
             .padding(.bottom, 50)
 
             // Compass — bottom-left, always visible during alignment
-            CompassView(heading: headingManager.degrees, startBearing: bearingToStart)
+            CompassView(heading: locationService.currentHeadingDegrees ?? 0, startBearing: bearingToStart)
                 .shadow(color: .black.opacity(0.3), radius: 10)
                 .padding(.leading, 20)
                 .padding(.bottom, 54)

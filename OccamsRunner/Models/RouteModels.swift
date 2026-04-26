@@ -169,6 +169,10 @@ struct RecordedRoute: Codable, Identifiable {
     var captureQuality: RouteCaptureQuality
     /// The mode used when this route was recorded — determines coin collection geometry.
     var recordingMode: RecordingMode
+    /// Compass heading (degrees, true north) the device was facing when recording began.
+    /// Used at replay time to seed the AR route's yaw. Optional for back-compat
+    /// with routes saved before this field existed.
+    var recordedHeadingDegrees: Double?
 
     /// Convenience map points for existing map-driven views.
     var points: [RoutePoint] {
@@ -242,6 +246,7 @@ struct RecordedRoute: Codable, Identifiable {
         self.encryptedWorldMapData = nil
         self.preciseEnabled = false
         self.recordingMode = .vast
+        self.recordedHeadingDegrees = nil
         self.captureQuality = RouteCaptureQuality(
             matchedSampleRatio: 0,
             averageFeaturePoints: 0,
@@ -280,7 +285,8 @@ struct RecordedRoute: Codable, Identifiable {
         encryptedWorldMapData: Data?,
         captureQuality: RouteCaptureQuality,
         preciseEnabled: Bool = true,
-        recordingMode: RecordingMode = .vast
+        recordingMode: RecordingMode = .vast,
+        recordedHeadingDegrees: Double? = nil
     ) {
         self.id = UUID()
         self.name = name
@@ -292,6 +298,7 @@ struct RecordedRoute: Codable, Identifiable {
         self.captureQuality = captureQuality
         self.preciseEnabled = preciseEnabled
         self.recordingMode = recordingMode
+        self.recordedHeadingDegrees = recordedHeadingDegrees
     }
 
     // Custom decoder so routes saved before `recordingMode` was added
@@ -309,6 +316,7 @@ struct RecordedRoute: Codable, Identifiable {
         captureQuality     = try c.decode(RouteCaptureQuality.self,   forKey: .captureQuality)
         // Default to .vast for routes recorded before this field existed.
         recordingMode      = try c.decodeIfPresent(RecordingMode.self, forKey: .recordingMode) ?? .vast
+        recordedHeadingDegrees = try c.decodeIfPresent(Double.self, forKey: .recordedHeadingDegrees)
     }
 
     func geoSample(atProgress progress: Double) -> GeoRouteSample? {
