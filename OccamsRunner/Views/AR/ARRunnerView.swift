@@ -29,52 +29,99 @@ private final class HeadingManager: NSObject, ObservableObject, CLLocationManage
 private struct CompassView: View {
     let heading: Double
     var startBearing: Double? = nil // absolute true-north bearing to start point
+    var size: CGFloat = 54
+    var isProminent: Bool = false
+
+    private var tickRadius: CGFloat { size * 0.36 }
+    private var cardinalRadius: CGFloat { size * 0.25 }
+    private var needleLength: CGFloat { size * 0.19 }
+    private var markerRadius: CGFloat { size * 0.31 }
 
     var body: some View {
         ZStack {
-            Circle().fill(Color.black.opacity(0.72))
-            Circle().stroke(Color.white.opacity(0.25), lineWidth: 1)
+            if isProminent {
+                Circle()
+                    .fill(
+                        RadialGradient(
+                            colors: [
+                                Color.white.opacity(0.18),
+                                Color.black.opacity(0.82)
+                            ],
+                            center: .topLeading,
+                            startRadius: 2,
+                            endRadius: size * 0.64
+                        )
+                    )
+                Circle()
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                Color.white.opacity(0.18),
+                                Color.clear,
+                                Color.black.opacity(0.38)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+            } else {
+                Circle().fill(Color.black.opacity(0.72))
+            }
+            Circle().stroke(Color.white.opacity(isProminent ? 0.38 : 0.25), lineWidth: isProminent ? 1.5 : 1)
 
             // Rotating card
             ZStack {
                 // Tick marks at 45° intervals
                 ForEach(0..<8) { i in
                     Rectangle()
-                        .fill(Color.white.opacity(0.35))
-                        .frame(width: 1, height: 4)
-                        .offset(y: -19)
+                        .fill(Color.white.opacity(isProminent ? 0.5 : 0.35))
+                        .frame(width: isProminent ? 2 : 1, height: size * 0.075)
+                        .offset(y: -tickRadius)
                         .rotationEffect(.degrees(Double(i) * 45))
                 }
                 // Cardinal labels
-                Text("N").font(.system(size: 8, weight: .bold)).foregroundColor(.red)
-                    .offset(y: -13)
-                Text("S").font(.system(size: 7)).foregroundColor(.white.opacity(0.6))
-                    .offset(y: 13)
-                Text("E").font(.system(size: 7)).foregroundColor(.white.opacity(0.6))
-                    .offset(x: 13)
-                Text("W").font(.system(size: 7)).foregroundColor(.white.opacity(0.6))
-                    .offset(x: -13)
+                Text("N").font(.system(size: size * 0.15, weight: .bold)).foregroundColor(.red)
+                    .offset(y: -cardinalRadius)
+                Text("S").font(.system(size: size * 0.13)).foregroundColor(.white.opacity(0.6))
+                    .offset(y: cardinalRadius)
+                Text("E").font(.system(size: size * 0.13)).foregroundColor(.white.opacity(0.6))
+                    .offset(x: cardinalRadius)
+                Text("W").font(.system(size: size * 0.13)).foregroundColor(.white.opacity(0.6))
+                    .offset(x: -cardinalRadius)
                 // Needle
                 VStack(spacing: 0) {
-                    Capsule().fill(Color.red).frame(width: 3, height: 10)
-                    Circle().fill(Color.white).frame(width: 4, height: 4)
-                    Capsule().fill(Color.white.opacity(0.65)).frame(width: 3, height: 10)
+                    Capsule().fill(Color.red).frame(width: size * 0.055, height: needleLength)
+                    Circle().fill(Color.white).frame(width: size * 0.075, height: size * 0.075)
+                    Capsule().fill(Color.white.opacity(0.65)).frame(width: size * 0.055, height: needleLength)
                 }
                 // Orange dot marking the direction to the start point
                 if let startBearing {
                     Circle()
                         .fill(Color.orange)
-                        .frame(width: 5, height: 5)
-                        .offset(y: -16)
+                        .frame(width: size * 0.12, height: size * 0.12)
+                        .shadow(color: .orange.opacity(0.75), radius: isProminent ? 8 : 3)
+                        .offset(y: -markerRadius)
                         .rotationEffect(.degrees(startBearing))
                 }
             }
             .rotationEffect(.degrees(-heading))
 
             // Center dot
-            Circle().fill(Color.white).frame(width: 3, height: 3)
+            Circle().fill(Color.white).frame(width: size * 0.055, height: size * 0.055)
         }
-        .frame(width: 54, height: 54)
+        .frame(width: size, height: size)
+        .rotation3DEffect(.degrees(isProminent ? 58 : 0), axis: (x: 1, y: 0, z: 0), perspective: 0.65)
+        .shadow(color: .black.opacity(isProminent ? 0.46 : 0), radius: isProminent ? 18 : 0, x: 0, y: isProminent ? 16 : 0)
+        .overlay(alignment: .topLeading) {
+            if isProminent {
+                Circle()
+                    .fill(Color.white.opacity(0.22))
+                    .frame(width: size * 0.18, height: size * 0.18)
+                    .blur(radius: 8)
+                    .offset(x: size * 0.18, y: size * 0.13)
+                    .allowsHitTesting(false)
+            }
+        }
     }
 }
 
@@ -249,7 +296,7 @@ struct ARRunnerView: View {
                     }
 
                     // ── Start beacon: orange orb floating at bearing to start ──
-                    if alignmentState == .moveToStart,
+                    if (runMode == .aligning || runMode == .realigning),
                        let relBearing = relativeBearingToStart {
                         StartBeaconView(
                             relativeBearing: relBearing,
@@ -636,6 +683,15 @@ struct ARRunnerView: View {
                     }
                 }
 
+                CompassView(
+                    heading: headingManager.degrees,
+                    startBearing: bearingToStart,
+                    size: 104,
+                    isProminent: true
+                )
+                .padding(.top, 2)
+                .padding(.bottom, -2)
+
                 Button(action: { runMode = .running }) {
                     HStack {
                         Text(runMode == .realigning ? "RESUME QUEST" : "START QUEST")
@@ -665,12 +721,6 @@ struct ARRunnerView: View {
             }
             .frame(maxWidth: .infinity)
             .padding(.bottom, 50)
-
-            // Compass — bottom-left, always visible during alignment
-            CompassView(heading: headingManager.degrees, startBearing: bearingToStart)
-                .shadow(color: .black.opacity(0.3), radius: 10)
-                .padding(.leading, 20)
-                .padding(.bottom, 54)
         }
     }
 
