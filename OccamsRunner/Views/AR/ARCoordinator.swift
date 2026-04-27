@@ -686,8 +686,19 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
     }
 
     /// Returns the SeedAnchor appropriate for the current `runMode`.
+    /// - `.aligning`: anchor at the route start, since the runner is at the
+    ///   start gate and we want the recorded start to land at GPS-start.
+    /// - `.running`: anchor at the recorded sample nearest to the runner's
+    ///   current GPS, so as they progress the seed auto-corrects locally
+    ///   without ever needing the manual realign button. GPS noise is
+    ///   absorbed by `seedRefreshSmoothing` in `refineSeedFromGPSHeading`.
+    /// - `.realigning`: same as `.running` (manual recalibration around the
+    ///   runner's current position).
     private func currentSeedAnchor() -> SeedAnchor {
-        runMode == .realigning ? .nearestToCurrentGPS : .start
+        switch runMode {
+        case .aligning: return .start
+        case .running, .realigning: return .nearestToCurrentGPS
+        }
     }
 
     /// Resolves a SeedAnchor to a concrete `(geoLocation, localPosition)` pair.
