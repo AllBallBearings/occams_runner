@@ -677,7 +677,7 @@ struct ARRunnerView: View {
         }
 
         CompassView(
-          heading: headingManager.degrees,
+          heading: locationService.currentHeadingDegrees ?? 0,
           startBearing: bearingToStart,
           size: 104,
           isProminent: true
