@@ -283,7 +283,10 @@ struct ARRunnerView: View {
           }
 
           // ── Start beacon: orange orb floating at bearing to start ──
-          if runMode == .aligning || runMode == .realigning,
+          // Only shown during initial alignment. Mid-quest realignment is
+          // anchored at the runner's current position (nearest recorded
+          // sample), so pointing them back to the start is misleading.
+          if runMode == .aligning,
             let relBearing = relativeBearingToStart
           {
             StartBeaconView(
@@ -423,7 +426,10 @@ struct ARRunnerView: View {
               .foregroundColor(.white)
               .kerning(1.2)
 
-            if let distanceToStart {
+            // Distance-to-start is only meaningful during initial alignment.
+            // Mid-quest realignment anchors at the runner's current position
+            // (nearest recorded sample) so this label would be misleading.
+            if runMode == .aligning, let distanceToStart {
               let feet = distanceToStart * 3.281
               let distanceLabel =
                 feet >= 1320
@@ -677,8 +683,11 @@ struct ARRunnerView: View {
         }
 
         CompassView(
+          // During mid-quest realignment, drop the orange "to start" indicator
+          // — the user is realigning around their current position, not
+          // walking back to the start.
           heading: locationService.currentHeadingDegrees ?? 0,
-          startBearing: bearingToStart,
+          startBearing: runMode == .realigning ? nil : bearingToStart,
           size: 104,
           isProminent: true
         )

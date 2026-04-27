@@ -674,22 +674,74 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
 
     // MARK: - GPS + Heading Seed
 
-    /// Computes a coarsely-correct base pose for `routeGroupNode` from the
-    /// recorded route-start GPS+heading vs. the runner's current GPS+heading.
+    /// Which recorded sample to anchor the seed at.
+    /// - `.start` (initial alignment): anchor at `localTrack.first` ↔ `route.startLocation`.
+    /// - `.nearestToCurrentGPS` (mid-quest realignment): anchor at the recorded
+    ///   sample whose GPS is closest to the runner's current location, so the
+    ///   route re-aligns around where the runner stands rather than dragging
+    ///   them back to the start gate.
+    private enum SeedAnchor {
+        case start
+        case nearestToCurrentGPS
+    }
+
+    /// Returns the SeedAnchor appropriate for the current `runMode`.
+    private func currentSeedAnchor() -> SeedAnchor {
+        runMode == .realigning ? .nearestToCurrentGPS : .start
+    }
+
+    /// Resolves a SeedAnchor to a concrete `(geoLocation, localPosition)` pair.
+    /// Returns `nil` if the route lacks the data needed (empty tracks, no GPS).
+    private func resolveAnchor(_ anchor: SeedAnchor) -> (CLLocation, LocalRouteSample)? {
+        switch anchor {
+        case .start:
+            guard let start = route.startLocation,
+                  let firstLocal = route.localTrack.first else { return nil }
+            return (start, firstLocal)
+        case .nearestToCurrentGPS:
+            guard let currentLoc = locationService.currentLocation,
+                  !route.geoTrack.isEmpty,
+                  !route.localTrack.isEmpty else { return nil }
+            // Find the geoTrack sample closest to current GPS, then match it
+            // to its localTrack counterpart by sampleId. Geo and local tracks
+            // are correlated by sampleId in `buildRecordedRoute`.
+            var bestGeo: GeoRouteSample?
+            var bestDist = Double.greatestFiniteMagnitude
+            for geo in route.geoTrack {
+                let d = currentLoc.distance(from: geo.location)
+                if d < bestDist { bestDist = d; bestGeo = geo }
+            }
+            guard let geo = bestGeo,
+                  let local = route.localTrack.first(where: { $0.sampleId == geo.sampleId })
+            else { return nil }
+            return (geo.location, local)
+        }
+    }
+
+    /// Computes a coarsely-correct base pose for `routeGroupNode` from a
+    /// recorded sample's GPS vs. the runner's current GPS+heading.
     /// No-op (returns false) when any input is missing.
     ///
-    /// Math: ENU(current → routeStart) projected into AR-world XZ via the
-    /// camera's current yaw, plus a rotation so recording-frame -Z lines up
-    /// with the recorded compass heading. The rotated `localTrack[0]` is
-    /// subtracted so recorded sample 0 lands exactly on the GPS-derived
-    /// route-start point.
+    /// Math: ENU(current → anchorLoc) projected into AR-world XZ via the
+    /// camera's current yaw, plus a global route-yaw rotation derived from
+    /// recorded vs. current compass heading and AR yaw. The rotated anchor
+    /// local position is subtracted so the anchor sample lands exactly on
+    /// the GPS-derived anchor point.
+    ///
+    /// Which sample to anchor at depends on `runMode` via `currentSeedAnchor()`:
+    /// initial alignment uses the route start, mid-quest realignment uses the
+    /// recorded sample nearest to the runner's current GPS.
     @discardableResult
     func seedAlignmentFromGPSHeading(frame: ARFrame? = nil) -> Bool {
+        seedAlignmentFromGPSHeading(frame: frame, anchor: currentSeedAnchor())
+    }
+
+    @discardableResult
+    private func seedAlignmentFromGPSHeading(frame: ARFrame?, anchor: SeedAnchor) -> Bool {
         guard let recordedHeading = route.recordedHeadingDegrees,
               let currentHeading = locationService.currentHeadingDegrees,
               let currentLoc = locationService.currentLocation,
-              let routeStart = route.startLocation,
-              let firstLocal = route.localTrack.first else {
+              let (anchorLoc, anchorLocal) = resolveAnchor(anchor) else {
             return false
         }
         guard let cam = (frame ?? arView?.session.currentFrame)?.camera.transform else {
@@ -698,8 +750,8 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
 
         let earthRadius = 6_378_137.0
         let curLatRad = currentLoc.coordinate.latitude * .pi / 180
-        let dLat = (routeStart.coordinate.latitude - currentLoc.coordinate.latitude) * .pi / 180
-        let dLon = (routeStart.coordinate.longitude - currentLoc.coordinate.longitude) * .pi / 180
+        let dLat = (anchorLoc.coordinate.latitude - currentLoc.coordinate.latitude) * .pi / 180
+        let dLon = (anchorLoc.coordinate.longitude - currentLoc.coordinate.longitude) * .pi / 180
         let east  = Float(dLon * cos(curLatRad) * earthRadius)
         let north = Float(dLat * earthRadius)
 
@@ -718,7 +770,7 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
         let eastDir  = SIMD2<Float>(-sin(yawE), -cos(yawE))
 
         let camPos = SIMD2<Float>(cam.columns.3.x, cam.columns.3.z)
-        let routeStartXZ = camPos + east * eastDir + north * northDir
+        let anchorXZ = camPos + east * eastDir + north * northDir
 
         // Yaw to rotate route-local frame into runtime AR-world frame.
         //
@@ -738,20 +790,26 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
         let recHeadingRad = Float(recordedHeading) * .pi / 180
         let routeYaw = (camYawAR + curHeadingRad) - (recYaw + recHeadingRad)
 
-        let lp = SIMD3<Float>(Float(firstLocal.x), Float(firstLocal.y), Float(firstLocal.z))
+        let lp = SIMD3<Float>(Float(anchorLocal.x), Float(anchorLocal.y), Float(anchorLocal.z))
         let cy = cos(routeYaw)
         let sy = sin(routeYaw)
         let rotatedLP = SIMD2<Float>(cy * lp.x + sy * lp.z, -sy * lp.x + cy * lp.z)
 
         let wasSeeded = (routeSeed != nil)
-        routeSeed = RouteSeed(offsetXZ: routeStartXZ - rotatedLP, yaw: routeYaw)
+        routeSeed = RouteSeed(offsetXZ: anchorXZ - rotatedLP, yaw: routeYaw)
 
         if !wasSeeded {
             let recYawStr = route.recordedCameraYawAR.map {
                 String(format: "%.1f°", $0 * 180 / .pi)
             } ?? "—"
+            let anchorTag: String = {
+                switch anchor {
+                case .start: return "start"
+                case .nearestToCurrentGPS: return "nearestSample"
+                }
+            }()
             locationService.logRunEvent(
-                "AR seed: ENU=(e=\(String(format: "%.1f", east)) n=\(String(format: "%.1f", north)))" +
+                "AR seed[\(anchorTag)]: ENU=(e=\(String(format: "%.1f", east)) n=\(String(format: "%.1f", north)))" +
                 " yaw=\(String(format: "%.1f°", Double(routeYaw * 180 / .pi)))" +
                 " (recHdg=\(String(format: "%.1f", recordedHeading))° curHdg=\(String(format: "%.1f", currentHeading))°" +
                 " recYawAR=\(recYawStr) camYawAR=\(String(format: "%.1f°", Double(camYawAR * 180 / .pi))))"
@@ -846,7 +904,12 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
         guard runMode == .aligning || runMode == .realigning else { return }
         let distance = distanceToRouteStart()
 
-        if let distance, distance > startGateDistanceMeters {
+        // Mid-quest realignment intentionally skips the start-gate check.
+        // The runner is somewhere along the route already; the seed will
+        // anchor at the recorded sample nearest to their current GPS, so
+        // there's no reason to drag them back to the start.
+        if runMode == .aligning,
+           let distance, distance > startGateDistanceMeters {
             consecutiveOutOfRangeGPS += 1
             // Require 3 consecutive out-of-range GPS readings before resetting a
             // lock — GPS can jitter 20-40 m so a single bad fix must not undo
