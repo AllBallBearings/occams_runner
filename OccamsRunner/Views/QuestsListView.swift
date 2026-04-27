@@ -208,6 +208,7 @@ struct QuestsListView: View {
                                 .background(darkerSurface)
                                 .clipShape(Circle())
                         }
+                        .buttonStyle(.borderless)
                     }
 
                     if let route {
