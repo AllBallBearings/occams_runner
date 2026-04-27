@@ -97,7 +97,12 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
     /// Exponential moving average of per-frame raw confidence — smooths out
     /// transient tracking blips without introducing too much lag.
     private var smoothedConfidence: Double = 0
-    private var alignmentLocked = false
+    private var alignmentLocked = false {
+        didSet {
+            guard oldValue != alignmentLocked else { return }
+            DispatchQueue.main.async { self.updateRouteNodeVisibility() }
+        }
+    }
     private var consecutiveGoodFrames = 0
     private var scanStartedAt: Date?
     /// How many consecutive GPS readings have placed the user beyond the start gate.
@@ -108,7 +113,12 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
     private var statusTimer: Timer?
     private var collectionTimer: Timer?
 
-    private let startGateDistanceMeters: Double = 40
+    /// How close (m) the runner must be to the recorded start before scanning
+    /// runs at all. Was 40 m initially but felt much too lenient — at 30+ m
+    /// the path overlay would appear and the alignment would lock without the
+    /// runner ever being in position. ~15 m (≈50 ft) is tight enough to imply
+    /// "you're standing at the start" but wide enough to absorb GPS jitter.
+    private let startGateDistanceMeters: Double = 15
 
     // Base Y offset applied to the route group so objects sit at chest height.
     // The manual alignment adds onto this baseline.
@@ -220,12 +230,18 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
 
     private func updateRouteNodeVisibility() {
         assert(Thread.isMainThread)
-        // Nothing rendered until the user is near the start gate.
-        let nearStart = alignmentState != .moveToStart
-        let showPath = nearStart && (runMode == .aligning || runMode == .realigning)
+        // Path overlay (start/end markers + ribbon) is purely an alignment
+        // guide — only show it once alignment is actually locked, otherwise
+        // a half-aligned route gets drawn while the user is still walking
+        // toward the start gate.
+        let showPath = alignmentLocked && (runMode == .aligning || runMode == .realigning)
         for node in pathNodes {
             node.isHidden = !showPath
         }
+        // Items can be visible regardless of lock state — they're committed
+        // by the horizon evaluator during running and live on their own
+        // anchors. Hiding them here is just a belt-and-suspenders default.
+        let nearStart = alignmentState != .moveToStart
         for node in coinNodes.values {
             node.isHidden = !nearStart
         }
@@ -704,7 +720,23 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
         let camPos = SIMD2<Float>(cam.columns.3.x, cam.columns.3.z)
         let routeStartXZ = camPos + east * eastDir + north * northDir
 
-        let routeYaw = camYawAR - Float((recordedHeading - currentHeading) * .pi / 180)
+        // Yaw to rotate route-local frame into runtime AR-world frame.
+        //
+        // The route's `localTrack` lives in the recording AR session's world
+        // frame, which was oriented by device pose at *AR session start* —
+        // not at recording start. So we need both the recorded compass
+        // heading AND the recording AR-world camera yaw at recording start
+        // to recover the relationship to true north.
+        //
+        // True-north angle in recording AR-world: recYaw + recHeading
+        // True-north angle in runtime  AR-world: camYawAR + currentHeading
+        // Δyaw = runtime − recording rotates recording frame onto runtime.
+        //
+        // Routes recorded before `recordedCameraYawAR` was captured fall back
+        // to the old (often wrong) approximation `recYaw == 0`.
+        let recYaw = Float(route.recordedCameraYawAR ?? 0)
+        let recHeadingRad = Float(recordedHeading) * .pi / 180
+        let routeYaw = (camYawAR + curHeadingRad) - (recYaw + recHeadingRad)
 
         let lp = SIMD3<Float>(Float(firstLocal.x), Float(firstLocal.y), Float(firstLocal.z))
         let cy = cos(routeYaw)
@@ -715,10 +747,14 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
         routeSeed = RouteSeed(offsetXZ: routeStartXZ - rotatedLP, yaw: routeYaw)
 
         if !wasSeeded {
+            let recYawStr = route.recordedCameraYawAR.map {
+                String(format: "%.1f°", $0 * 180 / .pi)
+            } ?? "—"
             locationService.logRunEvent(
                 "AR seed: ENU=(e=\(String(format: "%.1f", east)) n=\(String(format: "%.1f", north)))" +
                 " yaw=\(String(format: "%.1f°", Double(routeYaw * 180 / .pi)))" +
-                " (recHdg=\(String(format: "%.1f", recordedHeading))° curHdg=\(String(format: "%.1f", currentHeading))°)"
+                " (recHdg=\(String(format: "%.1f", recordedHeading))° curHdg=\(String(format: "%.1f", currentHeading))°" +
+                " recYawAR=\(recYawStr) camYawAR=\(String(format: "%.1f°", Double(camYawAR * 180 / .pi))))"
             )
         }
         return true
@@ -883,10 +919,20 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
         }
         guard runMode == .aligning || runMode == .realigning else { return }
 
-        // Keep retrying the seed until it succeeds — first attempts often fire
-        // before CLHeading delivers or the camera transform is ready.
+        // Continuously refresh the seed during alignment. The first call may
+        // run before CLHeading delivers or the camera transform is ready, in
+        // which case `routeSeed` stays nil and we retry next frame. Once
+        // seeded, refresh on the same throttle as running mode so the route
+        // tracks GPS as the user walks toward the start (ARKit world drift
+        // over a 100+ ft approach is otherwise visible as the start marker
+        // sliding away from the actual recorded location).
+        let now = frame.timestamp
         if routeSeed == nil {
             seedAlignmentFromGPSHeading(frame: frame)
+            lastSeedRefreshAt = now
+        } else if now - lastSeedRefreshAt >= seedRefreshInterval {
+            lastSeedRefreshAt = now
+            refineSeedFromGPSHeading(frame: frame)
         }
 
         applyManualAlignment()

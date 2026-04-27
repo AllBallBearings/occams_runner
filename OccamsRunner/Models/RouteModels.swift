@@ -174,6 +174,15 @@ struct RecordedRoute: Codable, Identifiable {
     /// with routes saved before this field existed.
     var recordedHeadingDegrees: Double?
 
+    /// AR-world camera yaw (radians, CCW around +Y) at the moment recording
+    /// began. Required to relate the route's local frame back to true north,
+    /// because `localTrack` positions live in the recording AR session's
+    /// world frame whose yaw is set by device orientation at session start —
+    /// not at recording start. Without this, the seed math can be wrong by
+    /// any amount up to 180°. Optional for back-compat with routes saved
+    /// before this field existed.
+    var recordedCameraYawAR: Double?
+
     /// Convenience map points for existing map-driven views.
     var points: [RoutePoint] {
         geoTrack.map(RoutePoint.init(sample:))
@@ -247,6 +256,7 @@ struct RecordedRoute: Codable, Identifiable {
         self.preciseEnabled = false
         self.recordingMode = .vast
         self.recordedHeadingDegrees = nil
+        self.recordedCameraYawAR = nil
         self.captureQuality = RouteCaptureQuality(
             matchedSampleRatio: 0,
             averageFeaturePoints: 0,
@@ -286,7 +296,8 @@ struct RecordedRoute: Codable, Identifiable {
         captureQuality: RouteCaptureQuality,
         preciseEnabled: Bool = true,
         recordingMode: RecordingMode = .vast,
-        recordedHeadingDegrees: Double? = nil
+        recordedHeadingDegrees: Double? = nil,
+        recordedCameraYawAR: Double? = nil
     ) {
         self.id = UUID()
         self.name = name
@@ -299,6 +310,7 @@ struct RecordedRoute: Codable, Identifiable {
         self.preciseEnabled = preciseEnabled
         self.recordingMode = recordingMode
         self.recordedHeadingDegrees = recordedHeadingDegrees
+        self.recordedCameraYawAR = recordedCameraYawAR
     }
 
     // Custom decoder so routes saved before `recordingMode` was added
@@ -317,6 +329,7 @@ struct RecordedRoute: Codable, Identifiable {
         // Default to .vast for routes recorded before this field existed.
         recordingMode      = try c.decodeIfPresent(RecordingMode.self, forKey: .recordingMode) ?? .vast
         recordedHeadingDegrees = try c.decodeIfPresent(Double.self, forKey: .recordedHeadingDegrees)
+        recordedCameraYawAR = try c.decodeIfPresent(Double.self, forKey: .recordedCameraYawAR)
     }
 
     func geoSample(atProgress progress: Double) -> GeoRouteSample? {

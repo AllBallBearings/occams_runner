@@ -129,6 +129,12 @@ class LocationService: NSObject, ObservableObject {
     /// latched on first heading delivery if CLHeading wasn't ready yet) and
     /// persisted into the saved route for replay-time alignment.
     private var headingAtRecordStart: Double?
+    /// AR-world camera yaw (radians, CCW around +Y) at recording start.
+    /// Latched together with `headingAtRecordStart` so the seed math at
+    /// replay time can recover the relationship between the recording
+    /// AR-world frame (whose yaw is set at AR session start, not at
+    /// recording start) and true north.
+    private var arYawAtRecordStart: Double?
     private var captureLogURL: URL?
     private var lastLoggedQualitySignature: String?
     private let logTimestampFormatter = ISO8601DateFormatter()
@@ -190,6 +196,7 @@ class LocationService: NSObject, ObservableObject {
         localDraftBySampleId = [:]
         lastEncryptedWorldMapData = nil
         headingAtRecordStart = currentHeadingDegrees
+        arYawAtRecordStart = currentARWorldYaw()
 
         preciseCaptureQuality = RouteCaptureQuality(
             matchedSampleRatio: 0,
@@ -313,7 +320,8 @@ class LocationService: NSObject, ObservableObject {
             captureQuality: quality,
             preciseEnabled: true,
             recordingMode: recordingMode,
-            recordedHeadingDegrees: headingAtRecordStart
+            recordedHeadingDegrees: headingAtRecordStart,
+            recordedCameraYawAR: arYawAtRecordStart
         )
     }
 
@@ -685,9 +693,28 @@ extension LocationService: CLLocationManagerDelegate {
 
         // Latch the first heading after recording starts. Avoids missing the
         // record-start moment if CLHeading hadn't fired yet at that point.
+        // Latch the AR-world camera yaw at the same moment so the recording
+        // frame ↔ true-north relationship is recoverable at replay time.
         if isRecording, headingAtRecordStart == nil {
             headingAtRecordStart = heading
+            arYawAtRecordStart = currentARWorldYaw()
         }
+    }
+
+    /// Returns the AR-world camera yaw (CCW around +Y, radians) from the most
+    /// recent ARFrame, or `nil` if no frame is available yet. Same convention
+    /// used by `ARCoordinator.seedAlignmentFromGPSHeading`.
+    private func currentARWorldYaw() -> Double? {
+        guard let cam = arSession.currentFrame?.camera.transform else { return nil }
+        // Camera looks along its -Z axis. Flatten the forward into the XZ
+        // plane and recover yaw via atan2.
+        let fx = -cam.columns.2.x
+        let fz = -cam.columns.2.z
+        let length = (fx * fx + fz * fz).squareRoot()
+        guard length > 1e-4 else { return nil }
+        let nx = fx / length
+        let nz = fz / length
+        return Double(atan2(-nx, -nz))
     }
 }
 
