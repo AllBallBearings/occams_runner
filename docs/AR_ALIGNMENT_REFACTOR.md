@@ -132,17 +132,35 @@ Routes saved before Slice 2 have no recorded heading; the seed no-ops for those
 and the user must align manually as before. Subsumes Slice 5 (compass-yaw
 auto-rotate is now the default behaviour, not a separate quick-fix).
 
+## Slice 4 — continuous seed refinement during the run (LANDED)
+
+**What it does:** during `.running` mode, the coordinator refreshes
+`routeSeed` from current GPS+heading on a 1 Hz throttle and re-applies it
+to `routeGroupNode` via `applyManualAlignment()`. Each refresh is lowpassed
+(α = 0.25, with shortest-arc yaw blend) so GPS jitter doesn't snap the
+pending-coin spawn frame around. Already-committed items live on their
+own ARAnchors and are completely unaffected — only items still in the
+pending state pick up the improved localization.
+
+**Removed:** `frozenRouteWorldTransform`. It was kept through Slice 1 as a
+defensive freeze on `routeGroupNode` during `.running`, but committed
+items are no longer parented to that node, so the freeze is dead weight.
+Removing it is what enables the seed to keep refining mid-run.
+
+Key additions in `ARCoordinator.swift`:
+- `refineSeedFromGPSHeading(frame:)` — recomputes a candidate seed and
+  blends it with the prior using `seedRefreshSmoothing`.
+- `blendYaw(_:_:alpha:)` — shortest-arc angle interpolation.
+- Throttle fields `lastSeedRefreshAt` / `seedRefreshInterval`.
+
 ## What is explicitly NOT in this slice
 
-These are the next slices on the roadmap (write each as its own PR/commit):
+The remaining slice on the roadmap:
 
 - **Slice 3: `ARGeoAnchor` path** for items where `ARGeoTrackingConfiguration`
   reports availability. Detect at run start; commit items as `ARGeoAnchor`
   instead of `QuestItemAnchor` where supported. Fall back to Slice 2 transform
   outside coverage.
-- **Slice 4: GPS feedback for uncommitted items only.** Continuously refine
-  `routeSeed` during the run; never reposition an item the player has already
-  seen (committed items are anchored to the AR world, not to `routeGroupNode`).
 
 ## How to resume from here
 

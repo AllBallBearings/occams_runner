@@ -59,6 +59,16 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
     private struct RouteSeed { var offsetXZ: SIMD2<Float>; var yaw: Float }
     private var routeSeed: RouteSeed?
 
+    /// Slice 4: how often to refresh `routeSeed` from GPS+heading during a run.
+    /// CoreLocation typically delivers ~1 Hz; refreshing more often is wasted
+    /// work. Each refresh is lowpassed by `seedRefreshSmoothing` so transient
+    /// GPS jitter doesn't snap pending-item commit positions.
+    private var lastSeedRefreshAt: TimeInterval = 0
+    private let seedRefreshInterval: TimeInterval = 1.0
+    /// 0.0 = ignore new fixes, 1.0 = snap to each new fix. The first seed
+    /// (when `routeSeed == nil`) always snaps regardless of this value.
+    private let seedRefreshSmoothing: Float = 0.25
+
     private var arrowIndicatorNode: SCNNode?
 
     // Hand pose detection
@@ -76,7 +86,6 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
     private var collectionCheckSerial: UInt64 = 0
     private var lastSkipReasonLogged: String?
     private var lastHeartbeatAt: Date = .distantPast
-    private var frozenRouteWorldTransform: simd_float4x4?
 
     private var alignmentState: ARAlignmentState = .moveToStart {
         didSet {
@@ -185,14 +194,15 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
                 runStartedAt = Date()
                 collectionTickSerial = 0
             }
-            // Freeze route transform so alignment remains stable during collection.
-            frozenRouteWorldTransform = routeGroupNode.simdWorldTransform
+            // Slice 4: don't freeze `routeGroupNode`. Committed coins are
+            // independent of it (they live on their own ARAnchors), so we
+            // can keep refining the seed during the run. The seed only
+            // affects pending items via `evaluateCommitHorizon`.
+            lastSeedRefreshAt = 0
             // Keep session delegate active for hand pose detection during running.
             arView?.session.delegate = self
 
         case .aligning, .realigning:
-            // Unfreeze route transform so AR alignment can adjust it.
-            frozenRouteWorldTransform = nil
             // Restore frame callbacks for tracking updates.
             arView?.session.delegate = self
             alignmentLocked = false
@@ -536,10 +546,6 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
     }
 
     private func updateNearestItemDistance() {
-        if runMode == .running, let frozen = frozenRouteWorldTransform {
-            routeGroupNode.simdWorldTransform = frozen
-        }
-
         guard let cameraNode = arView?.pointOfView else {
             onNearestItemDistance(nil)
             return
@@ -718,6 +724,43 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
         return true
     }
 
+    /// Slice 4: blend a freshly-computed GPS+heading seed into the existing
+    /// one with a low-pass filter so transient GPS jitter doesn't snap the
+    /// route group's pose every refresh. Called periodically during `.running`
+    /// so still-pending items track improving GPS as the player moves into
+    /// better-localized regions. No effect on already-committed items —
+    /// they live on their own ARAnchors and never read `routeGroupNode`.
+    private func refineSeedFromGPSHeading(frame: ARFrame) {
+        guard let prior = routeSeed else {
+            // No prior seed yet — first successful fix snaps directly.
+            seedAlignmentFromGPSHeading(frame: frame)
+            return
+        }
+
+        // Recompute a fresh seed by clearing and calling the full path,
+        // then blend prior ↔ fresh. Restore prior on failure.
+        routeSeed = nil
+        guard seedAlignmentFromGPSHeading(frame: frame), let fresh = routeSeed else {
+            routeSeed = prior
+            return
+        }
+
+        let a = seedRefreshSmoothing
+        routeSeed = RouteSeed(
+            offsetXZ: prior.offsetXZ * (1 - a) + fresh.offsetXZ * a,
+            yaw: blendYaw(prior.yaw, fresh.yaw, alpha: a)
+        )
+    }
+
+    /// Linearly blends two yaw angles taking the shortest arc, so 359° and
+    /// 1° blend toward 0° rather than sweeping through 180°.
+    private func blendYaw(_ from: Float, _ to: Float, alpha: Float) -> Float {
+        var diff = to - from
+        while diff >  .pi { diff -= 2 * .pi }
+        while diff < -.pi { diff += 2 * .pi }
+        return from + diff * alpha
+    }
+
     // MARK: - Manual Alignment
 
     /// Applies the user's manual position and rotation corrections to the route group.
@@ -817,6 +860,15 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
             if now - lastHandPoseTime >= handPoseInterval {
                 lastHandPoseTime = now
                 processHandPose(frame: frame)
+            }
+
+            // Slice 4: keep refining the GPS+heading seed during the run so
+            // pending items benefit from continued localization. Already-
+            // committed items are anchored to the AR world and never move.
+            if now - lastSeedRefreshAt >= seedRefreshInterval {
+                lastSeedRefreshAt = now
+                refineSeedFromGPSHeading(frame: frame)
+                applyManualAlignment()
             }
 
             // Just-in-time placement: as the camera advances, commit any
@@ -974,10 +1026,6 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
                 logCollectionConsole("check#\(collectionCheckSerial) \(reason)", force: true)
             }
             return
-        }
-
-        if let frozen = frozenRouteWorldTransform {
-            routeGroupNode.simdWorldTransform = frozen
         }
 
         if lastSkipReasonLogged != nil {
