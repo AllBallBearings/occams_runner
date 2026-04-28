@@ -23,12 +23,18 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
     var onNearestItemDistance: (Double?) -> Void
     var onItemCollected: (UUID) -> Void
     var onDebugTick: (String) -> Void
+    var onStartPlacementDebugUpdate: (String) -> Void
 
     /// Shared state object written by SwiftUI gesture handlers and read each
     /// AR frame to apply manual position / rotation corrections to the route.
     var manualAlignment: ManualAlignmentState?
+    var headingDegrees: Double = 0
 
     private let routeGroupNode = SCNNode()
+    private let startGuidanceNode = SCNNode()
+    private var startGuidanceWorldPosition: SIMD3<Float>?
+    private var startGuidanceAnchorLocation: CLLocation?
+    private let guidanceOrange = UIColor(red: 1.0, green: 0.42, blue: 0.02, alpha: 1.0)
     private var pathNodes: [SCNNode] = []
     private(set) var coinNodes: [UUID: SCNNode] = [:]
     private(set) var pendingCollectionIds: Set<UUID> = []
@@ -74,8 +80,12 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
 
     private var statusTimer: Timer?
     private var collectionTimer: Timer?
+    private var lastStartPlacementDebugAt: TimeInterval = 0
 
-    private let startGateDistanceMeters: Double = 40
+    /// GPS gate before AR relocalization begins. 3 m is roughly 10 ft, which is
+    /// as tight as we can reasonably ask from phone GPS without making the gate
+    /// impossible to satisfy outdoors.
+    private let startGateDistanceMeters: Double = 3
 
     // Base Y offset applied to the route group so objects sit at chest height.
     // The manual alignment adds onto this baseline.
@@ -89,7 +99,8 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
         onAlignmentUpdate: @escaping (ARAlignmentState, Double, Double?, Bool) -> Void,
         onNearestItemDistance: @escaping (Double?) -> Void,
         onItemCollected: @escaping (UUID) -> Void,
-        onDebugTick: @escaping (String) -> Void
+        onDebugTick: @escaping (String) -> Void,
+        onStartPlacementDebugUpdate: @escaping (String) -> Void
     ) {
         self.route = route
         self.quest = quest
@@ -99,6 +110,7 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
         self.onNearestItemDistance = onNearestItemDistance
         self.onItemCollected = onItemCollected
         self.onDebugTick = onDebugTick
+        self.onStartPlacementDebugUpdate = onStartPlacementDebugUpdate
         super.init()
 
         // Both timers run on the main RunLoop so all coinNodes access
@@ -131,6 +143,10 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
         if routeGroupNode.parent == nil {
             arView.scene.rootNode.addChildNode(routeGroupNode)
         }
+        if startGuidanceNode.parent == nil {
+            arView.scene.rootNode.addChildNode(startGuidanceNode)
+            buildStartGuidanceBeacon()
+        }
 
         // Shift the entire route (path + coins) down ~1 ft so objects
         // appear at chest/waist height rather than eye/head height.
@@ -141,6 +157,7 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
         buildBoxNodes(forceRebuild: true)
         setupArrowIndicator()
         updateAlignmentStatusFromGPS()
+        updateRouteNodeVisibility()
     }
 
     func applyRunMode(_ newMode: ARRunMode) {
@@ -150,6 +167,8 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
 
         switch newMode {
         case .running:
+            startGuidanceWorldPosition = nil
+            startGuidanceAnchorLocation = nil
             if previousMode != .realigning {
                 // Fresh run start — reset timing and tick counter
                 runStartedAt = Date()
@@ -169,6 +188,8 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
             consecutiveGoodFrames = 0
             consecutiveOutOfRangeGPS = 0
             scanStartedAt = nil
+            startGuidanceWorldPosition = nil
+            startGuidanceAnchorLocation = nil
             alignmentState = .scanning
         }
 
@@ -177,18 +198,21 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
 
     private func updateRouteNodeVisibility() {
         assert(Thread.isMainThread)
-        // Nothing rendered until the user is near the start gate.
-        let nearStart = alignmentState != .moveToStart
-        let showPath = nearStart && (runMode == .aligning || runMode == .realigning)
+        let showAlignedRoute = alignmentLocked && alignmentState == .locked
+        let showPath = showAlignedRoute && (runMode == .aligning || runMode == .realigning)
+        let showCollectibles = showAlignedRoute || runMode == .running
         for node in pathNodes {
             node.isHidden = !showPath
         }
         for node in coinNodes.values {
-            node.isHidden = !nearStart
+            node.isHidden = !showCollectibles
         }
         for node in boxNodes.values {
-            node.isHidden = !nearStart
+            node.isHidden = !showCollectibles
         }
+        startGuidanceNode.isHidden =
+            !(runMode == .aligning || runMode == .realigning) ||
+            alignmentState == .locked
     }
 
     func updateQuest(_ quest: Quest, dataStore: DataStore) {
@@ -448,8 +472,8 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
     private func setupArrowIndicator() {
         guard let cameraNode = arView?.pointOfView else { return }
         let arrow = createArrowIndicatorNode()
-        // Sit at the bottom-center of the view: centered (x=0), below center (y=-0.25), 0.7 m in front
-        arrow.position = SCNVector3(0, -0.25, -0.7)
+        // Bottom-center in camera space, visually just above the Start Quest button.
+        arrow.position = SCNVector3(0, -0.29, -0.74)
         arrow.isHidden = true
         // Always draw on top of AR geometry so it isn't occluded by route nodes
         arrow.renderingOrder = 100
@@ -458,31 +482,38 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
     }
 
     private func createArrowIndicatorNode() -> SCNNode {
-        let mat = SCNMaterial()
-        mat.diffuse.contents  = UIColor.orange
-        mat.emission.contents = UIColor(red: 1.0, green: 0.5, blue: 0.0, alpha: 1.0)
-        mat.isDoubleSided = true
-
-        // Shaft: thin cylinder along +Y
-        let shaft = SCNCylinder(radius: 0.006, height: 0.055)
-        shaft.materials = [mat]
-        let shaftNode = SCNNode(geometry: shaft)
-
-        // Head: cone with tip at +Y, base at shaft top
-        let head = SCNCone(topRadius: 0, bottomRadius: 0.018, height: 0.035)
-        head.materials = [mat]
-        let headNode = SCNNode(geometry: head)
-        headNode.position = SCNVector3(0, 0.045, 0)
-
         let container = SCNNode()
-        container.addChildNode(shaftNode)
-        container.addChildNode(headNode)
+        let visual = SCNNode()
+        visual.eulerAngles.x = -.pi / 2
+
+        let bodyShape = SCNShape(path: directionalArrowPath(), extrusionDepth: 0.008)
+        bodyShape.chamferRadius = 0.0015
+        bodyShape.materials = [
+            arrowMaterial(color: guidanceOrange, emission: 0.28, alpha: 0.86),
+            arrowMaterial(color: UIColor(red: 0.72, green: 0.18, blue: 0.0, alpha: 1.0), emission: 0.06, alpha: 0.72)
+        ]
+        let bodyNode = SCNNode(geometry: bodyShape)
+        bodyNode.renderingOrder = 101
+        visual.addChildNode(bodyNode)
+
+        container.addChildNode(visual)
         return container
     }
 
     private func updateArrowDirection() {
         guard let arrow = arrowIndicatorNode,
               let cameraNode = arView?.pointOfView else { return }
+
+        if (runMode == .aligning || runMode == .realigning) && alignmentState != .locked {
+            guard let targetPosition = startGuidanceWorldPosition else {
+                arrow.isHidden = true
+                return
+            }
+
+            arrow.isHidden = false
+            pointArrow(arrow, from: cameraNode, toward: targetPosition)
+            return
+        }
 
         guard runMode == .running, !coinNodes.isEmpty else {
             arrow.isHidden = true
@@ -506,28 +537,60 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
         }
 
         arrow.isHidden = false
+        pointArrow(arrow, from: cameraNode, toward: target.worldPosition)
+    }
 
-        // Compute direction from arrow's position to the coin, in camera-local space
-        let coinCamLocal  = cameraNode.convertPosition(target.worldPosition, from: nil)
+    private func pointArrow(_ arrow: SCNNode, from cameraNode: SCNNode, toward targetWorldPosition: SCNVector3) {
+        let targetCamLocal = cameraNode.convertPosition(targetWorldPosition, from: nil)
         let arrowCamLocal = arrow.position
         let dir = simd_float3(
-            coinCamLocal.x - arrowCamLocal.x,
-            coinCamLocal.y - arrowCamLocal.y,
-            coinCamLocal.z - arrowCamLocal.z
+            targetCamLocal.x - arrowCamLocal.x,
+            0,
+            targetCamLocal.z - arrowCamLocal.z
         )
         guard simd_length(dir) > 0.01 else { return }
-        let dirNorm = simd_normalize(dir)
+        arrow.simdOrientation = simd_quatf(
+            angle: atan2(-dir.x, -dir.z),
+            axis: simd_float3(0, 1, 0)
+        )
+    }
 
-        // Rotate arrow so its +Y tip axis points toward the coin
-        let yAxis = simd_float3(0, 1, 0)
-        let dot = simd_dot(yAxis, dirNorm)
-        if dot > 0.9999 {
-            arrow.simdOrientation = simd_quatf(ix: 0, iy: 0, iz: 0, r: 1)
-        } else if dot < -0.9999 {
-            arrow.simdOrientation = simd_quatf(angle: .pi, axis: simd_float3(1, 0, 0))
-        } else {
-            arrow.simdOrientation = simd_quatf(from: yAxis, to: dirNorm)
-        }
+    private func pointArrow(_ arrow: SCNNode, from cameraNode: SCNNode, toward targetWorldPosition: SIMD3<Float>) {
+        pointArrow(
+            arrow,
+            from: cameraNode,
+            toward: SCNVector3(
+                targetWorldPosition.x,
+                targetWorldPosition.y,
+                targetWorldPosition.z
+            )
+        )
+    }
+
+    private func directionalArrowPath() -> UIBezierPath {
+        let path = UIBezierPath()
+        path.move(to: CGPoint(x: 0.0, y: 0.105))
+        path.addLine(to: CGPoint(x: 0.075, y: 0.015))
+        path.addLine(to: CGPoint(x: 0.038, y: 0.018))
+        path.addLine(to: CGPoint(x: 0.038, y: -0.105))
+        path.addLine(to: CGPoint(x: -0.038, y: -0.105))
+        path.addLine(to: CGPoint(x: -0.038, y: 0.018))
+        path.addLine(to: CGPoint(x: -0.075, y: 0.015))
+        path.close()
+        return path
+    }
+
+    private func arrowMaterial(color: UIColor, emission: CGFloat, alpha: CGFloat) -> SCNMaterial {
+        let mat = SCNMaterial()
+        mat.diffuse.contents = color.withAlphaComponent(alpha)
+        mat.emission.contents = color.withAlphaComponent(emission)
+        mat.specular.contents = UIColor(red: 1.0, green: 0.78, blue: 0.35, alpha: 0.75)
+        mat.shininess = 0.25
+        mat.lightingModel = .physicallyBased
+        mat.blendMode = .alpha
+        mat.isDoubleSided = true
+        mat.writesToDepthBuffer = false
+        return mat
     }
 
     // MARK: - Manual Alignment
@@ -624,6 +687,9 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
     }
 
     func session(_ session: ARSession, didUpdate frame: ARFrame) {
+        updateStartGuidanceBeacon(frame: frame)
+        updateArrowDirection()
+
         if runMode == .running {
             let now = frame.timestamp
             if now - lastHandPoseTime >= handPoseInterval {
@@ -873,6 +939,327 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
 
     // MARK: - Nodes
 
+    private func buildStartGuidanceBeacon() {
+        startGuidanceNode.childNodes.forEach { $0.removeFromParentNode() }
+
+        let markerOrange = guidanceOrange
+
+        func solidGlowMaterial(alpha: CGFloat, emissionAlpha: CGFloat) -> SCNMaterial {
+            let mat = SCNMaterial()
+            mat.diffuse.contents = markerOrange.withAlphaComponent(alpha)
+            mat.emission.contents = markerOrange.withAlphaComponent(emissionAlpha)
+            mat.lightingModel = .constant
+            mat.blendMode = .add
+            mat.isDoubleSided = true
+            mat.writesToDepthBuffer = false
+            return mat
+        }
+
+        func texturedGlowMaterial(_ image: UIImage) -> SCNMaterial {
+            let mat = SCNMaterial()
+            mat.diffuse.contents = image
+            mat.emission.contents = image
+            mat.lightingModel = .constant
+            mat.blendMode = .add
+            mat.isDoubleSided = true
+            mat.writesToDepthBuffer = false
+            return mat
+        }
+
+        let floorHalo = SCNCylinder(radius: 0.92, height: 0.01)
+        floorHalo.radialSegmentCount = 128
+        floorHalo.materials = [solidGlowMaterial(alpha: 0.14, emissionAlpha: 0.55)]
+        let floorHaloNode = SCNNode(geometry: floorHalo)
+        floorHaloNode.opacity = 0.72
+        startGuidanceNode.addChildNode(floorHaloNode)
+
+        let floorDisk = SCNCylinder(radius: 0.68, height: 0.014)
+        floorDisk.radialSegmentCount = 128
+        floorDisk.materials = [solidGlowMaterial(alpha: 0.42, emissionAlpha: 0.95)]
+        let floorDiskNode = SCNNode(geometry: floorDisk)
+        floorDiskNode.position.y = 0.006
+        startGuidanceNode.addChildNode(floorDiskNode)
+
+        let columnTexture = verticalBeaconTexture(color: markerOrange)
+        let column = SCNCylinder(radius: 0.68, height: 1.75)
+        column.radialSegmentCount = 96
+        column.materials = [
+            texturedGlowMaterial(columnTexture),
+            solidGlowMaterial(alpha: 0.04, emissionAlpha: 0.12),
+            solidGlowMaterial(alpha: 0.36, emissionAlpha: 0.85)
+        ]
+        let columnNode = SCNNode(geometry: column)
+        columnNode.position.y = 0.875
+        columnNode.opacity = 0.86
+        startGuidanceNode.addChildNode(columnNode)
+
+        let outerGlow = SCNCylinder(radius: 0.78, height: 1.68)
+        outerGlow.radialSegmentCount = 96
+        outerGlow.materials = [texturedGlowMaterial(verticalBeaconTexture(color: markerOrange, peakAlpha: 0.18))]
+        let outerGlowNode = SCNNode(geometry: outerGlow)
+        outerGlowNode.position.y = 0.84
+        outerGlowNode.opacity = 0.55
+        startGuidanceNode.addChildNode(outerGlowNode)
+
+        let floorPulse = SCNAction.sequence([
+            .group([
+                .scale(to: 1.08, duration: 1.15),
+                .fadeOpacity(to: 0.48, duration: 1.15)
+            ]),
+            .group([
+                .scale(to: 1.0, duration: 1.15),
+                .fadeOpacity(to: 0.72, duration: 1.15)
+            ])
+        ])
+        floorHaloNode.runAction(.repeatForever(floorPulse))
+
+        let columnPulse = SCNAction.sequence([
+            .fadeOpacity(to: 0.68, duration: 1.1),
+            .fadeOpacity(to: 0.86, duration: 1.1)
+        ])
+        columnNode.runAction(.repeatForever(columnPulse))
+    }
+
+    private func verticalBeaconTexture(
+        color: UIColor,
+        peakAlpha: CGFloat = 0.36,
+        size: CGSize = CGSize(width: 16, height: 256)
+    ) -> UIImage {
+        let renderer = UIGraphicsImageRenderer(size: size)
+        return renderer.image { context in
+            let cgContext = context.cgContext
+            let colorSpace = CGColorSpaceCreateDeviceRGB()
+            let colors = [
+                color.withAlphaComponent(peakAlpha * 0.95).cgColor,
+                color.withAlphaComponent(peakAlpha).cgColor,
+                color.withAlphaComponent(peakAlpha * 0.42).cgColor,
+                color.withAlphaComponent(0.0).cgColor
+            ] as CFArray
+            let locations: [CGFloat] = [0.0, 0.22, 0.68, 1.0]
+            guard let gradient = CGGradient(
+                colorsSpace: colorSpace,
+                colors: colors,
+                locations: locations
+            ) else { return }
+            cgContext.drawLinearGradient(
+                gradient,
+                start: CGPoint(x: size.width / 2, y: size.height),
+                end: CGPoint(x: size.width / 2, y: 0),
+                options: []
+            )
+        }
+    }
+
+    private func updateStartGuidanceBeacon(frame: ARFrame) {
+        guard runMode == .aligning || runMode == .realigning,
+              alignmentState != .locked else {
+            startGuidanceNode.isHidden = true
+            startGuidanceWorldPosition = nil
+            startGuidanceAnchorLocation = nil
+            publishStartPlacementDebugIfNeeded(frame: frame, status: "inactive")
+            return
+        }
+
+        guard let current = locationService.currentLocation,
+              let start = route.startLocation else {
+            startGuidanceNode.isHidden = true
+            startGuidanceWorldPosition = nil
+            startGuidanceAnchorLocation = nil
+            publishStartPlacementDebugIfNeeded(frame: frame, status: "missing GPS/start")
+            return
+        }
+
+        if current.distance(from: start) <= startGateDistanceMeters {
+            startGuidanceNode.isHidden = true
+            startGuidanceWorldPosition = nil
+            startGuidanceAnchorLocation = nil
+            publishStartPlacementDebugIfNeeded(
+                frame: frame,
+                current: current,
+                start: start,
+                status: "inside GPS gate - marker hidden"
+            )
+            return
+        }
+
+        let shouldResolve = shouldResolveStartGuidanceAnchor(from: current)
+        if shouldResolve {
+            startGuidanceWorldPosition = resolvedStartGuidanceWorldPosition(
+                frame: frame,
+                current: current,
+                start: start
+            )
+            startGuidanceAnchorLocation = current
+        }
+
+        guard let worldPosition = startGuidanceWorldPosition else {
+            startGuidanceNode.isHidden = true
+            publishStartPlacementDebugIfNeeded(
+                frame: frame,
+                current: current,
+                start: start,
+                status: "resolve failed",
+                resolvedThisFrame: shouldResolve
+            )
+            return
+        }
+
+        startGuidanceNode.simdPosition = worldPosition
+        startGuidanceNode.isHidden = false
+        publishStartPlacementDebugIfNeeded(
+            frame: frame,
+            current: current,
+            start: start,
+            status: "visible",
+            resolvedThisFrame: shouldResolve
+        )
+    }
+
+    private func shouldResolveStartGuidanceAnchor(from current: CLLocation) -> Bool {
+        guard let anchor = startGuidanceAnchorLocation,
+              startGuidanceWorldPosition != nil else { return true }
+        return current.distance(from: anchor) > 2.0
+    }
+
+    private func resolvedStartGuidanceWorldPosition(
+        frame: ARFrame,
+        current: CLLocation,
+        start: CLLocation
+    ) -> SIMD3<Float>? {
+        let distance = current.distance(from: start)
+        let bearing = ARCoordinator.bearingDegrees(
+            from: current.coordinate,
+            to: start.coordinate
+        )
+        let relativeBearing = (bearing - headingDegrees + 360)
+            .truncatingRemainder(dividingBy: 360)
+        let angle = Float(relativeBearing * .pi / 180)
+        let visibleDistance = Float(min(distance, 60.0))
+
+        let camera = frame.camera.transform
+        let cameraPosition = SIMD3<Float>(
+            camera.columns.3.x,
+            camera.columns.3.y,
+            camera.columns.3.z
+        )
+        let rightFlat = SIMD3<Float>(camera.columns.0.x, 0, camera.columns.0.z)
+        let forwardFlat = SIMD3<Float>(-camera.columns.2.x, 0, -camera.columns.2.z)
+        guard simd_length(rightFlat) > 0.001,
+              simd_length(forwardFlat) > 0.001 else {
+            return nil
+        }
+
+        let right = simd_normalize(rightFlat)
+        let forward = simd_normalize(forwardFlat)
+        let horizontalOffset =
+            right * (sin(angle) * visibleDistance) +
+            forward * (cos(angle) * visibleDistance)
+
+        return SIMD3<Float>(
+            cameraPosition.x + horizontalOffset.x,
+            cameraPosition.y - 1.5,
+            cameraPosition.z + horizontalOffset.z
+        )
+    }
+
+    private func publishStartPlacementDebugIfNeeded(
+        frame: ARFrame,
+        current: CLLocation? = nil,
+        start: CLLocation? = nil,
+        status: String,
+        resolvedThisFrame: Bool = false
+    ) {
+        guard frame.timestamp - lastStartPlacementDebugAt >= 0.5 else { return }
+        lastStartPlacementDebugAt = frame.timestamp
+
+        let camera = frame.camera.transform
+        let cameraPosition = SIMD3<Float>(
+            camera.columns.3.x,
+            camera.columns.3.y,
+            camera.columns.3.z
+        )
+
+        let current = current ?? locationService.currentLocation
+        let start = start ?? route.startLocation
+        let distance = current.flatMap { current in start.map { current.distance(from: $0) } }
+        let bearing = current.flatMap { current in
+            start.map {
+                ARCoordinator.bearingDegrees(
+                    from: current.coordinate,
+                    to: $0.coordinate
+                )
+            }
+        }
+        let relativeBearing = bearing.map {
+            ($0 - headingDegrees + 360).truncatingRemainder(dividingBy: 360)
+        }
+        let anchorShift = current.flatMap { current in
+            startGuidanceAnchorLocation.map { current.distance(from: $0) }
+        }
+
+        let lines = [
+            "START PLACEMENT DEBUG",
+            "status: \(status) resolve: \(resolvedThisFrame ? "yes" : "no")",
+            "align: \(alignmentState.rawValue) conf: \(String(format: "%.0f%%", alignmentConfidence * 100)) locked: \(alignmentLocked ? "yes" : "no")",
+            "current: \(Self.locationString(current))",
+            "recorded start: \(Self.locationString(start))",
+            "dist: \(Self.distanceString(distance)) gate: \(String(format: "%.1fm", startGateDistanceMeters)) GPS acc: \(Self.accuracyString(current))",
+            "heading: \(String(format: "%.1f", headingDegrees)) bearing: \(Self.degreesString(bearing)) rel: \(Self.degreesString(relativeBearing))",
+            "recorded start heading: \(Self.routeStartHeadingString(route))",
+            "anchor move: \(Self.distanceString(anchorShift))",
+            "camera world: \(Self.vectorString(cameraPosition))",
+            "marker world: \(Self.vectorString(startGuidanceWorldPosition))"
+        ]
+
+        DispatchQueue.main.async {
+            self.onStartPlacementDebugUpdate(lines.joined(separator: "\n"))
+        }
+
+        #if DEBUG
+        if resolvedThisFrame || status != "visible" {
+            print("[ARRunner][StartPlacement] \(lines.joined(separator: " | "))")
+        }
+        #endif
+    }
+
+    private static func locationString(_ location: CLLocation?) -> String {
+        guard let location else { return "nil" }
+        return String(
+            format: "%.7f, %.7f",
+            location.coordinate.latitude,
+            location.coordinate.longitude
+        )
+    }
+
+    private static func accuracyString(_ location: CLLocation?) -> String {
+        guard let location else { return "nil" }
+        return String(format: "±%.1fm", location.horizontalAccuracy)
+    }
+
+    private static func distanceString(_ distance: Double?) -> String {
+        guard let distance else { return "nil" }
+        return String(format: "%.2fm / %.1fft", distance, distance * 3.28084)
+    }
+
+    private static func degreesString(_ degrees: Double?) -> String {
+        guard let degrees else { return "nil" }
+        return String(format: "%.1f°", degrees)
+    }
+
+    private static func routeStartHeadingString(_ route: RecordedRoute) -> String {
+        guard let heading = route.startHeadingDegrees else { return "nil" }
+        let source = (route.startHeadingIsTrueNorth ?? false) ? "true" : "mag"
+        let accuracy = route.startHeadingAccuracy.map {
+            String(format: " ±%.1f°", $0)
+        } ?? ""
+        return String(format: "%.1f°%@ %@", heading, accuracy, source)
+    }
+
+    private static func vectorString(_ vector: SIMD3<Float>?) -> String {
+        guard let vector else { return "nil" }
+        return String(format: "x %.2f y %.2f z %.2f", vector.x, vector.y, vector.z)
+    }
+
     private func markerNode(color: UIColor) -> SCNNode {
         let sphere = SCNSphere(radius: 0.25)
         let mat = SCNMaterial()
@@ -975,6 +1362,20 @@ extension ARCoordinator {
         let dy = a.y - b.y
         let dz = a.z - b.z
         return sqrt(dx * dx + dy * dy + dz * dz)
+    }
+
+    static func bearingDegrees(
+        from: CLLocationCoordinate2D,
+        to: CLLocationCoordinate2D
+    ) -> Double {
+        let lat1 = from.latitude * .pi / 180
+        let lat2 = to.latitude * .pi / 180
+        let dLon = (to.longitude - from.longitude) * .pi / 180
+        let y = sin(dLon) * cos(lat2)
+        let x = cos(lat1) * sin(lat2) -
+            sin(lat1) * cos(lat2) * cos(dLon)
+        return (atan2(y, x) * 180 / .pi + 360)
+            .truncatingRemainder(dividingBy: 360)
     }
 
     /// Returns items eligible for collection — not collected, not pending, and with a node.
