@@ -21,6 +21,9 @@ class LocationService: NSObject, ObservableObject {
     @Published var recordedPoints: [RoutePoint] = []
     @Published var currentSpeed: Double = 0
     @Published var currentAltitude: Double = 0
+    /// Latest compass heading in degrees, true north preferred. `nil` until the
+    /// first heading update arrives (or device has no magnetometer).
+    @Published var currentHeadingDegrees: Double?
 
     @Published var preciseCaptureQuality: RouteCaptureQuality = RouteCaptureQuality(
         matchedSampleRatio: 0,
@@ -122,6 +125,16 @@ class LocationService: NSObject, ObservableObject {
     private var localFrameBuffer: [LocalFrameSample] = []
     private var localDraftBySampleId: [UUID: LocalDraftSample] = [:]
     private var lastEncryptedWorldMapData: Data?
+    /// Compass heading at recording start. Set in `startRecording()` (or
+    /// latched on first heading delivery if CLHeading wasn't ready yet) and
+    /// persisted into the saved route for replay-time alignment.
+    private var headingAtRecordStart: Double?
+    /// AR-world camera yaw (radians, CCW around +Y) at recording start.
+    /// Latched together with `headingAtRecordStart` so the seed math at
+    /// replay time can recover the relationship between the recording
+    /// AR-world frame (whose yaw is set at AR session start, not at
+    /// recording start) and true north.
+    private var arYawAtRecordStart: Double?
     private var captureLogURL: URL?
     private var lastLoggedQualitySignature: String?
     private let logTimestampFormatter = ISO8601DateFormatter()
@@ -157,12 +170,16 @@ class LocationService: NSObject, ObservableObject {
 
     func startUpdating() {
         locationManager.startUpdatingLocation()
+        if CLLocationManager.headingAvailable() {
+            locationManager.startUpdatingHeading()
+        }
         resetAltitudeState()
         beginAltimeterUpdates()
     }
 
     func stopUpdating() {
         locationManager.stopUpdatingLocation()
+        locationManager.stopUpdatingHeading()
         altimeter.stopRelativeAltitudeUpdates()
         stopPreciseCapture()
     }
@@ -178,6 +195,8 @@ class LocationService: NSObject, ObservableObject {
         localFrameBuffer = []
         localDraftBySampleId = [:]
         lastEncryptedWorldMapData = nil
+        headingAtRecordStart = currentHeadingDegrees
+        arYawAtRecordStart = currentARWorldYaw()
 
         preciseCaptureQuality = RouteCaptureQuality(
             matchedSampleRatio: 0,
@@ -190,6 +209,9 @@ class LocationService: NSObject, ObservableObject {
         logDebug("Thresholds: match>=65%, features>=75, tracking>=65%, worldMap=true")
 
         locationManager.startUpdatingLocation()
+        if CLLocationManager.headingAvailable() {
+            locationManager.startUpdatingHeading()
+        }
         altimeter.stopRelativeAltitudeUpdates()
         resetAltitudeState()
         beginAltimeterUpdates()
@@ -297,7 +319,15 @@ class LocationService: NSObject, ObservableObject {
             encryptedWorldMapData: lastEncryptedWorldMapData,
             captureQuality: quality,
             preciseEnabled: true,
-            recordingMode: recordingMode
+            recordingMode: recordingMode,
+            recordedHeadingDegrees: headingAtRecordStart,
+            recordedCameraYawAR: arYawAtRecordStart,
+            // Auto-flag: if ARKit was struggling during recording (low light,
+            // texture-poor surroundings), localTrack is too unreliable to
+            // drive item placement at replay. The flag biases replay toward
+            // GPS-primary positioning, which doesn't depend on visual
+            // feature continuity at all.
+            useGPSPrimary: quality.localTrackUnreliable ? true : nil
         )
     }
 
@@ -654,6 +684,43 @@ extension LocationService: CLLocationManagerDelegate {
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
         logDebug("Location error: \(error.localizedDescription)")
         print("Location error: \(error.localizedDescription)")
+    }
+
+    func locationManager(_ manager: CLLocationManager, didUpdateHeading newHeading: CLHeading) {
+        // Prefer true (geographic) north; fall back to magnetic if true north
+        // isn't yet calibrated (CLHeading returns -1 in that case).
+        let heading = newHeading.trueHeading >= 0 ? newHeading.trueHeading : newHeading.magneticHeading
+        guard heading >= 0 else { return }
+
+        // Dedupe sub-degree updates so SwiftUI consumers don't re-render at
+        // 10+ Hz when the user's facing direction is essentially unchanged.
+        if let prev = currentHeadingDegrees, abs(prev - heading) < 0.5 { return }
+        currentHeadingDegrees = heading
+
+        // Latch the first heading after recording starts. Avoids missing the
+        // record-start moment if CLHeading hadn't fired yet at that point.
+        // Latch the AR-world camera yaw at the same moment so the recording
+        // frame ↔ true-north relationship is recoverable at replay time.
+        if isRecording, headingAtRecordStart == nil {
+            headingAtRecordStart = heading
+            arYawAtRecordStart = currentARWorldYaw()
+        }
+    }
+
+    /// Returns the AR-world camera yaw (CCW around +Y, radians) from the most
+    /// recent ARFrame, or `nil` if no frame is available yet. Same convention
+    /// used by `ARCoordinator.seedAlignmentFromGPSHeading`.
+    private func currentARWorldYaw() -> Double? {
+        guard let cam = arSession.currentFrame?.camera.transform else { return nil }
+        // Camera looks along its -Z axis. Flatten the forward into the XZ
+        // plane and recover yaw via atan2.
+        let fx = -cam.columns.2.x
+        let fz = -cam.columns.2.z
+        let length = (fx * fx + fz * fz).squareRoot()
+        guard length > 1e-4 else { return nil }
+        let nx = fx / length
+        let nz = fz / length
+        return Double(atan2(-nx, -nz))
     }
 }
 

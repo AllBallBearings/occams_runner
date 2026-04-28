@@ -385,6 +385,7 @@ struct RoutesListView: View {
                     .background(Color(red: 0.68, green: 0.70, blue: 0.82))
                     .clipShape(Circle())
             }
+            .buttonStyle(.borderless)
         }
     }
 

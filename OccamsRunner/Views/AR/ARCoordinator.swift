@@ -23,6 +23,10 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
     var onNearestItemDistance: (Double?) -> Void
     var onItemCollected: (UUID) -> Void
     var onDebugTick: (String) -> Void
+    /// Reports whether item placement is currently using the GPS-primary
+    /// path (true) or the localTrack/ARKit-primary path (false). Drives the
+    /// "GPS" / "AR" badge in the alignment HUD.
+    var onPlacementModeChanged: (Bool) -> Void = { _ in }
 
     /// Shared state object written by SwiftUI gesture handlers and read each
     /// AR frame to apply manual position / rotation corrections to the route.
@@ -34,6 +38,73 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
     private(set) var pendingCollectionIds: Set<UUID> = []
     private(set) var boxNodes: [UUID: SCNNode] = [:]
     private var pendingBoxIds: Set<UUID> = []
+
+    /// ARAnchors we created, keyed by item/box id. Presence in this dict IS
+    /// the "committed" placement state — an item is `.committed` iff its
+    /// anchor exists here, otherwise it's `.pending`. See
+    /// `docs/AR_ALIGNMENT_REFACTOR.md` for the full lifecycle.
+    private var itemAnchors: [UUID: QuestItemAnchor] = [:]
+    private var boxAnchors:  [UUID: QuestBoxAnchor]  = [:]
+
+    /// Distance (m) from the camera at which a pending item commits to a
+    /// permanent ARAnchor. Tuned so coins materialize a comfortable few
+    /// strides ahead of the runner without revealing the entire route.
+    private let commitHorizonMeters: Float = 12.0
+
+    /// Throttle: don't run the horizon evaluator on every AR frame. 10 Hz is
+    /// plenty for spawning coins as a runner approaches at human speeds.
+    private var lastCommitHorizonCheckAt: TimeInterval = 0
+    private let commitHorizonCheckInterval: TimeInterval = 0.1
+
+    /// GPS+heading-derived base pose for `routeGroupNode`. Manual alignment
+    /// gestures add their offsets on top. `nil` when any input was missing
+    /// (no GPS, no heading, route lacks recorded heading) — in that case the
+    /// route node sits at the AR origin and the user must align manually.
+    private struct RouteSeed { var offsetXZ: SIMD2<Float>; var yaw: Float }
+    private var routeSeed: RouteSeed?
+
+    /// Slice 4: how often to refresh `routeSeed` from GPS+heading during a run.
+    /// CoreLocation typically delivers ~1 Hz; refreshing more often is wasted
+    /// work. Each refresh is lowpassed by `seedRefreshSmoothing` so transient
+    /// GPS jitter doesn't snap pending-item commit positions.
+    private var lastSeedRefreshAt: TimeInterval = 0
+    private let seedRefreshInterval: TimeInterval = 1.0
+    /// 0.0 = ignore new fixes, 1.0 = snap to each new fix. The first seed
+    /// (when `routeSeed == nil`) always snaps regardless of this value.
+    private let seedRefreshSmoothing: Float = 0.25
+
+    // MARK: GPS-Primary Placement
+    //
+    // When ARKit's visual tracking is unreliable (low light, texture-poor
+    // environments, big lighting differences vs. recording time), `localTrack`
+    // can no longer be trusted to drive item placement. Instead we compute
+    // each pending item's world position directly from `geoTrack` projected
+    // through the runner's current GPS+heading. Already-committed items live
+    // on their own ARAnchors and aren't affected by mode switches.
+
+    /// Wall-clock time at which ARKit first reported `.limited(.insufficientFeatures)`
+    /// in the current degradation episode. Cleared when tracking returns to
+    /// `.normal` for at least one frame.
+    private var arTrackingDegradedSince: TimeInterval?
+    /// Once `arTrackingDegradedSince` has persisted this long, flip
+    /// `runtimeGPSPrimary` on. Avoids flapping on transient one-frame blips.
+    private let trackingDegradedDelay: TimeInterval = 5.0
+    /// Runtime override: forces GPS-primary placement until tracking recovers.
+    /// Independent of `route.useGPSPrimary` — that is the recording-time hint;
+    /// this is the runtime hint. Either being true means we use GPS placement.
+    private var runtimeGPSPrimary: Bool = false {
+        didSet {
+            guard oldValue != runtimeGPSPrimary else { return }
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.onPlacementModeChanged(self.effectiveGPSPrimary)
+            }
+        }
+    }
+    /// Combined recording-time hint + runtime override.
+    private var effectiveGPSPrimary: Bool {
+        (route.useGPSPrimary == true) || runtimeGPSPrimary
+    }
 
     private var arrowIndicatorNode: SCNNode?
 
@@ -52,7 +123,6 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
     private var collectionCheckSerial: UInt64 = 0
     private var lastSkipReasonLogged: String?
     private var lastHeartbeatAt: Date = .distantPast
-    private var frozenRouteWorldTransform: simd_float4x4?
 
     private var alignmentState: ARAlignmentState = .moveToStart {
         didSet {
@@ -64,7 +134,12 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
     /// Exponential moving average of per-frame raw confidence — smooths out
     /// transient tracking blips without introducing too much lag.
     private var smoothedConfidence: Double = 0
-    private var alignmentLocked = false
+    private var alignmentLocked = false {
+        didSet {
+            guard oldValue != alignmentLocked else { return }
+            DispatchQueue.main.async { self.updateRouteNodeVisibility() }
+        }
+    }
     private var consecutiveGoodFrames = 0
     private var scanStartedAt: Date?
     /// How many consecutive GPS readings have placed the user beyond the start gate.
@@ -75,7 +150,12 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
     private var statusTimer: Timer?
     private var collectionTimer: Timer?
 
-    private let startGateDistanceMeters: Double = 40
+    /// How close (m) the runner must be to the recorded start before scanning
+    /// runs at all. Was 40 m initially but felt much too lenient — at 30+ m
+    /// the path overlay would appear and the alignment would lock without the
+    /// runner ever being in position. ~15 m (≈50 ft) is tight enough to imply
+    /// "you're standing at the start" but wide enough to absorb GPS jitter.
+    private let startGateDistanceMeters: Double = 15
 
     // Base Y offset applied to the route group so objects sit at chest height.
     // The manual alignment adds onto this baseline.
@@ -102,8 +182,9 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
         super.init()
 
         // Both timers run on the main RunLoop so all coinNodes access
-        // (checkCollections, updateNearestItemDistance, buildCoinNodes, updateQuest)
-        // is single-threaded on main — no dictionary races possible.
+        // (checkCollections, updateNearestItemDistance, cleanupCollectedItems,
+        // updateQuest, evaluateCommitHorizon) is single-threaded on main —
+        // no dictionary races possible.
         statusTimer = Timer(timeInterval: 0.3, repeats: true) { [weak self] _ in
             self?.updateAlignmentStatusFromGPS()
             self?.updateNearestItemDistance()
@@ -132,15 +213,27 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
             arView.scene.rootNode.addChildNode(routeGroupNode)
         }
 
-        // Shift the entire route (path + coins) down ~1 ft so objects
-        // appear at chest/waist height rather than eye/head height.
+        // Shift the route's logical reference frame down ~1 ft so coins
+        // committed via that frame land at chest/waist height rather than
+        // eye/head height. (Path-ribbon nodes are still parented here for
+        // the alignment-guide preview; coin/box nodes are NOT parented here
+        // — they each get their own ARAnchor when committed.)
         routeGroupNode.position.y = baseRouteY
 
         buildRoutePath()
-        buildCoinNodes(forceRebuild: true)
-        buildBoxNodes(forceRebuild: true)
+        // No pre-spawning: coins and boxes commit just-in-time as the
+        // runner crosses each item's commit horizon during .running mode.
+        clearAllItemNodes()
         setupArrowIndicator()
         updateAlignmentStatusFromGPS()
+        seedAlignmentFromGPSHeading()
+        // Fire the initial placement-mode notification so the HUD badge
+        // reflects routes that recorded with `useGPSPrimary = true` from
+        // the moment the AR view appears.
+        let initial = effectiveGPSPrimary
+        DispatchQueue.main.async { [weak self] in
+            self?.onPlacementModeChanged(initial)
+        }
     }
 
     func applyRunMode(_ newMode: ARRunMode) {
@@ -155,14 +248,15 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
                 runStartedAt = Date()
                 collectionTickSerial = 0
             }
-            // Freeze route transform so alignment remains stable during collection.
-            frozenRouteWorldTransform = routeGroupNode.simdWorldTransform
+            // Slice 4: don't freeze `routeGroupNode`. Committed coins are
+            // independent of it (they live on their own ARAnchors), so we
+            // can keep refining the seed during the run. The seed only
+            // affects pending items via `evaluateCommitHorizon`.
+            lastSeedRefreshAt = 0
             // Keep session delegate active for hand pose detection during running.
             arView?.session.delegate = self
 
         case .aligning, .realigning:
-            // Unfreeze route transform so AR alignment can adjust it.
-            frozenRouteWorldTransform = nil
             // Restore frame callbacks for tracking updates.
             arView?.session.delegate = self
             alignmentLocked = false
@@ -170,6 +264,9 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
             consecutiveOutOfRangeGPS = 0
             scanStartedAt = nil
             alignmentState = .scanning
+            // Re-seed on each (re)alignment so the base pose tracks current GPS.
+            routeSeed = nil
+            seedAlignmentFromGPSHeading()
         }
 
         updateRouteNodeVisibility()
@@ -177,12 +274,18 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
 
     private func updateRouteNodeVisibility() {
         assert(Thread.isMainThread)
-        // Nothing rendered until the user is near the start gate.
-        let nearStart = alignmentState != .moveToStart
-        let showPath = nearStart && (runMode == .aligning || runMode == .realigning)
+        // Path overlay (start/end markers + ribbon) is purely an alignment
+        // guide — only show it once alignment is actually locked, otherwise
+        // a half-aligned route gets drawn while the user is still walking
+        // toward the start gate.
+        let showPath = alignmentLocked && (runMode == .aligning || runMode == .realigning)
         for node in pathNodes {
             node.isHidden = !showPath
         }
+        // Items can be visible regardless of lock state — they're committed
+        // by the horizon evaluator during running and live on their own
+        // anchors. Hiding them here is just a belt-and-suspenders default.
+        let nearStart = alignmentState != .moveToStart
         for node in coinNodes.values {
             node.isHidden = !nearStart
         }
@@ -195,7 +298,9 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
         // updateUIView is called on the main thread; keep coinNodes mutations there.
         assert(Thread.isMainThread)
         self.quest = quest
-        buildCoinNodes(forceRebuild: false)
+        // Only reconcile state — never spawn from this path. Spawning is the
+        // commit-horizon evaluator's job during .running mode.
+        cleanupCollectedItems()
     }
 
     // MARK: - Route + Coins
@@ -229,64 +334,307 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
         pathNodes.append(end)
     }
 
-    func buildCoinNodes(forceRebuild: Bool) {
+    /// Tears down every coin/box node and anchor and clears placement state.
+    /// Used on initial scene setup and on full rebuilds (e.g. force-rebuild
+    /// from tests). After this call every uncollected item is treated as
+    /// `.pending` again and will re-commit when the runner crosses its
+    /// commit horizon.
+    func clearAllItemNodes() {
+        assert(Thread.isMainThread)
+
+        if let session = arView?.session {
+            for anchor in itemAnchors.values { session.remove(anchor: anchor) }
+            for anchor in boxAnchors.values  { session.remove(anchor: anchor) }
+        }
+        itemAnchors.removeAll()
+        boxAnchors.removeAll()
+
+        for node in coinNodes.values { node.removeFromParentNode() }
+        coinNodes.removeAll()
+        pendingCollectionIds.removeAll()
+
+        for node in boxNodes.values { node.removeFromParentNode() }
+        boxNodes.removeAll()
+        pendingBoxIds.removeAll()
+    }
+
+    /// Reconciles existing node/anchor state against the live quest in dataStore:
+    /// removes nodes for items that have become `collected`, and clears stale
+    /// `pendingCollectionIds`. Does NOT spawn anything — committing happens via
+    /// `evaluateCommitHorizon()` during `.running` mode. Safe to call on every
+    /// SwiftUI render pass.
+    func cleanupCollectedItems() {
         assert(Thread.isMainThread)
         let currentQuest = dataStore.quests.first(where: { $0.id == quest.id }) ?? quest
 
-        if forceRebuild {
-            for node in coinNodes.values { node.removeFromParentNode() }
-            coinNodes.removeAll()
-        }
+        for item in currentQuest.items where item.collected {
+            // Fix 1: unblock the pending slot now that the dataStore has
+            // confirmed this item is collected.
+            pendingCollectionIds.remove(item.id)
 
-        for item in currentQuest.items {
-            if item.collected {
-                // Fix 1: unblock the pending slot now that the dataStore has
-                // confirmed this item is collected. Without this remove(), the
-                // ID stays in pendingCollectionIds forever.
-                pendingCollectionIds.remove(item.id)
-                if let existing = coinNodes[item.id] {
-                    existing.removeFromParentNode()
-                    coinNodes.removeValue(forKey: item.id)
-                }
-                continue
+            if let existing = coinNodes.removeValue(forKey: item.id) {
+                existing.removeFromParentNode()
             }
-
-            // Fix 2: also skip items that are in-flight (pending collection).
-            // Between Phase 2 removing the node from coinNodes and the dataStore
-            // confirming collected=true, a SwiftUI re-render can fire this path.
-            // Without the guard, buildCoinNodes would create a ghost node for the
-            // in-flight item.
-            if coinNodes[item.id] == nil,
-               !pendingCollectionIds.contains(item.id),
-               let local = item.resolvedLocalPosition(on: route) {
-                let coinNode = createCoinNode()
-                coinNode.simdPosition = local
-                coinNode.isHidden = alignmentState == .moveToStart
-                routeGroupNode.addChildNode(coinNode)
-                coinNodes[item.id] = coinNode
+            if let anchor = itemAnchors.removeValue(forKey: item.id) {
+                arView?.session.remove(anchor: anchor)
             }
         }
     }
 
-    func buildBoxNodes(forceRebuild: Bool) {
+    #if DEBUG
+    /// Test-only synchronous spawn path. ARKit cannot run in unit tests, so
+    /// there is no `ARSession` to add anchors to. This helper bypasses the
+    /// commit-horizon evaluator and the anchor mechanism entirely: it directly
+    /// creates SCNNodes for every uncollected item and parents them to
+    /// `routeGroupNode` (the legacy parent). Production code never calls
+    /// this — `evaluateCommitHorizon()` is the production spawn path.
+    func legacyForceSpawnPendingItems() {
         assert(Thread.isMainThread)
         let currentQuest = dataStore.quests.first(where: { $0.id == quest.id }) ?? quest
 
-        if forceRebuild {
-            for node in boxNodes.values { node.removeFromParentNode() }
-            boxNodes.removeAll()
-            pendingBoxIds.removeAll()
+        for item in currentQuest.items {
+            guard !item.collected,
+                  coinNodes[item.id] == nil,
+                  !pendingCollectionIds.contains(item.id),
+                  let local = item.resolvedLocalPosition(on: route) else { continue }
+            let coinNode = createCoinNode()
+            coinNode.simdPosition = local
+            coinNode.isHidden = alignmentState == .moveToStart
+            routeGroupNode.addChildNode(coinNode)
+            coinNodes[item.id] = coinNode
         }
 
         for box in currentQuest.boxes {
-            if boxNodes[box.id] == nil,
-               !pendingBoxIds.contains(box.id),
-               let local = box.resolvedLocalPosition(on: route) {
-                let node = createBoxNode()
-                node.simdPosition = local
-                node.isHidden = alignmentState == .moveToStart
-                routeGroupNode.addChildNode(node)
-                boxNodes[box.id] = node
+            guard boxNodes[box.id] == nil,
+                  !pendingBoxIds.contains(box.id),
+                  let local = box.resolvedLocalPosition(on: route) else { continue }
+            let node = createBoxNode()
+            node.simdPosition = local
+            node.isHidden = alignmentState == .moveToStart
+            routeGroupNode.addChildNode(node)
+            boxNodes[box.id] = node
+        }
+    }
+    #endif
+
+    // MARK: - Commit Horizon (Just-In-Time Anchored Placement)
+
+    /// For every still-`pending` item whose best-guess world position is within
+    /// `commitHorizonMeters` of the camera, create a permanent `QuestItemAnchor`
+    /// at that position. Box equivalents get `QuestBoxAnchor`. The actual scene
+    /// node is attached in `renderer(_:didAdd:for:)` once ARKit creates the
+    /// anchor's node.
+    ///
+    /// Called from the AR frame callback during `.running` mode, throttled to
+    /// `commitHorizonCheckInterval` so we don't recompute every coin's distance
+    /// 60×/second.
+    private func evaluateCommitHorizon(cameraWorldPos: SIMD3<Float>, frame: ARFrame) {
+        guard let arView else { return }
+        let currentQuest = dataStore.quests.first(where: { $0.id == quest.id }) ?? quest
+        let groupTransform = routeGroupNode.simdWorldTransform
+        let useGPSPlacement = effectiveGPSPrimary
+        // Snapshot the GPS-projection inputs once per call so we don't
+        // recompute camera yaw / heading direction vectors per item.
+        let gpsCtx: GPSPlacementContext? = useGPSPlacement ? makeGPSPlacementContext(frame: frame) : nil
+
+        for item in currentQuest.items {
+            guard !item.collected,
+                  itemAnchors[item.id] == nil,
+                  !pendingCollectionIds.contains(item.id) else { continue }
+
+            let world: SIMD3<Float>?
+            if let gpsCtx {
+                world = gpsPrimaryWorldPosition(forProgress: item.routeProgress,
+                                                verticalOffset: Float(item.verticalOffset),
+                                                ctx: gpsCtx)
+            } else if let local = item.resolvedLocalPosition(on: route) {
+                world = (groupTransform * SIMD4<Float>(local, 1)).translationXYZ
+            } else {
+                world = nil
+            }
+            guard let w = world else { continue }
+            if simd_distance(w, cameraWorldPos) <= commitHorizonMeters {
+                let anchor = QuestItemAnchor(itemId: item.id, transform: .translation(w))
+                arView.session.add(anchor: anchor)
+                itemAnchors[item.id] = anchor
+            }
+        }
+
+        for box in currentQuest.boxes {
+            guard boxAnchors[box.id] == nil,
+                  !pendingBoxIds.contains(box.id) else { continue }
+
+            let world: SIMD3<Float>?
+            if let gpsCtx {
+                world = gpsPrimaryWorldPosition(forProgress: box.routeProgress,
+                                                verticalOffset: Float(box.verticalOffsetMeters),
+                                                lateralOffset: Float(box.lateralOffsetMeters),
+                                                ctx: gpsCtx)
+            } else if let local = box.resolvedLocalPosition(on: route) {
+                world = (groupTransform * SIMD4<Float>(local, 1)).translationXYZ
+            } else {
+                world = nil
+            }
+            guard let w = world else { continue }
+            if simd_distance(w, cameraWorldPos) <= commitHorizonMeters {
+                let anchor = QuestBoxAnchor(boxId: box.id, transform: .translation(w))
+                arView.session.add(anchor: anchor)
+                boxAnchors[box.id] = anchor
+            }
+        }
+    }
+
+    // MARK: - GPS-Primary Placement Helpers
+
+    /// Per-frame inputs needed to project a recorded GPS sample into runtime
+    /// AR-world XZ. Computed once per `evaluateCommitHorizon` call.
+    private struct GPSPlacementContext {
+        let camPosXZ: SIMD2<Float>
+        let cameraY: Float
+        let curLatRad: Double
+        let curLat: Double
+        let curLon: Double
+        let northDir: SIMD2<Float>
+        let eastDir: SIMD2<Float>
+    }
+
+    private func makeGPSPlacementContext(frame: ARFrame) -> GPSPlacementContext? {
+        guard let currentLoc = locationService.currentLocation,
+              let currentHeading = locationService.currentHeadingDegrees else { return nil }
+        let cam = frame.camera.transform
+        let fwd = simd_normalize(SIMD3<Float>(-cam.columns.2.x, 0, -cam.columns.2.z))
+        guard fwd.x.isFinite, fwd.z.isFinite else { return nil }
+        let camYawAR = atan2(-fwd.x, -fwd.z)
+        let curHeadingRad = Float(currentHeading) * .pi / 180
+
+        let yawN = camYawAR + curHeadingRad
+        let yawE = camYawAR + curHeadingRad - .pi / 2
+        let northDir = SIMD2<Float>(-sin(yawN), -cos(yawN))
+        let eastDir  = SIMD2<Float>(-sin(yawE), -cos(yawE))
+
+        return GPSPlacementContext(
+            camPosXZ: SIMD2<Float>(cam.columns.3.x, cam.columns.3.z),
+            cameraY: cam.columns.3.y,
+            curLatRad: currentLoc.coordinate.latitude * .pi / 180,
+            curLat: currentLoc.coordinate.latitude,
+            curLon: currentLoc.coordinate.longitude,
+            northDir: northDir,
+            eastDir: eastDir
+        )
+    }
+
+    /// Computes a pending item's world position directly from the recorded
+    /// `geoTrack` (GPS) interpolated by progress, projected into the runtime
+    /// AR-world frame via the camera's current heading. Vertical (Y) is
+    /// `localTrack[i].y` when available — falling back to a chest-height
+    /// offset below the camera otherwise — because GPS altitude is unreliable
+    /// for placement.
+    private func gpsPrimaryWorldPosition(
+        forProgress progress: Double,
+        verticalOffset: Float,
+        ctx: GPSPlacementContext
+    ) -> SIMD3<Float>? {
+        guard let geo = route.geoSample(atProgress: progress) else { return nil }
+        let earthRadius = 6_378_137.0
+        let dLat = (geo.coordinate.latitude  - ctx.curLat) * .pi / 180
+        let dLon = (geo.coordinate.longitude - ctx.curLon) * .pi / 180
+        let east  = Float(dLon * cos(ctx.curLatRad) * earthRadius)
+        let north = Float(dLat * earthRadius)
+        let xz = ctx.camPosXZ + east * ctx.eastDir + north * ctx.northDir
+
+        let y: Float
+        if let local = route.localSample(atProgress: progress) {
+            y = Float(local.y) + baseRouteY + verticalOffset
+        } else {
+            y = ctx.cameraY + baseRouteY + verticalOffset
+        }
+        return SIMD3<Float>(xz.x, y, xz.y)
+    }
+
+    /// Watches `frame.camera.trackingState` and flips `runtimeGPSPrimary`
+    /// once tracking has been continuously `.limited(.insufficientFeatures)`
+    /// for more than `trackingDegradedDelay`. Resets immediately on any
+    /// `.normal` frame so a momentary recovery clears the override.
+    private func updateTrackingDegradationState(frame: ARFrame, now: TimeInterval) {
+        switch frame.camera.trackingState {
+        case .normal:
+            arTrackingDegradedSince = nil
+            if runtimeGPSPrimary { runtimeGPSPrimary = false }
+        case .limited(let reason):
+            // Only `.insufficientFeatures` indicates a real visual problem
+            // we can't recover from on our own. `.relocalizing`,
+            // `.initializing`, `.excessiveMotion` are transient and don't
+            // imply localTrack is bad — they imply ARKit just hasn't
+            // converged yet.
+            if reason == .insufficientFeatures {
+                if let since = arTrackingDegradedSince {
+                    if (now - since) >= trackingDegradedDelay && !runtimeGPSPrimary {
+                        runtimeGPSPrimary = true
+                    }
+                } else {
+                    arTrackingDegradedSince = now
+                }
+            }
+        case .notAvailable:
+            // Tracking is fully gone. Treat as degraded.
+            if arTrackingDegradedSince == nil { arTrackingDegradedSince = now }
+            if !runtimeGPSPrimary { runtimeGPSPrimary = true }
+        }
+    }
+
+    /// Box variant: applies `lateralOffsetMeters` along the route's
+    /// right-perpendicular axis in AR-world XZ before returning.
+    private func gpsPrimaryWorldPosition(
+        forProgress progress: Double,
+        verticalOffset: Float,
+        lateralOffset: Float,
+        ctx: GPSPlacementContext
+    ) -> SIMD3<Float>? {
+        guard var pos = gpsPrimaryWorldPosition(forProgress: progress,
+                                                verticalOffset: verticalOffset,
+                                                ctx: ctx) else { return nil }
+        // Route forward in AR-world XZ at this progress: tangent of geoTrack.
+        // Approximate via small ±epsilon in progress and project to XZ via
+        // the same ENU math used for the base position. Right vector is
+        // forward rotated -90° in XZ (right-handed: y up, looking down).
+        let epsilon = 0.02
+        guard let prev = route.geoSample(atProgress: max(0, progress - epsilon)),
+              let next = route.geoSample(atProgress: min(1, progress + epsilon)) else {
+            return pos
+        }
+        let earthRadius = 6_378_137.0
+        let dLat = (next.coordinate.latitude  - prev.coordinate.latitude)  * .pi / 180
+        let dLon = (next.coordinate.longitude - prev.coordinate.longitude) * .pi / 180
+        let dE = Float(dLon * cos(ctx.curLatRad) * earthRadius)
+        let dN = Float(dLat * earthRadius)
+        let tangentXZ = dE * ctx.eastDir + dN * ctx.northDir
+        let len = simd_length(tangentXZ)
+        guard len > 0.0001 else { return pos }
+        let fwd = tangentXZ / len
+        let right = SIMD2<Float>(fwd.y, -fwd.x)  // 90° CW in XZ-as-2D
+        let lateral = right * lateralOffset
+        pos.x += lateral.x
+        pos.z += lateral.y
+        return pos
+    }
+
+    // MARK: - ARSCNViewDelegate
+
+    /// Called by ARKit immediately after it adds a scene node for one of our
+    /// custom anchors. We attach the coin or box geometry as a child of that
+    /// node. From this moment forward the node's world position is maintained
+    /// by ARKit's world tracking — we never reposition it.
+    func renderer(_ renderer: SCNSceneRenderer, didAdd node: SCNNode, for anchor: ARAnchor) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            if let q = anchor as? QuestItemAnchor {
+                let coinNode = self.createCoinNode()
+                node.addChildNode(coinNode)
+                self.coinNodes[q.itemId] = coinNode
+            } else if let b = anchor as? QuestBoxAnchor {
+                let boxNode = self.createBoxNode()
+                node.addChildNode(boxNode)
+                self.boxNodes[b.boxId] = boxNode
             }
         }
     }
@@ -346,10 +694,9 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
     /// Estimates the 3D world position of the fist as camera position + forward × arm length.
     private func fistWorldPosition(frame: ARFrame) -> SIMD3<Float> {
         let t = frame.camera.transform
-        let cameraPos = SIMD3<Float>(t.columns.3.x, t.columns.3.y, t.columns.3.z)
-        // Camera looks along its -Z axis in world space
+        // Camera looks along its -Z axis in world space.
         let forward = SIMD3<Float>(-t.columns.2.x, -t.columns.2.y, -t.columns.2.z)
-        return cameraPos + simd_normalize(forward) * 0.6  // ~arm's length
+        return t.translationXYZ + simd_normalize(forward) * 0.6  // ~arm's length
     }
 
     private func checkPunchDetection(fistPosition: SIMD3<Float>) {
@@ -416,10 +763,6 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
     }
 
     private func updateNearestItemDistance() {
-        if runMode == .running, let frozen = frozenRouteWorldTransform {
-            routeGroupNode.simdWorldTransform = frozen
-        }
-
         guard let cameraNode = arView?.pointOfView else {
             onNearestItemDistance(nil)
             return
@@ -530,34 +873,221 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
         }
     }
 
+    // MARK: - GPS + Heading Seed
+
+    /// Which recorded sample to anchor the seed at.
+    /// - `.start` (initial alignment): anchor at `localTrack.first` ↔ `route.startLocation`.
+    /// - `.nearestToCurrentGPS` (mid-quest realignment): anchor at the recorded
+    ///   sample whose GPS is closest to the runner's current location, so the
+    ///   route re-aligns around where the runner stands rather than dragging
+    ///   them back to the start gate.
+    private enum SeedAnchor {
+        case start
+        case nearestToCurrentGPS
+    }
+
+    /// Returns the SeedAnchor appropriate for the current `runMode`.
+    /// - `.aligning`: anchor at the route start, since the runner is at the
+    ///   start gate and we want the recorded start to land at GPS-start.
+    /// - `.running`: anchor at the recorded sample nearest to the runner's
+    ///   current GPS, so as they progress the seed auto-corrects locally
+    ///   without ever needing the manual realign button. GPS noise is
+    ///   absorbed by `seedRefreshSmoothing` in `refineSeedFromGPSHeading`.
+    /// - `.realigning`: same as `.running` (manual recalibration around the
+    ///   runner's current position).
+    private func currentSeedAnchor() -> SeedAnchor {
+        switch runMode {
+        case .aligning: return .start
+        case .running, .realigning: return .nearestToCurrentGPS
+        }
+    }
+
+    /// Resolves a SeedAnchor to a concrete `(geoLocation, localPosition)` pair.
+    /// Returns `nil` if the route lacks the data needed (empty tracks, no GPS).
+    private func resolveAnchor(_ anchor: SeedAnchor) -> (CLLocation, LocalRouteSample)? {
+        switch anchor {
+        case .start:
+            guard let start = route.startLocation,
+                  let firstLocal = route.localTrack.first else { return nil }
+            return (start, firstLocal)
+        case .nearestToCurrentGPS:
+            guard let currentLoc = locationService.currentLocation,
+                  !route.geoTrack.isEmpty,
+                  !route.localTrack.isEmpty else { return nil }
+            // Find the geoTrack sample closest to current GPS, then match it
+            // to its localTrack counterpart by sampleId. Geo and local tracks
+            // are correlated by sampleId in `buildRecordedRoute`.
+            var bestGeo: GeoRouteSample?
+            var bestDist = Double.greatestFiniteMagnitude
+            for geo in route.geoTrack {
+                let d = currentLoc.distance(from: geo.location)
+                if d < bestDist { bestDist = d; bestGeo = geo }
+            }
+            guard let geo = bestGeo,
+                  let local = route.localTrack.first(where: { $0.sampleId == geo.sampleId })
+            else { return nil }
+            return (geo.location, local)
+        }
+    }
+
+    /// Computes a coarsely-correct base pose for `routeGroupNode` from a
+    /// recorded sample's GPS vs. the runner's current GPS+heading.
+    /// No-op (returns false) when any input is missing.
+    ///
+    /// Math: ENU(current → anchorLoc) projected into AR-world XZ via the
+    /// camera's current yaw, plus a global route-yaw rotation derived from
+    /// recorded vs. current compass heading and AR yaw. The rotated anchor
+    /// local position is subtracted so the anchor sample lands exactly on
+    /// the GPS-derived anchor point.
+    ///
+    /// Which sample to anchor at depends on `runMode` via `currentSeedAnchor()`:
+    /// initial alignment uses the route start, mid-quest realignment uses the
+    /// recorded sample nearest to the runner's current GPS.
+    @discardableResult
+    func seedAlignmentFromGPSHeading(frame: ARFrame? = nil) -> Bool {
+        seedAlignmentFromGPSHeading(frame: frame, anchor: currentSeedAnchor())
+    }
+
+    @discardableResult
+    private func seedAlignmentFromGPSHeading(frame: ARFrame?, anchor: SeedAnchor) -> Bool {
+        guard let recordedHeading = route.recordedHeadingDegrees,
+              let currentHeading = locationService.currentHeadingDegrees,
+              let currentLoc = locationService.currentLocation,
+              let (anchorLoc, anchorLocal) = resolveAnchor(anchor) else {
+            return false
+        }
+        guard let cam = (frame ?? arView?.session.currentFrame)?.camera.transform else {
+            return false
+        }
+
+        let earthRadius = 6_378_137.0
+        let curLatRad = currentLoc.coordinate.latitude * .pi / 180
+        let dLat = (anchorLoc.coordinate.latitude - currentLoc.coordinate.latitude) * .pi / 180
+        let dLon = (anchorLoc.coordinate.longitude - currentLoc.coordinate.longitude) * .pi / 180
+        let east  = Float(dLon * cos(curLatRad) * earthRadius)
+        let north = Float(dLat * earthRadius)
+
+        // The camera's flattened forward in AR world corresponds to compass
+        // `currentHeading`. ARKit yaw is CCW around +Y (viewed from above);
+        // compass is CW. forward = (-sin(yaw), 0, -cos(yaw)).
+        let fwd = simd_normalize(SIMD3<Float>(-cam.columns.2.x, 0, -cam.columns.2.z))
+        let camYawAR = atan2(-fwd.x, -fwd.z)
+        let curHeadingRad = Float(currentHeading) * .pi / 180
+
+        // Direction in AR-world XZ for compass θ: yaw = camYawAR - (θ - curHeading).
+        // Pre-compute the two we need (north and east).
+        let yawN = camYawAR + curHeadingRad
+        let yawE = camYawAR + curHeadingRad - .pi / 2
+        let northDir = SIMD2<Float>(-sin(yawN), -cos(yawN))
+        let eastDir  = SIMD2<Float>(-sin(yawE), -cos(yawE))
+
+        let camPos = SIMD2<Float>(cam.columns.3.x, cam.columns.3.z)
+        let anchorXZ = camPos + east * eastDir + north * northDir
+
+        // Yaw to rotate route-local frame into runtime AR-world frame.
+        //
+        // The route's `localTrack` lives in the recording AR session's world
+        // frame, which was oriented by device pose at *AR session start* —
+        // not at recording start. So we need both the recorded compass
+        // heading AND the recording AR-world camera yaw at recording start
+        // to recover the relationship to true north.
+        //
+        // True-north angle in recording AR-world: recYaw + recHeading
+        // True-north angle in runtime  AR-world: camYawAR + currentHeading
+        // Δyaw = runtime − recording rotates recording frame onto runtime.
+        //
+        // Routes recorded before `recordedCameraYawAR` was captured fall back
+        // to the old (often wrong) approximation `recYaw == 0`.
+        let recYaw = Float(route.recordedCameraYawAR ?? 0)
+        let recHeadingRad = Float(recordedHeading) * .pi / 180
+        let routeYaw = (camYawAR + curHeadingRad) - (recYaw + recHeadingRad)
+
+        let lp = SIMD3<Float>(Float(anchorLocal.x), Float(anchorLocal.y), Float(anchorLocal.z))
+        let cy = cos(routeYaw)
+        let sy = sin(routeYaw)
+        let rotatedLP = SIMD2<Float>(cy * lp.x + sy * lp.z, -sy * lp.x + cy * lp.z)
+
+        let wasSeeded = (routeSeed != nil)
+        routeSeed = RouteSeed(offsetXZ: anchorXZ - rotatedLP, yaw: routeYaw)
+
+        if !wasSeeded {
+            let recYawStr = route.recordedCameraYawAR.map {
+                String(format: "%.1f°", $0 * 180 / .pi)
+            } ?? "—"
+            let anchorTag: String = {
+                switch anchor {
+                case .start: return "start"
+                case .nearestToCurrentGPS: return "nearestSample"
+                }
+            }()
+            locationService.logRunEvent(
+                "AR seed[\(anchorTag)]: ENU=(e=\(String(format: "%.1f", east)) n=\(String(format: "%.1f", north)))" +
+                " yaw=\(String(format: "%.1f°", Double(routeYaw * 180 / .pi)))" +
+                " (recHdg=\(String(format: "%.1f", recordedHeading))° curHdg=\(String(format: "%.1f", currentHeading))°" +
+                " recYawAR=\(recYawStr) camYawAR=\(String(format: "%.1f°", Double(camYawAR * 180 / .pi))))"
+            )
+        }
+        return true
+    }
+
+    /// Slice 4: blend a freshly-computed GPS+heading seed into the existing
+    /// one with a low-pass filter so transient GPS jitter doesn't snap the
+    /// route group's pose every refresh. Called periodically during `.running`
+    /// so still-pending items track improving GPS as the player moves into
+    /// better-localized regions. No effect on already-committed items —
+    /// they live on their own ARAnchors and never read `routeGroupNode`.
+    private func refineSeedFromGPSHeading(frame: ARFrame) {
+        guard let prior = routeSeed else {
+            // No prior seed yet — first successful fix snaps directly.
+            seedAlignmentFromGPSHeading(frame: frame)
+            return
+        }
+
+        // Recompute a fresh seed by clearing and calling the full path,
+        // then blend prior ↔ fresh. Restore prior on failure.
+        routeSeed = nil
+        guard seedAlignmentFromGPSHeading(frame: frame), let fresh = routeSeed else {
+            routeSeed = prior
+            return
+        }
+
+        let a = seedRefreshSmoothing
+        routeSeed = RouteSeed(
+            offsetXZ: prior.offsetXZ * (1 - a) + fresh.offsetXZ * a,
+            yaw: blendYaw(prior.yaw, fresh.yaw, alpha: a)
+        )
+    }
+
+    /// Linearly blends two yaw angles taking the shortest arc, so 359° and
+    /// 1° blend toward 0° rather than sweeping through 180°.
+    private func blendYaw(_ from: Float, _ to: Float, alpha: Float) -> Float {
+        var diff = to - from
+        while diff >  .pi { diff -= 2 * .pi }
+        while diff < -.pi { diff += 2 * .pi }
+        return from + diff * alpha
+    }
+
     // MARK: - Manual Alignment
 
     /// Applies the user's manual position and rotation corrections to the route group.
     /// Called every AR frame while in aligning/realigning mode so the adjustments
-    /// are visible in real-time as the user drags/rotates.
+    /// are visible in real-time as the user drags/rotates. Manual offsets are
+    /// applied **on top of** the GPS+heading seed (when available), so the user's
+    /// gestures fine-tune a coarsely-correct base pose rather than starting from
+    /// AR-world origin every time.
     private func applyManualAlignment() {
         guard let manual = manualAlignment else { return }
 
         // Convert camera-relative offsets to AR world-space coordinates so the
         // route slides in the direction the user actually dragged regardless of
         // which way the camera is facing.
-        //
-        //   manual.worldX  = "screen right" offset  (drag right → route goes right on screen)
-        //   manual.worldZ  = "screen depth" offset  (spread → closer, pinch → further)
-        //   manual.worldY  = vertical offset         (drag up → route goes up; Y is up in both spaces)
-        //
-        // We flatten the camera's right and forward vectors onto the horizontal
-        // plane so that tilting the phone doesn't cause vertical drift during
-        // a horizontal drag.
         var posX: Float = manual.worldX
         var posZ: Float = manual.worldZ
 
         if let cam = arView?.session.currentFrame?.camera.transform {
-            // Camera's right vector is its X column; forward is -Z column (ARKit looks in -Z).
             let rightFlat   = SIMD3<Float>( cam.columns.0.x, 0,  cam.columns.0.z)
             let forwardFlat = SIMD3<Float>(-cam.columns.2.x, 0, -cam.columns.2.z)
 
-            // Guard against degenerate vectors (phone pointing nearly straight up/down).
             if simd_length(rightFlat) > 0.001 && simd_length(forwardFlat) > 0.001 {
                 let r = simd_normalize(rightFlat)   * manual.worldX
                 let f = simd_normalize(forwardFlat) * manual.worldZ
@@ -566,9 +1096,16 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
             }
         }
 
-        routeGroupNode.simdPosition = SIMD3<Float>(posX, baseRouteY + manual.worldY, posZ)
+        let seedXZ = routeSeed?.offsetXZ ?? SIMD2<Float>(0, 0)
+        let seedYaw = routeSeed?.yaw ?? 0
+
+        routeGroupNode.simdPosition = SIMD3<Float>(
+            seedXZ.x + posX,
+            baseRouteY + manual.worldY,
+            seedXZ.y + posZ
+        )
         routeGroupNode.simdOrientation = simd_quatf(
-            angle: manual.rotationY,
+            angle: seedYaw + manual.rotationY,
             axis: SIMD3<Float>(0, 1, 0)
         )
     }
@@ -579,7 +1116,12 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
         guard runMode == .aligning || runMode == .realigning else { return }
         let distance = distanceToRouteStart()
 
-        if let distance, distance > startGateDistanceMeters {
+        // Mid-quest realignment intentionally skips the start-gate check.
+        // The runner is somewhere along the route already; the seed will
+        // anchor at the recorded sample nearest to their current GPS, so
+        // there's no reason to drag them back to the start.
+        if runMode == .aligning,
+           let distance, distance > startGateDistanceMeters {
             consecutiveOutOfRangeGPS += 1
             // Require 3 consecutive out-of-range GPS readings before resetting a
             // lock — GPS can jitter 20-40 m so a single bad fix must not undo
@@ -630,12 +1172,47 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
                 lastHandPoseTime = now
                 processHandPose(frame: frame)
             }
+
+            updateTrackingDegradationState(frame: frame, now: now)
+
+            // Slice 4: keep refining the GPS+heading seed during the run so
+            // pending items benefit from continued localization. Already-
+            // committed items are anchored to the AR world and never move.
+            if now - lastSeedRefreshAt >= seedRefreshInterval {
+                lastSeedRefreshAt = now
+                refineSeedFromGPSHeading(frame: frame)
+                applyManualAlignment()
+            }
+
+            // Just-in-time placement: as the camera advances, commit any
+            // pending coins/boxes that have entered the commit horizon.
+            // Throttled to ~10 Hz — far more often than necessary for a
+            // human-speed runner, but cheap (a SIMD distance per item).
+            if now - lastCommitHorizonCheckAt >= commitHorizonCheckInterval {
+                lastCommitHorizonCheckAt = now
+                evaluateCommitHorizon(cameraWorldPos: frame.camera.transform.translationXYZ,
+                                      frame: frame)
+            }
             return
         }
         guard runMode == .aligning || runMode == .realigning else { return }
 
-        // Apply manual position/rotation corrections every frame so the
-        // AR view updates in real-time as the user adjusts.
+        // Continuously refresh the seed during alignment. The first call may
+        // run before CLHeading delivers or the camera transform is ready, in
+        // which case `routeSeed` stays nil and we retry next frame. Once
+        // seeded, refresh on the same throttle as running mode so the route
+        // tracks GPS as the user walks toward the start (ARKit world drift
+        // over a 100+ ft approach is otherwise visible as the start marker
+        // sliding away from the actual recorded location).
+        let now = frame.timestamp
+        if routeSeed == nil {
+            seedAlignmentFromGPSHeading(frame: frame)
+            lastSeedRefreshAt = now
+        } else if now - lastSeedRefreshAt >= seedRefreshInterval {
+            lastSeedRefreshAt = now
+            refineSeedFromGPSHeading(frame: frame)
+        }
+
         applyManualAlignment()
 
         guard (distanceToRouteStart() ?? 0) <= startGateDistanceMeters else { return }
@@ -775,10 +1352,6 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
             return
         }
 
-        if let frozen = frozenRouteWorldTransform {
-            routeGroupNode.simdWorldTransform = frozen
-        }
-
         if lastSkipReasonLogged != nil {
             lastSkipReasonLogged = nil
             logCollectionConsole("check#\(collectionCheckSerial) resumed", force: true)
@@ -797,12 +1370,16 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
         collectionTickSerial &+= 1
         let currentQuest = dataStore.quests.first(where: { $0.id == quest.id }) ?? quest
 
-        // Self-heal: clean up confirmed-collected items from coinNodes/pendingIds.
-        // This runs before the engine so stale state doesn't accumulate.
+        // Self-heal: clean up confirmed-collected items from coinNodes/pendingIds
+        // and remove their ARAnchors. This runs before the engine so stale state
+        // doesn't accumulate.
         for item in currentQuest.items where item.collected {
             pendingCollectionIds.remove(item.id)
             if let staleNode = coinNodes.removeValue(forKey: item.id) {
                 staleNode.removeFromParentNode()
+            }
+            if let anchor = itemAnchors.removeValue(forKey: item.id) {
+                arView?.session.remove(anchor: anchor)
             }
         }
 
@@ -850,6 +1427,12 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
                 node?.removeFromParentNode()
             }
 
+            // Remove the ARAnchor too — its job is done. The anchor's parent
+            // scene node is removed automatically by ARKit on session.remove.
+            if let anchor = itemAnchors.removeValue(forKey: itemId) {
+                arView?.session.remove(anchor: anchor)
+            }
+
             dataStore.updateQuestItem(questId: quest.id, itemId: itemId, collected: true)
             onItemCollected(itemId)
             #if DEBUG
@@ -865,9 +1448,17 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
     var testPendingIds: Set<UUID> { pendingCollectionIds }
     var testCoinNodeCount: Int { coinNodes.count }
 
-    /// Build coin nodes without needing configureInitialScene (no arView).
+    /// Synchronously spawn nodes for the test path. Production uses the
+    /// commit-horizon evaluator + ARAnchor mechanism, neither of which can
+    /// run in unit tests. `legacyForceSpawnPendingItems()` parents nodes
+    /// directly to `routeGroupNode` so collection-engine tests can exercise
+    /// the post-placement pipeline.
     func testBuildCoinNodes(forceRebuild: Bool) {
-        buildCoinNodes(forceRebuild: forceRebuild)
+        if forceRebuild {
+            clearAllItemNodes()
+        }
+        cleanupCollectedItems()
+        legacyForceSpawnPendingItems()
     }
     #endif
 
@@ -990,7 +1581,8 @@ extension ARCoordinator {
         }
     }
 
-    /// Returns whether `buildCoinNodes` should create a new node for `item`.
+    /// Returns whether the legacy/test spawn path should create a new node
+    /// for `item`. Production uses `evaluateCommitHorizon()` instead.
     static func shouldCreateNode(
         for item: QuestItem,
         coinNodes: [UUID: SCNNode],
@@ -1000,4 +1592,93 @@ extension ARCoordinator {
         !pendingIds.contains(item.id) &&
         coinNodes[item.id] == nil
     }
+}
+
+// MARK: - SIMD Helpers
+
+extension SIMD4 where Scalar == Float {
+    /// The xyz components, i.e. the homogeneous-coordinate position.
+    var translationXYZ: SIMD3<Float> { SIMD3<Float>(x, y, z) }
+}
+
+extension simd_float4x4 {
+    /// The translation column (m41/m42/m43) of an affine transform.
+    var translationXYZ: SIMD3<Float> { columns.3.translationXYZ }
+
+    /// Pure-translation transform: identity rotation, position at `t`.
+    static func translation(_ t: SIMD3<Float>) -> simd_float4x4 {
+        var m = matrix_identity_float4x4
+        m.columns.3 = SIMD4<Float>(t, 1)
+        return m
+    }
+}
+
+// MARK: - Per-Item Placement Anchors
+
+/// Custom ARAnchor subclass that carries the QuestItem id it represents.
+/// Required so renderer(_:didAdd:for:) can identify which item a freshly
+/// created scene node belongs to.
+final class QuestItemAnchor: ARAnchor {
+    let itemId: UUID
+
+    init(itemId: UUID, transform: simd_float4x4) {
+        self.itemId = itemId
+        super.init(name: "QuestItemAnchor", transform: transform)
+    }
+
+    required init(anchor: ARAnchor) {
+        if let q = anchor as? QuestItemAnchor {
+            self.itemId = q.itemId
+        } else {
+            self.itemId = UUID()
+        }
+        super.init(anchor: anchor)
+    }
+
+    required init?(coder: NSCoder) {
+        guard let raw = coder.decodeObject(of: NSString.self, forKey: "questItemId") as String?,
+              let id  = UUID(uuidString: raw) else { return nil }
+        self.itemId = id
+        super.init(coder: coder)
+    }
+
+    override func encode(with coder: NSCoder) {
+        super.encode(with: coder)
+        coder.encode(itemId.uuidString as NSString, forKey: "questItemId")
+    }
+
+    override class var supportsSecureCoding: Bool { true }
+}
+
+/// Custom ARAnchor subclass for punchable boxes.
+final class QuestBoxAnchor: ARAnchor {
+    let boxId: UUID
+
+    init(boxId: UUID, transform: simd_float4x4) {
+        self.boxId = boxId
+        super.init(name: "QuestBoxAnchor", transform: transform)
+    }
+
+    required init(anchor: ARAnchor) {
+        if let b = anchor as? QuestBoxAnchor {
+            self.boxId = b.boxId
+        } else {
+            self.boxId = UUID()
+        }
+        super.init(anchor: anchor)
+    }
+
+    required init?(coder: NSCoder) {
+        guard let raw = coder.decodeObject(of: NSString.self, forKey: "questBoxId") as String?,
+              let id  = UUID(uuidString: raw) else { return nil }
+        self.boxId = id
+        super.init(coder: coder)
+    }
+
+    override func encode(with coder: NSCoder) {
+        super.encode(with: coder)
+        coder.encode(boxId.uuidString as NSString, forKey: "questBoxId")
+    }
+
+    override class var supportsSecureCoding: Bool { true }
 }

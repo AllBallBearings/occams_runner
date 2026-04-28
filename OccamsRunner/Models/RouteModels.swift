@@ -152,6 +152,14 @@ struct RouteCaptureQuality: Codable {
         && averageTrackingScore >= 0.65
         && hasEncryptedWorldMap
     }
+
+    /// True when the recording's localTrack is too unreliable to drive item
+    /// placement at replay (low feature density or poor tracking — typical
+    /// of low-light / night recordings). Routes flagged here should default
+    /// to GPS-primary placement at replay.
+    var localTrackUnreliable: Bool {
+        averageFeaturePoints < 80 || averageTrackingScore < 0.5
+    }
 }
 
 // MARK: - Recorded Route
@@ -169,6 +177,27 @@ struct RecordedRoute: Codable, Identifiable {
     var captureQuality: RouteCaptureQuality
     /// The mode used when this route was recorded — determines coin collection geometry.
     var recordingMode: RecordingMode
+    /// Compass heading (degrees, true north) the device was facing when recording began.
+    /// Used at replay time to seed the AR route's yaw. Optional for back-compat
+    /// with routes saved before this field existed.
+    var recordedHeadingDegrees: Double?
+
+    /// AR-world camera yaw (radians, CCW around +Y) at the moment recording
+    /// began. Required to relate the route's local frame back to true north,
+    /// because `localTrack` positions live in the recording AR session's
+    /// world frame whose yaw is set by device orientation at session start —
+    /// not at recording start. Without this, the seed math can be wrong by
+    /// any amount up to 180°. Optional for back-compat with routes saved
+    /// before this field existed.
+    var recordedCameraYawAR: Double?
+
+    /// When true, item placement at replay should be computed from `geoTrack`
+    /// (GPS) instead of `localTrack` (AR camera positions). Set at save time
+    /// when `captureQuality` indicates ARKit struggled during recording (low
+    /// feature counts or poor tracking — e.g. low-light / night). Replay-time
+    /// ARKit degradation can also flip this on temporarily even for a route
+    /// that recorded cleanly. Optional for back-compat.
+    var useGPSPrimary: Bool?
 
     /// Convenience map points for existing map-driven views.
     var points: [RoutePoint] {
@@ -242,6 +271,9 @@ struct RecordedRoute: Codable, Identifiable {
         self.encryptedWorldMapData = nil
         self.preciseEnabled = false
         self.recordingMode = .vast
+        self.recordedHeadingDegrees = nil
+        self.recordedCameraYawAR = nil
+        self.useGPSPrimary = nil
         self.captureQuality = RouteCaptureQuality(
             matchedSampleRatio: 0,
             averageFeaturePoints: 0,
@@ -280,7 +312,10 @@ struct RecordedRoute: Codable, Identifiable {
         encryptedWorldMapData: Data?,
         captureQuality: RouteCaptureQuality,
         preciseEnabled: Bool = true,
-        recordingMode: RecordingMode = .vast
+        recordingMode: RecordingMode = .vast,
+        recordedHeadingDegrees: Double? = nil,
+        recordedCameraYawAR: Double? = nil,
+        useGPSPrimary: Bool? = nil
     ) {
         self.id = UUID()
         self.name = name
@@ -292,6 +327,9 @@ struct RecordedRoute: Codable, Identifiable {
         self.captureQuality = captureQuality
         self.preciseEnabled = preciseEnabled
         self.recordingMode = recordingMode
+        self.recordedHeadingDegrees = recordedHeadingDegrees
+        self.recordedCameraYawAR = recordedCameraYawAR
+        self.useGPSPrimary = useGPSPrimary
     }
 
     // Custom decoder so routes saved before `recordingMode` was added
@@ -309,6 +347,9 @@ struct RecordedRoute: Codable, Identifiable {
         captureQuality     = try c.decode(RouteCaptureQuality.self,   forKey: .captureQuality)
         // Default to .vast for routes recorded before this field existed.
         recordingMode      = try c.decodeIfPresent(RecordingMode.self, forKey: .recordingMode) ?? .vast
+        recordedHeadingDegrees = try c.decodeIfPresent(Double.self, forKey: .recordedHeadingDegrees)
+        recordedCameraYawAR = try c.decodeIfPresent(Double.self, forKey: .recordedCameraYawAR)
+        useGPSPrimary = try c.decodeIfPresent(Bool.self, forKey: .useGPSPrimary)
     }
 
     func geoSample(atProgress progress: Double) -> GeoRouteSample? {
