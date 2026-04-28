@@ -23,6 +23,10 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
     var onNearestItemDistance: (Double?) -> Void
     var onItemCollected: (UUID) -> Void
     var onDebugTick: (String) -> Void
+    /// Reports whether item placement is currently using the GPS-primary
+    /// path (true) or the localTrack/ARKit-primary path (false). Drives the
+    /// "GPS" / "AR" badge in the alignment HUD.
+    var onPlacementModeChanged: (Bool) -> Void = { _ in }
 
     /// Shared state object written by SwiftUI gesture handlers and read each
     /// AR frame to apply manual position / rotation corrections to the route.
@@ -68,6 +72,39 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
     /// 0.0 = ignore new fixes, 1.0 = snap to each new fix. The first seed
     /// (when `routeSeed == nil`) always snaps regardless of this value.
     private let seedRefreshSmoothing: Float = 0.25
+
+    // MARK: GPS-Primary Placement
+    //
+    // When ARKit's visual tracking is unreliable (low light, texture-poor
+    // environments, big lighting differences vs. recording time), `localTrack`
+    // can no longer be trusted to drive item placement. Instead we compute
+    // each pending item's world position directly from `geoTrack` projected
+    // through the runner's current GPS+heading. Already-committed items live
+    // on their own ARAnchors and aren't affected by mode switches.
+
+    /// Wall-clock time at which ARKit first reported `.limited(.insufficientFeatures)`
+    /// in the current degradation episode. Cleared when tracking returns to
+    /// `.normal` for at least one frame.
+    private var arTrackingDegradedSince: TimeInterval?
+    /// Once `arTrackingDegradedSince` has persisted this long, flip
+    /// `runtimeGPSPrimary` on. Avoids flapping on transient one-frame blips.
+    private let trackingDegradedDelay: TimeInterval = 5.0
+    /// Runtime override: forces GPS-primary placement until tracking recovers.
+    /// Independent of `route.useGPSPrimary` — that is the recording-time hint;
+    /// this is the runtime hint. Either being true means we use GPS placement.
+    private var runtimeGPSPrimary: Bool = false {
+        didSet {
+            guard oldValue != runtimeGPSPrimary else { return }
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.onPlacementModeChanged(self.effectiveGPSPrimary)
+            }
+        }
+    }
+    /// Combined recording-time hint + runtime override.
+    private var effectiveGPSPrimary: Bool {
+        (route.useGPSPrimary == true) || runtimeGPSPrimary
+    }
 
     private var arrowIndicatorNode: SCNNode?
 
@@ -190,6 +227,13 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
         setupArrowIndicator()
         updateAlignmentStatusFromGPS()
         seedAlignmentFromGPSHeading()
+        // Fire the initial placement-mode notification so the HUD badge
+        // reflects routes that recorded with `useGPSPrimary = true` from
+        // the moment the AR view appears.
+        let initial = effectiveGPSPrimary
+        DispatchQueue.main.async { [weak self] in
+            self?.onPlacementModeChanged(initial)
+        }
     }
 
     func applyRunMode(_ newMode: ARRunMode) {
@@ -384,20 +428,33 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
     /// Called from the AR frame callback during `.running` mode, throttled to
     /// `commitHorizonCheckInterval` so we don't recompute every coin's distance
     /// 60×/second.
-    private func evaluateCommitHorizon(cameraWorldPos: SIMD3<Float>) {
+    private func evaluateCommitHorizon(cameraWorldPos: SIMD3<Float>, frame: ARFrame) {
         guard let arView else { return }
         let currentQuest = dataStore.quests.first(where: { $0.id == quest.id }) ?? quest
         let groupTransform = routeGroupNode.simdWorldTransform
+        let useGPSPlacement = effectiveGPSPrimary
+        // Snapshot the GPS-projection inputs once per call so we don't
+        // recompute camera yaw / heading direction vectors per item.
+        let gpsCtx: GPSPlacementContext? = useGPSPlacement ? makeGPSPlacementContext(frame: frame) : nil
 
         for item in currentQuest.items {
             guard !item.collected,
                   itemAnchors[item.id] == nil,
-                  !pendingCollectionIds.contains(item.id),
-                  let local = item.resolvedLocalPosition(on: route) else { continue }
+                  !pendingCollectionIds.contains(item.id) else { continue }
 
-            let world = (groupTransform * SIMD4<Float>(local, 1)).translationXYZ
-            if simd_distance(world, cameraWorldPos) <= commitHorizonMeters {
-                let anchor = QuestItemAnchor(itemId: item.id, transform: .translation(world))
+            let world: SIMD3<Float>?
+            if let gpsCtx {
+                world = gpsPrimaryWorldPosition(forProgress: item.routeProgress,
+                                                verticalOffset: Float(item.verticalOffset),
+                                                ctx: gpsCtx)
+            } else if let local = item.resolvedLocalPosition(on: route) {
+                world = (groupTransform * SIMD4<Float>(local, 1)).translationXYZ
+            } else {
+                world = nil
+            }
+            guard let w = world else { continue }
+            if simd_distance(w, cameraWorldPos) <= commitHorizonMeters {
+                let anchor = QuestItemAnchor(itemId: item.id, transform: .translation(w))
                 arView.session.add(anchor: anchor)
                 itemAnchors[item.id] = anchor
             }
@@ -405,16 +462,160 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
 
         for box in currentQuest.boxes {
             guard boxAnchors[box.id] == nil,
-                  !pendingBoxIds.contains(box.id),
-                  let local = box.resolvedLocalPosition(on: route) else { continue }
+                  !pendingBoxIds.contains(box.id) else { continue }
 
-            let world = (groupTransform * SIMD4<Float>(local, 1)).translationXYZ
-            if simd_distance(world, cameraWorldPos) <= commitHorizonMeters {
-                let anchor = QuestBoxAnchor(boxId: box.id, transform: .translation(world))
+            let world: SIMD3<Float>?
+            if let gpsCtx {
+                world = gpsPrimaryWorldPosition(forProgress: box.routeProgress,
+                                                verticalOffset: Float(box.verticalOffsetMeters),
+                                                lateralOffset: Float(box.lateralOffsetMeters),
+                                                ctx: gpsCtx)
+            } else if let local = box.resolvedLocalPosition(on: route) {
+                world = (groupTransform * SIMD4<Float>(local, 1)).translationXYZ
+            } else {
+                world = nil
+            }
+            guard let w = world else { continue }
+            if simd_distance(w, cameraWorldPos) <= commitHorizonMeters {
+                let anchor = QuestBoxAnchor(boxId: box.id, transform: .translation(w))
                 arView.session.add(anchor: anchor)
                 boxAnchors[box.id] = anchor
             }
         }
+    }
+
+    // MARK: - GPS-Primary Placement Helpers
+
+    /// Per-frame inputs needed to project a recorded GPS sample into runtime
+    /// AR-world XZ. Computed once per `evaluateCommitHorizon` call.
+    private struct GPSPlacementContext {
+        let camPosXZ: SIMD2<Float>
+        let cameraY: Float
+        let curLatRad: Double
+        let curLat: Double
+        let curLon: Double
+        let northDir: SIMD2<Float>
+        let eastDir: SIMD2<Float>
+    }
+
+    private func makeGPSPlacementContext(frame: ARFrame) -> GPSPlacementContext? {
+        guard let currentLoc = locationService.currentLocation,
+              let currentHeading = locationService.currentHeadingDegrees else { return nil }
+        let cam = frame.camera.transform
+        let fwd = simd_normalize(SIMD3<Float>(-cam.columns.2.x, 0, -cam.columns.2.z))
+        guard fwd.x.isFinite, fwd.z.isFinite else { return nil }
+        let camYawAR = atan2(-fwd.x, -fwd.z)
+        let curHeadingRad = Float(currentHeading) * .pi / 180
+
+        let yawN = camYawAR + curHeadingRad
+        let yawE = camYawAR + curHeadingRad - .pi / 2
+        let northDir = SIMD2<Float>(-sin(yawN), -cos(yawN))
+        let eastDir  = SIMD2<Float>(-sin(yawE), -cos(yawE))
+
+        return GPSPlacementContext(
+            camPosXZ: SIMD2<Float>(cam.columns.3.x, cam.columns.3.z),
+            cameraY: cam.columns.3.y,
+            curLatRad: currentLoc.coordinate.latitude * .pi / 180,
+            curLat: currentLoc.coordinate.latitude,
+            curLon: currentLoc.coordinate.longitude,
+            northDir: northDir,
+            eastDir: eastDir
+        )
+    }
+
+    /// Computes a pending item's world position directly from the recorded
+    /// `geoTrack` (GPS) interpolated by progress, projected into the runtime
+    /// AR-world frame via the camera's current heading. Vertical (Y) is
+    /// `localTrack[i].y` when available — falling back to a chest-height
+    /// offset below the camera otherwise — because GPS altitude is unreliable
+    /// for placement.
+    private func gpsPrimaryWorldPosition(
+        forProgress progress: Double,
+        verticalOffset: Float,
+        ctx: GPSPlacementContext
+    ) -> SIMD3<Float>? {
+        guard let geo = route.geoSample(atProgress: progress) else { return nil }
+        let earthRadius = 6_378_137.0
+        let dLat = (geo.coordinate.latitude  - ctx.curLat) * .pi / 180
+        let dLon = (geo.coordinate.longitude - ctx.curLon) * .pi / 180
+        let east  = Float(dLon * cos(ctx.curLatRad) * earthRadius)
+        let north = Float(dLat * earthRadius)
+        let xz = ctx.camPosXZ + east * ctx.eastDir + north * ctx.northDir
+
+        let y: Float
+        if let local = route.localSample(atProgress: progress) {
+            y = Float(local.y) + baseRouteY + verticalOffset
+        } else {
+            y = ctx.cameraY + baseRouteY + verticalOffset
+        }
+        return SIMD3<Float>(xz.x, y, xz.y)
+    }
+
+    /// Watches `frame.camera.trackingState` and flips `runtimeGPSPrimary`
+    /// once tracking has been continuously `.limited(.insufficientFeatures)`
+    /// for more than `trackingDegradedDelay`. Resets immediately on any
+    /// `.normal` frame so a momentary recovery clears the override.
+    private func updateTrackingDegradationState(frame: ARFrame, now: TimeInterval) {
+        switch frame.camera.trackingState {
+        case .normal:
+            arTrackingDegradedSince = nil
+            if runtimeGPSPrimary { runtimeGPSPrimary = false }
+        case .limited(let reason):
+            // Only `.insufficientFeatures` indicates a real visual problem
+            // we can't recover from on our own. `.relocalizing`,
+            // `.initializing`, `.excessiveMotion` are transient and don't
+            // imply localTrack is bad — they imply ARKit just hasn't
+            // converged yet.
+            if reason == .insufficientFeatures {
+                if let since = arTrackingDegradedSince {
+                    if (now - since) >= trackingDegradedDelay && !runtimeGPSPrimary {
+                        runtimeGPSPrimary = true
+                    }
+                } else {
+                    arTrackingDegradedSince = now
+                }
+            }
+        case .notAvailable:
+            // Tracking is fully gone. Treat as degraded.
+            if arTrackingDegradedSince == nil { arTrackingDegradedSince = now }
+            if !runtimeGPSPrimary { runtimeGPSPrimary = true }
+        }
+    }
+
+    /// Box variant: applies `lateralOffsetMeters` along the route's
+    /// right-perpendicular axis in AR-world XZ before returning.
+    private func gpsPrimaryWorldPosition(
+        forProgress progress: Double,
+        verticalOffset: Float,
+        lateralOffset: Float,
+        ctx: GPSPlacementContext
+    ) -> SIMD3<Float>? {
+        guard var pos = gpsPrimaryWorldPosition(forProgress: progress,
+                                                verticalOffset: verticalOffset,
+                                                ctx: ctx) else { return nil }
+        // Route forward in AR-world XZ at this progress: tangent of geoTrack.
+        // Approximate via small ±epsilon in progress and project to XZ via
+        // the same ENU math used for the base position. Right vector is
+        // forward rotated -90° in XZ (right-handed: y up, looking down).
+        let epsilon = 0.02
+        guard let prev = route.geoSample(atProgress: max(0, progress - epsilon)),
+              let next = route.geoSample(atProgress: min(1, progress + epsilon)) else {
+            return pos
+        }
+        let earthRadius = 6_378_137.0
+        let dLat = (next.coordinate.latitude  - prev.coordinate.latitude)  * .pi / 180
+        let dLon = (next.coordinate.longitude - prev.coordinate.longitude) * .pi / 180
+        let dE = Float(dLon * cos(ctx.curLatRad) * earthRadius)
+        let dN = Float(dLat * earthRadius)
+        let tangentXZ = dE * ctx.eastDir + dN * ctx.northDir
+        let len = simd_length(tangentXZ)
+        guard len > 0.0001 else { return pos }
+        let fwd = tangentXZ / len
+        let right = SIMD2<Float>(fwd.y, -fwd.x)  // 90° CW in XZ-as-2D
+        let lateral = right * lateralOffset
+        pos.x += lateral.x
+        pos.z += lateral.y
+        return pos
     }
 
     // MARK: - ARSCNViewDelegate
@@ -972,6 +1173,8 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
                 processHandPose(frame: frame)
             }
 
+            updateTrackingDegradationState(frame: frame, now: now)
+
             // Slice 4: keep refining the GPS+heading seed during the run so
             // pending items benefit from continued localization. Already-
             // committed items are anchored to the AR world and never move.
@@ -987,7 +1190,8 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
             // human-speed runner, but cheap (a SIMD distance per item).
             if now - lastCommitHorizonCheckAt >= commitHorizonCheckInterval {
                 lastCommitHorizonCheckAt = now
-                evaluateCommitHorizon(cameraWorldPos: frame.camera.transform.translationXYZ)
+                evaluateCommitHorizon(cameraWorldPos: frame.camera.transform.translationXYZ,
+                                      frame: frame)
             }
             return
         }

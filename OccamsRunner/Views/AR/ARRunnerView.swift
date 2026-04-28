@@ -185,6 +185,10 @@ struct ARRunnerView: View {
   @State private var alignmentConfidence: Double = 0
   @State private var distanceToStart: Double?
   @State private var alignmentReady = false
+  /// True when the coordinator is currently using GPS-primary item placement
+  /// (either because the route is flagged or ARKit tracking degraded mid-run).
+  /// Drives the badge in the alignment / running HUD.
+  @State private var placementUsesGPS = false
 
   @State private var manualAlignment = ManualAlignmentState()
 
@@ -256,7 +260,10 @@ struct ARRunnerView: View {
             },
             onNearestItemDistance: { nearest in nearestItemDistance = nearest },
             onItemCollected: { itemId in handleCollection(itemId: itemId) },
-            onDebugTick: { log in debugTickLog = log }
+            onDebugTick: { log in debugTickLog = log },
+            onPlacementModeChanged: { isGPSPrimary in
+              placementUsesGPS = isGPSPrimary
+            }
           )
           .allowsHitTesting(false)
           .ignoresSafeArea()
@@ -393,6 +400,8 @@ struct ARRunnerView: View {
 
           Spacer()
 
+          placementModeBadge
+
           HStack(spacing: 4) {
             Image(systemName: "antenna.radiowaves.left.and.right")
               .font(.system(size: 10))
@@ -451,13 +460,16 @@ struct ARRunnerView: View {
             }
             .font(.system(size: 10, weight: .bold))
 
-            if manualAlignment.hasAdjustment {
-              Text("MANUAL OFFSET ACTIVE")
-                .font(.system(size: 8, weight: .black))
-                .foregroundColor(.cyan)
-                .padding(.horizontal, 6).padding(.vertical, 2)
-                .background(Color.cyan.opacity(0.1))
-                .clipShape(Capsule())
+            HStack(spacing: 6) {
+              placementModeBadge
+              if manualAlignment.hasAdjustment {
+                Text("MANUAL OFFSET ACTIVE")
+                  .font(.system(size: 8, weight: .black))
+                  .foregroundColor(.cyan)
+                  .padding(.horizontal, 6).padding(.vertical, 2)
+                  .background(Color.cyan.opacity(0.1))
+                  .clipShape(Capsule())
+              }
             }
           }
           Spacer()
@@ -747,6 +759,29 @@ struct ARRunnerView: View {
     case .lowConfidence: return "LOW CONFIDENCE - KEEP SCANNING"
     case .locked: return ""
     }
+  }
+
+  /// Tiny pill that shows whether item placement is using GPS-only math
+  /// (route flagged or ARKit tracking degraded) vs the visual AR path.
+  /// Yellow "GPS" = robust-but-coarse mode, dim "AR" = high-precision mode.
+  private var placementModeBadge: some View {
+    let label = placementUsesGPS ? "GPS" : "AR"
+    let icon = placementUsesGPS ? "location.fill" : "camera.viewfinder"
+    let color: Color = placementUsesGPS
+      ? Color(red: 1.0, green: 0.78, blue: 0.0)
+      : Color.white.opacity(0.55)
+    return HStack(spacing: 3) {
+      Image(systemName: icon)
+        .font(.system(size: 8, weight: .black))
+      Text(label)
+        .font(.system(size: 8, weight: .black))
+        .kerning(0.6)
+    }
+    .foregroundColor(color)
+    .padding(.horizontal, 6).padding(.vertical, 2)
+    .background(color.opacity(0.12))
+    .clipShape(Capsule())
+    .overlay(Capsule().stroke(color.opacity(0.4), lineWidth: 0.5))
   }
 
   // MARK: - Debug Overlay

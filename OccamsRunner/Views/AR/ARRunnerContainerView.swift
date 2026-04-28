@@ -16,6 +16,7 @@ struct ARRunnerContainerView: UIViewRepresentable {
     let onNearestItemDistance: (Double?) -> Void
     let onItemCollected: (UUID) -> Void
     let onDebugTick: (String) -> Void
+    let onPlacementModeChanged: (Bool) -> Void
 
     func makeUIView(context: Context) -> ARSCNView {
         let arView = ARSCNView()
@@ -41,6 +42,7 @@ struct ARRunnerContainerView: UIViewRepresentable {
         context.coordinator.arView = arView
         // Wire the manual alignment state before the initial scene is built.
         context.coordinator.manualAlignment = manualAlignment
+        context.coordinator.onPlacementModeChanged = onPlacementModeChanged
         context.coordinator.configureInitialScene()
 
         return arView
@@ -54,10 +56,11 @@ struct ARRunnerContainerView: UIViewRepresentable {
         // values. makeCoordinator() is called only once, so without this the
         // callbacks capture a frozen struct that goes stale after the first
         // SwiftUI re-render (e.g. after the first coin collection).
-        context.coordinator.onItemCollected       = onItemCollected
-        context.coordinator.onAlignmentUpdate     = onAlignmentUpdate
-        context.coordinator.onNearestItemDistance = onNearestItemDistance
-        context.coordinator.onDebugTick          = onDebugTick
+        context.coordinator.onItemCollected         = onItemCollected
+        context.coordinator.onAlignmentUpdate       = onAlignmentUpdate
+        context.coordinator.onNearestItemDistance   = onNearestItemDistance
+        context.coordinator.onDebugTick             = onDebugTick
+        context.coordinator.onPlacementModeChanged  = onPlacementModeChanged
 
         // Keep the manual alignment reference in sync (same instance in practice,
         // but explicit assignment ensures correctness across any future refactors).

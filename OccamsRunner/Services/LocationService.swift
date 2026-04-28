@@ -321,7 +321,13 @@ class LocationService: NSObject, ObservableObject {
             preciseEnabled: true,
             recordingMode: recordingMode,
             recordedHeadingDegrees: headingAtRecordStart,
-            recordedCameraYawAR: arYawAtRecordStart
+            recordedCameraYawAR: arYawAtRecordStart,
+            // Auto-flag: if ARKit was struggling during recording (low light,
+            // texture-poor surroundings), localTrack is too unreliable to
+            // drive item placement at replay. The flag biases replay toward
+            // GPS-primary positioning, which doesn't depend on visual
+            // feature continuity at all.
+            useGPSPrimary: quality.localTrackUnreliable ? true : nil
         )
     }
 
