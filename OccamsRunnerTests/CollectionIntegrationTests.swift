@@ -101,7 +101,8 @@ final class CollectionIntegrationTests: XCTestCase {
             },
             onDebugTick: { [weak self] log in
                 self?.debugLogs.append(log)
-            }
+            },
+            onStartPlacementDebugUpdate: { _ in }
         )
     }
 
