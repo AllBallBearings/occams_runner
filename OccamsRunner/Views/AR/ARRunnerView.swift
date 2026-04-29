@@ -24,115 +24,6 @@ private final class HeadingManager: NSObject, ObservableObject, CLLocationManage
     }
 }
 
-// MARK: - Compass View
-
-private struct CompassView: View {
-    let heading: Double
-    var startBearing: Double? = nil // absolute true-north bearing to start point
-
-    var body: some View {
-        ZStack {
-            Circle().fill(Color.black.opacity(0.72))
-            Circle().stroke(Color.white.opacity(0.25), lineWidth: 1)
-
-            // Rotating card
-            ZStack {
-                // Tick marks at 45° intervals
-                ForEach(0..<8) { i in
-                    Rectangle()
-                        .fill(Color.white.opacity(0.35))
-                        .frame(width: 1, height: 4)
-                        .offset(y: -19)
-                        .rotationEffect(.degrees(Double(i) * 45))
-                }
-                // Cardinal labels
-                Text("N").font(.system(size: 8, weight: .bold)).foregroundColor(.red)
-                    .offset(y: -13)
-                Text("S").font(.system(size: 7)).foregroundColor(.white.opacity(0.6))
-                    .offset(y: 13)
-                Text("E").font(.system(size: 7)).foregroundColor(.white.opacity(0.6))
-                    .offset(x: 13)
-                Text("W").font(.system(size: 7)).foregroundColor(.white.opacity(0.6))
-                    .offset(x: -13)
-                // Needle
-                VStack(spacing: 0) {
-                    Capsule().fill(Color.red).frame(width: 3, height: 10)
-                    Circle().fill(Color.white).frame(width: 4, height: 4)
-                    Capsule().fill(Color.white.opacity(0.65)).frame(width: 3, height: 10)
-                }
-                // Orange dot marking the direction to the start point
-                if let startBearing {
-                    Circle()
-                        .fill(Color.orange)
-                        .frame(width: 5, height: 5)
-                        .offset(y: -16)
-                        .rotationEffect(.degrees(startBearing))
-                }
-            }
-            .rotationEffect(.degrees(-heading))
-
-            // Center dot
-            Circle().fill(Color.white).frame(width: 3, height: 3)
-        }
-        .frame(width: 54, height: 54)
-    }
-}
-
-// MARK: - Start Beacon Overlay
-
-private struct StartBeaconView: View {
-    let relativeBearing: Double // 0=straight ahead, 90=right, 180=behind, 270=left
-    let distanceText: String
-    @State private var pulse = false
-
-    var body: some View {
-        GeometryReader { geo in
-            let size = geo.size
-            let radius = min(size.width, size.height) * 0.38
-            let angleRad = (relativeBearing - 90) * .pi / 180
-            let cx = size.width / 2
-            let cy = size.height / 2
-            let bx = cx + radius * CGFloat(cos(angleRad))
-            let by = cy + radius * CGFloat(sin(angleRad))
-            let d = size.width * 0.10
-
-            ZStack {
-                // Pulsing outer glow
-                Circle()
-                    .fill(Color.orange.opacity(pulse ? 0.07 : 0.22))
-                    .frame(width: d * 1.8, height: d * 1.8)
-                // Ring
-                Circle()
-                    .stroke(Color.orange.opacity(0.80), lineWidth: 2)
-                    .frame(width: d, height: d)
-                // Core
-                Circle()
-                    .fill(RadialGradient(
-                        colors: [.white.opacity(0.95), .orange],
-                        center: .center, startRadius: 0, endRadius: d * 0.25))
-                    .frame(width: d * 0.5, height: d * 0.5)
-                // Labels
-                VStack(spacing: 1) {
-                    Text("START")
-                        .font(.system(size: 7, weight: .black))
-                        .foregroundColor(.orange)
-                    Text(distanceText)
-                        .font(.system(size: 7, weight: .bold))
-                        .foregroundColor(.white.opacity(0.85))
-                }
-                .offset(y: d * 0.78)
-            }
-            .position(x: bx, y: by)
-        }
-        .onAppear {
-            withAnimation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true)) {
-                pulse = true
-            }
-        }
-        .allowsHitTesting(false)
-    }
-}
-
 // MARK: - AR Runner View
 
 struct ARRunnerView: View {
@@ -147,6 +38,8 @@ struct ARRunnerView: View {
     @State private var nearestItemDistance: Double?
     @State private var runMode: ARRunMode = .aligning
     @State private var debugTickLog: String = ""
+    @State private var startPlacementDebugLog: String = ""
+    @State private var showStartPlacementDebug = false
 
     @State private var alignmentState: ARAlignmentState = .moveToStart
     @State private var alignmentConfidence: Double = 0
@@ -171,34 +64,6 @@ struct ARRunnerView: View {
         dataStore.quests.first(where: { $0.id == quest.id }) ?? quest
     }
 
-    // Absolute true-north bearing from current GPS to the route start point (0–360°).
-    private var bearingToStart: Double? {
-        guard let current = locationService.currentLocation,
-              let startLoc = route?.startLocation else { return nil }
-        let from = current.coordinate
-        let to = startLoc.coordinate
-        let lat1 = from.latitude * .pi / 180
-        let lat2 = to.latitude * .pi / 180
-        let dLon = (to.longitude - from.longitude) * .pi / 180
-        let y = sin(dLon) * cos(lat2)
-        let x = cos(lat1) * sin(lat2) - sin(lat1) * cos(lat2) * cos(dLon)
-        return (atan2(y, x) * 180 / .pi + 360).truncatingRemainder(dividingBy: 360)
-    }
-
-    // Bearing relative to the direction the camera is facing (0=ahead, 90=right …).
-    private var relativeBearingToStart: Double? {
-        guard let b = bearingToStart else { return nil }
-        return (b - headingManager.degrees + 360).truncatingRemainder(dividingBy: 360)
-    }
-
-    private var startDistanceText: String {
-        guard let d = distanceToStart else { return "" }
-        let feet = d * 3.281
-        return feet >= 1320
-            ? String(format: "%.1f mi", feet / 5280)
-            : String(format: "%.0f ft", feet)
-    }
-
     // MARK: - Body
 
     var body: some View {
@@ -213,6 +78,7 @@ struct ARRunnerView: View {
                         dataStore: dataStore,
                         locationService: locationService,
                         runMode: runMode,
+                        headingDegrees: headingManager.degrees,
                         manualAlignment: manualAlignment,
                         onAlignmentUpdate: { state, confidence, distance, ready in
                             alignmentState     = state
@@ -222,7 +88,8 @@ struct ARRunnerView: View {
                         },
                         onNearestItemDistance: { nearest in nearestItemDistance = nearest },
                         onItemCollected:       { itemId in handleCollection(itemId: itemId) },
-                        onDebugTick:           { log in debugTickLog = log }
+                        onDebugTick:           { log in debugTickLog = log },
+                        onStartPlacementDebugUpdate: { log in startPlacementDebugLog = log }
                     )
                     .allowsHitTesting(false)
                     .ignoresSafeArea()
@@ -248,15 +115,6 @@ struct ARRunnerView: View {
                         }
                     }
 
-                    // ── Start beacon: orange orb floating at bearing to start ──
-                    if alignmentState == .moveToStart,
-                       let relBearing = relativeBearingToStart {
-                        StartBeaconView(
-                            relativeBearing: relBearing,
-                            distanceText: startDistanceText
-                        )
-                        .ignoresSafeArea()
-                    }
                 }
             } else {
                 Color.black.ignoresSafeArea()
@@ -399,6 +257,12 @@ struct ARRunnerView: View {
                         HStack(spacing: 12) {
                             Text(String(format: "Confidence: %.0f%%", alignmentConfidence * 100))
                                 .foregroundColor(alignmentReady ? .green : .orange)
+
+                            if let distanceToStart,
+                               distanceToStart <= 3 {
+                                Text("START: OK")
+                                    .foregroundColor(.green)
+                            }
                             
                             if let accuracy = locationService.currentLocation?.horizontalAccuracy {
                                 Text(String(format: "GPS: ±%.0f m", accuracy))
@@ -417,6 +281,12 @@ struct ARRunnerView: View {
                         }
                     }
                     Spacer()
+                    Button(action: { showStartPlacementDebug.toggle() }) {
+                        Image(systemName: showStartPlacementDebug ? "list.bullet.rectangle.fill" : "list.bullet.rectangle")
+                            .font(.system(size: 15, weight: .bold))
+                            .foregroundColor(showStartPlacementDebug ? .orange : .white.opacity(0.55))
+                            .padding(8)
+                    }
                     Button(action: { handleDismissTap() }) {
                         Image(systemName: "xmark")
                             .font(.system(size: 16, weight: .bold))
@@ -459,10 +329,8 @@ struct ARRunnerView: View {
 
             // Bottom row
             HStack(alignment: .bottom, spacing: 12) {
-                // Left: compass + mini-map
+                // Left: mini-map
                 VStack(alignment: .leading, spacing: 12) {
-                    CompassView(heading: headingManager.degrees)
-                        .shadow(color: .black.opacity(0.3), radius: 10)
                     miniMap(route: route)
                 }
                 .padding(.leading, 20)
@@ -666,11 +534,6 @@ struct ARRunnerView: View {
             .frame(maxWidth: .infinity)
             .padding(.bottom, 50)
 
-            // Compass — bottom-left, always visible during alignment
-            CompassView(heading: headingManager.degrees, startBearing: bearingToStart)
-                .shadow(color: .black.opacity(0.3), radius: 10)
-                .padding(.leading, 20)
-                .padding(.bottom, 54)
         }
     }
 
@@ -685,9 +548,15 @@ struct ARRunnerView: View {
     }
 
     private var alignmentStateInstruction: String {
+        if let distanceToStart,
+           distanceToStart <= 3,
+           alignmentState != .locked {
+            return "AT START - KEEP SCANNING"
+        }
+
         switch alignmentState {
-        case .moveToStart: return "WALK TO START POINT"
-        case .scanning:    return "SCAN SURROUNDINGS SLOWLY"
+        case .moveToStart: return "FOLLOW ORANGE MARKER TO START"
+        case .scanning:    return "HOLD AT START - SCAN SLOWLY"
         case .lowConfidence: return "LOW CONFIDENCE - KEEP SCANNING"
         case .locked:      return ""
         }
@@ -696,18 +565,36 @@ struct ARRunnerView: View {
     // MARK: - Debug Overlay
 
     private var debugOverlay: some View {
-        Group {
+        VStack(spacing: 6) {
+            if showStartPlacementDebug,
+               (runMode == .aligning || runMode == .realigning),
+               !startPlacementDebugLog.isEmpty {
+                Text(startPlacementDebugLog)
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(8)
+                    .background(Color.black.opacity(0.76))
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(Color.orange.opacity(0.45), lineWidth: 1)
+                    )
+                    .padding(.horizontal, 12)
+            }
+
             if !debugTickLog.isEmpty {
                 Text(debugTickLog)
                     .font(.system(size: 9, design: .monospaced))
                     .foregroundColor(.white)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(8)
                     .background(Color.black.opacity(0.7))
                     .clipShape(RoundedRectangle(cornerRadius: 8))
                     .padding(.horizontal, 12)
-                    .padding(.bottom, 4)
             }
         }
+        .padding(.bottom, 4)
     }
 
     // MARK: - No AR Data

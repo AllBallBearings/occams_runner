@@ -80,7 +80,7 @@ final class NavigationFlowTests: XCTestCase {
         app.tabBars.buttons["Routes"].tap()
         XCTAssertTrue(app.staticTexts["Morning Loop"].waitForExistence(timeout: 3))
         app.staticTexts["Morning Loop"].tap()
-        app.buttons["Create Quest"].waitForExistence(timeout: 3)
+        XCTAssertTrue(app.buttons["Create Quest"].waitForExistence(timeout: 3))
         app.buttons["Create Quest"].tap()
         // Quest creator sheet should appear with a name field
         XCTAssertTrue(app.textFields.firstMatch.waitForExistence(timeout: 3))
@@ -90,7 +90,7 @@ final class NavigationFlowTests: XCTestCase {
         app.tabBars.buttons["Routes"].tap()
         XCTAssertTrue(app.staticTexts["Morning Loop"].waitForExistence(timeout: 3))
         app.staticTexts["Morning Loop"].tap()
-        app.buttons["Create Quest"].waitForExistence(timeout: 3)
+        XCTAssertTrue(app.buttons["Create Quest"].waitForExistence(timeout: 3))
         app.buttons["Create Quest"].tap()
         XCTAssertTrue(app.textFields.firstMatch.waitForExistence(timeout: 3))
 

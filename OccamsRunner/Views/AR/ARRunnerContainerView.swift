@@ -10,12 +10,14 @@ struct ARRunnerContainerView: UIViewRepresentable {
     let dataStore: DataStore
     let locationService: LocationService
     let runMode: ARRunMode
+    let headingDegrees: Double
     /// Shared state object that carries user-applied manual alignment corrections.
     let manualAlignment: ManualAlignmentState
     let onAlignmentUpdate: (ARAlignmentState, Double, Double?, Bool) -> Void
     let onNearestItemDistance: (Double?) -> Void
     let onItemCollected: (UUID) -> Void
     let onDebugTick: (String) -> Void
+    let onStartPlacementDebugUpdate: (String) -> Void
 
     func makeUIView(context: Context) -> ARSCNView {
         let arView = ARSCNView()
@@ -41,6 +43,7 @@ struct ARRunnerContainerView: UIViewRepresentable {
         context.coordinator.arView = arView
         // Wire the manual alignment state before the initial scene is built.
         context.coordinator.manualAlignment = manualAlignment
+        context.coordinator.headingDegrees = headingDegrees
         context.coordinator.configureInitialScene()
 
         return arView
@@ -58,10 +61,12 @@ struct ARRunnerContainerView: UIViewRepresentable {
         context.coordinator.onAlignmentUpdate     = onAlignmentUpdate
         context.coordinator.onNearestItemDistance = onNearestItemDistance
         context.coordinator.onDebugTick          = onDebugTick
+        context.coordinator.onStartPlacementDebugUpdate = onStartPlacementDebugUpdate
 
         // Keep the manual alignment reference in sync (same instance in practice,
         // but explicit assignment ensures correctness across any future refactors).
         context.coordinator.manualAlignment = manualAlignment
+        context.coordinator.headingDegrees = headingDegrees
 
         // Always pull the live quest from dataStore rather than using the
         // struct-captured snapshot — the snapshot goes stale the moment any
@@ -80,7 +85,8 @@ struct ARRunnerContainerView: UIViewRepresentable {
             onAlignmentUpdate: onAlignmentUpdate,
             onNearestItemDistance: onNearestItemDistance,
             onItemCollected: onItemCollected,
-            onDebugTick: onDebugTick
+            onDebugTick: onDebugTick,
+            onStartPlacementDebugUpdate: onStartPlacementDebugUpdate
         )
     }
 }

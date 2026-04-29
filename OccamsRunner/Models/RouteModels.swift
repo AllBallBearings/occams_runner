@@ -169,6 +169,12 @@ struct RecordedRoute: Codable, Identifiable {
     var captureQuality: RouteCaptureQuality
     /// The mode used when this route was recorded — determines coin collection geometry.
     var recordingMode: RecordingMode
+    /// Device heading captured when route recording started, in degrees clockwise from north.
+    /// Optional so routes recorded before heading capture still decode cleanly.
+    var startHeadingDegrees: Double?
+    var startHeadingAccuracy: Double?
+    var startHeadingTimestamp: Date?
+    var startHeadingIsTrueNorth: Bool?
 
     /// Convenience map points for existing map-driven views.
     var points: [RoutePoint] {
@@ -242,6 +248,10 @@ struct RecordedRoute: Codable, Identifiable {
         self.encryptedWorldMapData = nil
         self.preciseEnabled = false
         self.recordingMode = .vast
+        self.startHeadingDegrees = nil
+        self.startHeadingAccuracy = nil
+        self.startHeadingTimestamp = nil
+        self.startHeadingIsTrueNorth = nil
         self.captureQuality = RouteCaptureQuality(
             matchedSampleRatio: 0,
             averageFeaturePoints: 0,
@@ -280,7 +290,11 @@ struct RecordedRoute: Codable, Identifiable {
         encryptedWorldMapData: Data?,
         captureQuality: RouteCaptureQuality,
         preciseEnabled: Bool = true,
-        recordingMode: RecordingMode = .vast
+        recordingMode: RecordingMode = .vast,
+        startHeadingDegrees: Double? = nil,
+        startHeadingAccuracy: Double? = nil,
+        startHeadingTimestamp: Date? = nil,
+        startHeadingIsTrueNorth: Bool? = nil
     ) {
         self.id = UUID()
         self.name = name
@@ -292,6 +306,10 @@ struct RecordedRoute: Codable, Identifiable {
         self.captureQuality = captureQuality
         self.preciseEnabled = preciseEnabled
         self.recordingMode = recordingMode
+        self.startHeadingDegrees = startHeadingDegrees
+        self.startHeadingAccuracy = startHeadingAccuracy
+        self.startHeadingTimestamp = startHeadingTimestamp
+        self.startHeadingIsTrueNorth = startHeadingIsTrueNorth
     }
 
     // Custom decoder so routes saved before `recordingMode` was added
@@ -309,6 +327,10 @@ struct RecordedRoute: Codable, Identifiable {
         captureQuality     = try c.decode(RouteCaptureQuality.self,   forKey: .captureQuality)
         // Default to .vast for routes recorded before this field existed.
         recordingMode      = try c.decodeIfPresent(RecordingMode.self, forKey: .recordingMode) ?? .vast
+        startHeadingDegrees = try c.decodeIfPresent(Double.self,       forKey: .startHeadingDegrees)
+        startHeadingAccuracy = try c.decodeIfPresent(Double.self,      forKey: .startHeadingAccuracy)
+        startHeadingTimestamp = try c.decodeIfPresent(Date.self,       forKey: .startHeadingTimestamp)
+        startHeadingIsTrueNorth = try c.decodeIfPresent(Bool.self,     forKey: .startHeadingIsTrueNorth)
     }
 
     func geoSample(atProgress progress: Double) -> GeoRouteSample? {
