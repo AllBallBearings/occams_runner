@@ -9,8 +9,8 @@ enum ARRunMode {
 }
 
 enum ARAlignmentState: String {
-    case moveToStart = "Move to route start"
-    case scanning = "Scanning for relocalization"
-    case locked = "Alignment locked"
+    case goToStart = "Go to route start"
+    case scanStartArea = "Scan start area"
+    case localized = "Localized"
     case lowConfidence = "Low-confidence alignment"
 }

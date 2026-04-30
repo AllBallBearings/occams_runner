@@ -41,23 +41,15 @@ struct ARRunnerView: View {
     @State private var startPlacementDebugLog: String = ""
     @State private var showStartPlacementDebug = false
 
-    @State private var alignmentState: ARAlignmentState = .moveToStart
+    @State private var alignmentState: ARAlignmentState = .goToStart
     @State private var alignmentConfidence: Double = 0
     @State private var distanceToStart: Double?
     @State private var alignmentReady = false
-
-    @State private var manualAlignment = ManualAlignmentState()
 
     // Run tracking
     @StateObject private var headingManager = HeadingManager()
     @State private var runDistanceKm: Double = 0
     @State private var lastRunLocation: CLLocation?
-
-    private let panSensitivity: Float   = 0.004
-    private let depthSensitivity: Float = 4.0
-    private let maxLateral: Float = 3.0
-    private let maxVertical: Float = 2.0
-    private let maxDepth:   Float = 5.0
 
     private var route: RecordedRoute? { dataStore.route(for: quest.routeId) }
     private var liveQuest: Quest {
@@ -79,7 +71,6 @@ struct ARRunnerView: View {
                         locationService: locationService,
                         runMode: runMode,
                         headingDegrees: headingManager.degrees,
-                        manualAlignment: manualAlignment,
                         onAlignmentUpdate: { state, confidence, distance, ready in
                             alignmentState     = state
                             alignmentConfidence = confidence
@@ -93,10 +84,6 @@ struct ARRunnerView: View {
                     )
                     .allowsHitTesting(false)
                     .ignoresSafeArea()
-
-                    if runMode == .aligning || runMode == .realigning {
-                        alignmentGestureLayer
-                    }
 
                     // ── Full HUD ────────────────────────────────────────
                     VStack(spacing: 0) {
@@ -154,42 +141,6 @@ struct ARRunnerView: View {
         } message: {
             Text("Pausing saves your progress. You can resume from the Quest screen.")
         }
-    }
-
-    // MARK: - Alignment Gesture Layer
-
-    private var alignmentGestureLayer: some View {
-        Color.clear
-            .contentShape(Rectangle())
-            .ignoresSafeArea()
-            .simultaneousGesture(
-                DragGesture(minimumDistance: 8)
-                    .onChanged { v in
-                        let dx = Float(v.translation.width)  * panSensitivity
-                        let dy = Float(-v.translation.height) * panSensitivity
-                        manualAlignment.worldX = (manualAlignment.baseX + dx)
-                            .clamped(to: -maxLateral...maxLateral)
-                        manualAlignment.worldY = (manualAlignment.baseY + dy)
-                            .clamped(to: -maxVertical...maxVertical)
-                    }
-                    .onEnded { _ in manualAlignment.commitGesture() }
-            )
-            .simultaneousGesture(
-                RotationGesture(minimumAngleDelta: .degrees(2))
-                    .onChanged { angle in
-                        manualAlignment.rotationY = manualAlignment.baseRotation + Float(angle.radians)
-                    }
-                    .onEnded { _ in manualAlignment.commitGesture() }
-            )
-            .simultaneousGesture(
-                MagnificationGesture(minimumScaleDelta: 0.02)
-                    .onChanged { scale in
-                        let delta = -Float(scale - 1.0) * depthSensitivity
-                        manualAlignment.worldZ = (manualAlignment.baseZ + delta)
-                            .clamped(to: -maxDepth...maxDepth)
-                    }
-                    .onEnded { _ in manualAlignment.commitGesture() }
-            )
     }
 
     // MARK: - Top HUD Card
@@ -271,14 +222,6 @@ struct ARRunnerView: View {
                         }
                         .font(.system(size: 10, weight: .bold))
 
-                        if manualAlignment.hasAdjustment {
-                            Text("MANUAL OFFSET ACTIVE")
-                                .font(.system(size: 8, weight: .black))
-                                .foregroundColor(.cyan)
-                                .padding(.horizontal, 6).padding(.vertical, 2)
-                                .background(Color.cyan.opacity(0.1))
-                                .clipShape(Capsule())
-                        }
                     }
                     Spacer()
                     Button(action: { showStartPlacementDebug.toggle() }) {
@@ -486,24 +429,6 @@ struct ARRunnerView: View {
         ZStack(alignment: .bottomLeading) {
             // Centered action controls
             VStack(spacing: 20) {
-                HStack(spacing: 16) {
-                    alignmentHint(icon: "arrow.up.and.down.and.arrow.left.and.right", label: "SHIFT")
-                    alignmentHint(icon: "arrow.up.left.and.arrow.down.right", label: "DEPTH")
-                    alignmentHint(icon: "arrow.2.circlepath", label: "ROTATE")
-                }
-
-                if manualAlignment.hasAdjustment {
-                    Button(action: { manualAlignment.reset() }) {
-                        Label("RESET POSITION", systemImage: "arrow.counterclockwise")
-                            .font(.system(size: 10, weight: .black))
-                            .padding(.horizontal, 16).padding(.vertical, 8)
-                            .background(.ultraThinMaterial)
-                            .environment(\.colorScheme, .dark)
-                            .clipShape(Capsule())
-                            .overlay(Capsule().stroke(Color.white.opacity(0.2), lineWidth: 1))
-                    }
-                }
-
                 Button(action: { runMode = .running }) {
                     HStack {
                         Text(runMode == .realigning ? "RESUME QUEST" : "START QUEST")
@@ -537,28 +462,18 @@ struct ARRunnerView: View {
         }
     }
 
-    private func alignmentHint(icon: String, label: String) -> some View {
-        VStack(spacing: 4) {
-            Image(systemName: icon)
-                .font(.system(size: 14))
-            Text(label)
-                .font(.system(size: 8, weight: .black))
-        }
-        .foregroundColor(.white.opacity(0.5))
-    }
-
     private var alignmentStateInstruction: String {
         if let distanceToStart,
            distanceToStart <= 3,
-           alignmentState != .locked {
+           alignmentState != .localized {
             return "AT START - KEEP SCANNING"
         }
 
         switch alignmentState {
-        case .moveToStart: return "FOLLOW ORANGE MARKER TO START"
-        case .scanning:    return "HOLD AT START - SCAN SLOWLY"
+        case .goToStart: return "FOLLOW ORANGE MARKER TO START"
+        case .scanStartArea: return "POINT AT START AREA - SCAN SLOWLY"
         case .lowConfidence: return "LOW CONFIDENCE - KEEP SCANNING"
-        case .locked:      return ""
+        case .localized: return ""
         }
     }
 
@@ -850,13 +765,5 @@ private struct QuestCompleteCard: View {
         .padding(16)
         .background(Color.white.opacity(0.05))
         .clipShape(RoundedRectangle(cornerRadius: 16))
-    }
-}
-
-// MARK: - Float Clamping Helper
-
-private extension Float {
-    func clamped(to range: ClosedRange<Float>) -> Float {
-        Swift.min(Swift.max(self, range.lowerBound), range.upperBound)
     }
 }

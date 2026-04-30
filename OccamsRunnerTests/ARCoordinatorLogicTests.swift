@@ -152,4 +152,134 @@ final class ARCoordinatorLogicTests: XCTestCase {
         )
         XCTAssertTrue(result.debugLog.contains("t42"))
     }
+
+    // MARK: - RecordingReadinessEvaluator
+
+    func test_recordingReadiness_staleGPSBlocksRecordingStart() {
+        let result = RecordingReadinessEvaluator.evaluate(
+            RecordingReadinessInput(
+                gpsAge: 5,
+                gpsHorizontalAccuracy: 4,
+                headingAccuracy: 8,
+                trackingScore: 1,
+                featurePointCount: 200,
+                worldMappingStatus: "mapped",
+                stableFrameCount: 30,
+                hasStartReference: false
+            )
+        )
+
+        XCTAssertEqual(result.state, .gettingReady)
+        XCTAssertFalse(result.canCaptureStartReference)
+    }
+
+    func test_recordingReadiness_poorTrackingAsksUserToSettle() {
+        let result = RecordingReadinessEvaluator.evaluate(
+            RecordingReadinessInput(
+                gpsAge: 0.2,
+                gpsHorizontalAccuracy: 4,
+                headingAccuracy: 8,
+                trackingScore: 0.3,
+                featurePointCount: 200,
+                worldMappingStatus: "mapped",
+                stableFrameCount: 30,
+                hasStartReference: false
+            )
+        )
+
+        XCTAssertEqual(result.state, .gettingReady)
+        XCTAssertFalse(result.canCaptureStartReference)
+    }
+
+    func test_recordingReadiness_goodSignalsCaptureStartReference() {
+        let result = RecordingReadinessEvaluator.evaluate(
+            RecordingReadinessInput(
+                gpsAge: 0.2,
+                gpsHorizontalAccuracy: 4,
+                headingAccuracy: 8,
+                trackingScore: 1,
+                featurePointCount: 200,
+                worldMappingStatus: "mapped",
+                stableFrameCount: RecordingReadinessEvaluator.stableFramesForStart,
+                hasStartReference: false
+            )
+        )
+
+        XCTAssertEqual(result.state, .scanStartArea)
+        XCTAssertTrue(result.canCaptureStartReference)
+    }
+
+    // MARK: - RouteLocalizationEvaluator
+
+    func test_routeLocalization_outsideGateReturnsGoToStart() {
+        let result = RouteLocalizationEvaluator.evaluate(
+            RouteLocalizationInput(
+                distanceToStart: 10,
+                gpsHorizontalAccuracy: 4,
+                trackingScore: 1,
+                featurePointCount: 250,
+                worldMappingStatus: "mapped",
+                consecutiveGoodFrames: 30,
+                scanDuration: 1,
+                startPoseDelta: 0.2
+            )
+        )
+
+        XCTAssertEqual(result.state, .goToStart)
+        XCTAssertFalse(result.ready)
+    }
+
+    func test_routeLocalization_insideGateWithWeakARKeepsScanning() {
+        let result = RouteLocalizationEvaluator.evaluate(
+            RouteLocalizationInput(
+                distanceToStart: 1,
+                gpsHorizontalAccuracy: 4,
+                trackingScore: 0.3,
+                featurePointCount: 20,
+                worldMappingStatus: "limited",
+                consecutiveGoodFrames: 0,
+                scanDuration: 1,
+                startPoseDelta: 0.2
+            )
+        )
+
+        XCTAssertEqual(result.state, .scanStartArea)
+        XCTAssertFalse(result.ready)
+    }
+
+    func test_routeLocalization_stableARAndPoseDeltaLocalizes() {
+        let result = RouteLocalizationEvaluator.evaluate(
+            RouteLocalizationInput(
+                distanceToStart: 1,
+                gpsHorizontalAccuracy: 4,
+                trackingScore: 1,
+                featurePointCount: 250,
+                worldMappingStatus: "mapped",
+                consecutiveGoodFrames: RouteLocalizationEvaluator.stableFramesForLock,
+                scanDuration: 1,
+                startPoseDelta: 0.2
+            )
+        )
+
+        XCTAssertEqual(result.state, .localized)
+        XCTAssertTrue(result.ready)
+    }
+
+    func test_routeLocalization_missingStartReferenceFallsBackWithoutCrashing() {
+        let result = RouteLocalizationEvaluator.evaluate(
+            RouteLocalizationInput(
+                distanceToStart: 1,
+                gpsHorizontalAccuracy: 4,
+                trackingScore: 1,
+                featurePointCount: 250,
+                worldMappingStatus: "mapped",
+                consecutiveGoodFrames: RouteLocalizationEvaluator.stableFramesForLock,
+                scanDuration: 1,
+                startPoseDelta: nil
+            )
+        )
+
+        XCTAssertEqual(result.state, .localized)
+        XCTAssertTrue(result.ready)
+    }
 }

@@ -26,7 +26,6 @@
 		A10020 /* ARRunnerContainerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20020 /* ARRunnerContainerView.swift */; };
 		A10021 /* ARCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20021 /* ARCoordinator.swift */; };
 		A10022 /* CollectionEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20022 /* CollectionEngine.swift */; };
-		A10023 /* ManualAlignmentState.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20023 /* ManualAlignmentState.swift */; };
 		A10024 /* SplashScreenView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20024 /* SplashScreenView.swift */; };
 		A10025 /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20025 /* HomeView.swift */; };
 		A10026 /* ProfileView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20026 /* ProfileView.swift */; };
@@ -81,7 +80,6 @@
 		A20020 /* ARRunnerContainerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ARRunnerContainerView.swift; sourceTree = "<group>"; };
 		A20021 /* ARCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ARCoordinator.swift; sourceTree = "<group>"; };
 		A20022 /* CollectionEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CollectionEngine.swift; sourceTree = "<group>"; };
-		A20023 /* ManualAlignmentState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManualAlignmentState.swift; sourceTree = "<group>"; };
 		A20024 /* SplashScreenView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SplashScreenView.swift; sourceTree = "<group>"; };
 		A20025 /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
 		A20026 /* ProfileView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileView.swift; sourceTree = "<group>"; };
@@ -168,7 +166,6 @@
 			children = (
 				A20003 /* RouteModels.swift */,
 				A20019 /* ARRunMode.swift */,
-				A20023 /* ManualAlignmentState.swift */,
 				A20027 /* AppSettings.swift */,
 			);
 			path = Models;
@@ -394,7 +391,6 @@
 				A10020 /* ARRunnerContainerView.swift in Sources */,
 				A10021 /* ARCoordinator.swift in Sources */,
 				A10022 /* CollectionEngine.swift in Sources */,
-				A10023 /* ManualAlignmentState.swift in Sources */,
 				A10024 /* SplashScreenView.swift in Sources */,
 				A10025 /* HomeView.swift in Sources */,
 				A10026 /* ProfileView.swift in Sources */,

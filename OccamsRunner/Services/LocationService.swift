@@ -32,9 +32,18 @@ class LocationService: NSObject, ObservableObject {
   @Published var preciseCaptureStatus = "Capture quality too low for precise AR replay yet."
   @Published private(set) var captureDebugLogLines: [String] = []
   @Published private(set) var currentCaptureLogPath: String?
+  @Published private(set) var recordingCoachingState: RecordingCoachingState = .gettingReady
+  @Published private(set) var recordingCoachingMessage = "Hold still while instruments settle."
+  @Published private(set) var arFeaturePointCount = 0
+  @Published private(set) var arTrackingDescription = "not available"
+  @Published private(set) var arWorldMappingDescription = "not available"
+  @Published private(set) var currentHeadingDegrees: Double?
+  @Published private(set) var currentHeadingAccuracy: Double?
+  @Published private(set) var currentHeadingTimestamp: Date?
+  @Published private(set) var currentHeadingIsTrueNorth = false
 
   var canSavePreciseRoute: Bool {
-    preciseCaptureQuality.isReadyForPreciseReplay
+    preciseCaptureQuality.isReadyForPreciseReplay && routeStartReference != nil
   }
 
   /// Human-readable list of unmet conditions blocking the Save button.
@@ -57,6 +66,9 @@ class LocationService: NSObject, ObservableObject {
     }
     if !q.hasEncryptedWorldMap {
       lines.append("• No world map — AR session hasn't captured one yet (keep recording)")
+    }
+    if routeStartReference == nil {
+      lines.append("• No start reference — hold still and scan the starting area")
     }
     return lines.joined(separator: "\n")
   }
@@ -109,8 +121,10 @@ class LocationService: NSObject, ObservableObject {
   private struct LocalFrameSample {
     let timestamp: Date
     let position: SIMD3<Float>
+    let cameraTransform: simd_float4x4
     let trackingScore: Double
     let featurePointCount: Int
+    let worldMappingStatus: String
   }
 
   private struct LocalDraftSample {
@@ -125,6 +139,9 @@ class LocationService: NSObject, ObservableObject {
   private var localFrameBuffer: [LocalFrameSample] = []
   private var localDraftBySampleId: [UUID: LocalDraftSample] = [:]
   private var lastEncryptedWorldMapData: Data?
+  private var routeStartReference: RouteStartReference?
+  private var recordingSamplesEnabled = false
+  private var recordingStableFrameCount = 0
   private var captureLogURL: URL?
   private var lastLoggedQualitySignature: String?
   private let logTimestampFormatter = ISO8601DateFormatter()
@@ -132,6 +149,7 @@ class LocationService: NSObject, ObservableObject {
   // MARK: - AR precise capture
 
   private let arSession = ARSession()
+  private weak var attachedRecordingSession: ARSession?
   private let arCaptureQueue = DispatchQueue(
     label: "occamsrunner.precisecapture", qos: .userInitiated)
   private var worldMapTimer: Timer?
@@ -144,7 +162,7 @@ class LocationService: NSObject, ObservableObject {
 
     locationManager.delegate = self
     locationManager.desiredAccuracy = kCLLocationAccuracyBestForNavigation
-    locationManager.distanceFilter = RecordingMode.vast.distanceFilter
+    locationManager.distanceFilter = RecordingMode.tight.distanceFilter
     locationManager.activityType = .fitness
     locationManager.allowsBackgroundLocationUpdates = false
     locationManager.showsBackgroundLocationIndicator = true
@@ -161,27 +179,51 @@ class LocationService: NSObject, ObservableObject {
 
   func startUpdating() {
     locationManager.startUpdatingLocation()
+    if CLLocationManager.headingAvailable() {
+      locationManager.startUpdatingHeading()
+    }
     resetAltitudeState()
     beginAltimeterUpdates()
   }
 
   func stopUpdating() {
     locationManager.stopUpdatingLocation()
+    locationManager.stopUpdatingHeading()
     altimeter.stopRelativeAltitudeUpdates()
     stopPreciseCapture()
   }
 
-  func startRecording(mode: RecordingMode = .vast) {
-    recordingMode = mode
-    locationManager.distanceFilter = mode.distanceFilter
+  func attachRecordingSession(_ session: ARSession) {
+    attachedRecordingSession = session
+    session.delegate = self
+    session.delegateQueue = arCaptureQueue
+    if !isRecording {
+      runPreciseCaptureConfiguration(on: session, resetTracking: true)
+    }
+  }
+
+  func detachRecordingSession(_ session: ARSession) {
+    guard attachedRecordingSession === session else { return }
+    attachedRecordingSession = nil
+    if !isRecording {
+      session.pause()
+    }
+  }
+
+  func startRecording(mode: RecordingMode = .tight) {
+    recordingMode = .tight
+    locationManager.distanceFilter = RecordingMode.tight.distanceFilter
     recordedPoints = []
     lastRecordedLocation = nil
     isRecording = true
+    recordingSamplesEnabled = false
+    recordingStableFrameCount = 0
 
     geoDraftSamples = []
     localFrameBuffer = []
     localDraftBySampleId = [:]
     lastEncryptedWorldMapData = nil
+    routeStartReference = nil
 
     preciseCaptureQuality = RouteCaptureQuality(
       matchedSampleRatio: 0,
@@ -189,16 +231,20 @@ class LocationService: NSObject, ObservableObject {
       averageTrackingScore: 0,
       hasEncryptedWorldMap: false
     )
-    preciseCaptureStatus = "Scanning environment for precise AR capture..."
-    prepareCaptureLogSession(mode: mode)
+    recordingCoachingState = .gettingReady
+    recordingCoachingMessage = "Hold still while GPS, heading, and AR tracking settle."
+    preciseCaptureStatus = recordingCoachingMessage
+    prepareCaptureLogSession(mode: recordingMode)
     logDebug("Thresholds: match>=65%, features>=75, tracking>=65%, worldMap=true")
 
     locationManager.startUpdatingLocation()
+    if CLLocationManager.headingAvailable() {
+      locationManager.startUpdatingHeading()
+    }
     altimeter.stopRelativeAltitudeUpdates()
     resetAltitudeState()
     beginAltimeterUpdates()
     startPreciseCapture()
-    recordStartLocationIfAvailable()
   }
 
   /// Stops active capture streams. Route construction is done by `buildRecordedRoute(name:)`.
@@ -308,7 +354,12 @@ class LocationService: NSObject, ObservableObject {
       encryptedWorldMapData: lastEncryptedWorldMapData,
       captureQuality: quality,
       preciseEnabled: true,
-      recordingMode: recordingMode
+      recordingMode: recordingMode,
+      startHeadingDegrees: routeStartReference?.headingDegrees,
+      startHeadingAccuracy: routeStartReference?.headingAccuracy,
+      startHeadingTimestamp: routeStartReference?.headingTimestamp,
+      startHeadingIsTrueNorth: routeStartReference?.headingIsTrueNorth,
+      startReference: routeStartReference
     )
   }
 
@@ -453,13 +504,10 @@ class LocationService: NSObject, ObservableObject {
   }
 
   private func startPreciseCapture() {
-    let config = ARWorldTrackingConfiguration()
-    config.worldAlignment = .gravity
-    config.planeDetection = []
-    config.environmentTexturing = .none
-
-    arSession.run(config, options: [.resetTracking, .removeExistingAnchors])
-    logDebug("AR precise capture started")
+    let session = attachedRecordingSession ?? arSession
+    session.delegate = self
+    session.delegateQueue = arCaptureQueue
+    runPreciseCaptureConfiguration(on: session, resetTracking: true)
 
     worldMapTimer?.invalidate()
     worldMapTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
@@ -468,15 +516,28 @@ class LocationService: NSObject, ObservableObject {
     RunLoop.main.add(worldMapTimer!, forMode: .common)
   }
 
+  private func runPreciseCaptureConfiguration(on session: ARSession, resetTracking: Bool) {
+    let config = ARWorldTrackingConfiguration()
+    config.worldAlignment = .gravity
+    config.planeDetection = []
+    config.environmentTexturing = .none
+
+    let options: ARSession.RunOptions = resetTracking
+      ? [.resetTracking, .removeExistingAnchors]
+      : []
+    session.run(config, options: options)
+    logDebug("AR precise capture started")
+  }
+
   private func stopPreciseCapture() {
     worldMapTimer?.invalidate()
     worldMapTimer = nil
-    arSession.pause()
+    (attachedRecordingSession ?? arSession).pause()
     logDebug("AR precise capture paused")
   }
 
   private func captureWorldMapSnapshot() {
-    arSession.getCurrentWorldMap { [weak self] worldMap, error in
+    (attachedRecordingSession ?? arSession).getCurrentWorldMap { [weak self] worldMap, error in
       guard let self else { return }
       guard error == nil, let worldMap else { return }
       do {
@@ -517,37 +578,18 @@ class LocationService: NSObject, ObservableObject {
     return best
   }
 
-  private func recordStartLocationIfAvailable() {
-    guard let location = currentLocation else {
-      logDebug("start GPS seed skipped: no current location")
-      return
-    }
-
-    let fixAge = Date().timeIntervalSince(location.timestamp)
-    guard fixAge <= 1.0 else {
-      logDebug("start GPS seed skipped: stale fix age=\(String(format: "%.1f", fixAge))s")
-      return
-    }
-
-    recomputeAbsoluteAltitude()
-    recordLocationSample(
-      location,
-      timestamp: Date(),
-      force: true,
-      context: "startGPS"
-    )
-  }
-
+  @discardableResult
   private func recordLocationSample(
     _ location: CLLocation,
     timestamp: Date? = nil,
     force: Bool = false,
-    context: String = "geoSample"
-  ) {
-    guard isRecording else { return }
+    context: String = "geoSample",
+    localFrameOverride: LocalFrameSample? = nil
+  ) -> UUID? {
+    guard isRecording else { return nil }
 
     let fixAge = Date().timeIntervalSince(location.timestamp)
-    guard fixAge <= 1.0 else { return }
+    guard fixAge <= 1.0 else { return nil }
 
     let shouldRecord: Bool
     if force {
@@ -558,7 +600,7 @@ class LocationService: NSObject, ObservableObject {
       shouldRecord = true
     }
 
-    guard shouldRecord else { return }
+    guard shouldRecord else { return nil }
 
     let sampleId = UUID()
     let sampleTimestamp = timestamp ?? location.timestamp
@@ -580,7 +622,7 @@ class LocationService: NSObject, ObservableObject {
       )
     )
 
-    if let localFrame = nearestLocalFrame(to: sampleTimestamp) {
+    if let localFrame = localFrameOverride ?? nearestLocalFrame(to: sampleTimestamp) {
       localDraftBySampleId[sampleId] = LocalDraftSample(
         sampleId: sampleId,
         timestamp: localFrame.timestamp,
@@ -601,6 +643,7 @@ class LocationService: NSObject, ObservableObject {
 
     lastRecordedLocation = location
     recomputeCaptureQuality()
+    return sampleId
   }
 
   private func recomputeCaptureQuality() {
@@ -695,7 +738,7 @@ extension LocationService: CLLocationManagerDelegate {
       recomputeAbsoluteAltitude()
     }
 
-    guard isRecording else { return }
+    guard isRecording, recordingSamplesEnabled else { return }
 
     // Discard stale cached fixes that iOS delivers as a burst when recording starts.
     // A fix whose timestamp is more than 1 second old at the moment it arrives
@@ -705,6 +748,14 @@ extension LocationService: CLLocationManagerDelegate {
     guard fixAge <= 1.0 else { return }
 
     recordLocationSample(location)
+  }
+
+  func locationManager(_ manager: CLLocationManager, didUpdateHeading newHeading: CLHeading) {
+    let heading = newHeading.trueHeading >= 0 ? newHeading.trueHeading : newHeading.magneticHeading
+    currentHeadingDegrees = heading
+    currentHeadingAccuracy = newHeading.headingAccuracy
+    currentHeadingTimestamp = Date()
+    currentHeadingIsTrueNorth = newHeading.trueHeading >= 0
   }
 
   func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
@@ -723,21 +774,28 @@ extension LocationService: ARSessionDelegate {
     let position = SIMD3<Float>(transform.columns.3.x, transform.columns.3.y, transform.columns.3.z)
     let featureCount = frame.rawFeaturePoints?.points.count ?? 0
     let tracking = trackingScore(frame.camera.trackingState)
+    let mappingStatus = worldMappingStatusDescription(frame.worldMappingStatus)
 
     let sample = LocalFrameSample(
       // ARFrame timestamp is not wall-clock time; use capture receipt time
       // so correlation with CLLocation timestamps remains meaningful.
       timestamp: Date(),
       position: position,
+      cameraTransform: transform,
       trackingScore: tracking,
-      featurePointCount: featureCount
+      featurePointCount: featureCount,
+      worldMappingStatus: mappingStatus
     )
 
     DispatchQueue.main.async {
+      self.arFeaturePointCount = featureCount
+      self.arTrackingDescription = self.trackingDescription(frame.camera.trackingState)
+      self.arWorldMappingDescription = mappingStatus
       self.localFrameBuffer.append(sample)
       if self.localFrameBuffer.count > 900 {
         self.localFrameBuffer.removeFirst(self.localFrameBuffer.count - 900)
       }
+      self.updateRecordingReadiness(with: sample)
     }
   }
 
@@ -767,6 +825,98 @@ extension LocationService: ARSessionDelegate {
       }
     case .notAvailable:
       return 0.0
+    }
+  }
+
+  private func updateRecordingReadiness(with sample: LocalFrameSample) {
+    guard isRecording else { return }
+
+    if sample.trackingScore >= RecordingReadinessEvaluator.minimumTrackingScore,
+       sample.featurePointCount >= RecordingReadinessEvaluator.minimumFeaturePoints,
+       (sample.worldMappingStatus == "extending" || sample.worldMappingStatus == "mapped") {
+      recordingStableFrameCount += 1
+    } else if !recordingSamplesEnabled {
+      recordingStableFrameCount = 0
+    }
+
+    let gpsAge = currentLocation.map { Date().timeIntervalSince($0.timestamp) }
+    let result = RecordingReadinessEvaluator.evaluate(
+      RecordingReadinessInput(
+        gpsAge: gpsAge,
+        gpsHorizontalAccuracy: currentLocation?.horizontalAccuracy,
+        headingAccuracy: currentHeadingAccuracy,
+        trackingScore: sample.trackingScore,
+        featurePointCount: sample.featurePointCount,
+        worldMappingStatus: sample.worldMappingStatus,
+        stableFrameCount: recordingStableFrameCount,
+        hasStartReference: routeStartReference != nil
+      )
+    )
+
+    recordingCoachingState = result.state
+    recordingCoachingMessage = result.message
+    preciseCaptureStatus = result.message
+
+    if !recordingSamplesEnabled, result.canCaptureStartReference {
+      captureRouteStartReference(from: sample)
+    }
+  }
+
+  private func captureRouteStartReference(from sample: LocalFrameSample) {
+    guard let location = currentLocation else { return }
+    recomputeAbsoluteAltitude()
+    guard let sampleId = recordLocationSample(
+      location,
+      timestamp: sample.timestamp,
+      force: true,
+      context: "startReference",
+      localFrameOverride: sample
+    ) else { return }
+
+    routeStartReference = RouteStartReference(
+      sampleId: sampleId,
+      location: location,
+      headingDegrees: currentHeadingDegrees,
+      headingAccuracy: currentHeadingAccuracy,
+      headingTimestamp: currentHeadingTimestamp,
+      headingIsTrueNorth: currentHeadingIsTrueNorth,
+      cameraTransform: sample.cameraTransform,
+      featurePointCount: sample.featurePointCount,
+      trackingScore: sample.trackingScore,
+      worldMappingStatus: sample.worldMappingStatus,
+      timestamp: sample.timestamp
+    )
+    recordingSamplesEnabled = true
+    recordingCoachingState = .recording
+    recordingCoachingMessage = "Start reference locked. Recording route."
+    preciseCaptureStatus = recordingCoachingMessage
+    logDebug("Start reference captured sample=\(sampleId.uuidString.prefix(8)) features=\(sample.featurePointCount) tracking=\(Int(sample.trackingScore * 100))% mapping=\(sample.worldMappingStatus)")
+  }
+
+  private func worldMappingStatusDescription(_ status: ARFrame.WorldMappingStatus) -> String {
+    switch status {
+    case .notAvailable: return "notAvailable"
+    case .limited: return "limited"
+    case .extending: return "extending"
+    case .mapped: return "mapped"
+    @unknown default: return "unknown"
+    }
+  }
+
+  private func trackingDescription(_ state: ARCamera.TrackingState) -> String {
+    switch state {
+    case .normal:
+      return "normal"
+    case .limited(let reason):
+      switch reason {
+      case .initializing: return "limited:initializing"
+      case .excessiveMotion: return "limited:excessiveMotion"
+      case .insufficientFeatures: return "limited:insufficientFeatures"
+      case .relocalizing: return "limited:relocalizing"
+      @unknown default: return "limited:unknown"
+      }
+    case .notAvailable:
+      return "notAvailable"
     }
   }
 }

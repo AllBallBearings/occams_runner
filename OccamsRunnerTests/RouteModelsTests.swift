@@ -1,5 +1,6 @@
 import XCTest
 import CoreLocation
+import simd
 @testable import OccamsRunner
 
 final class RouteModelsTests: XCTestCase {
@@ -228,5 +229,111 @@ final class RouteModelsTests: XCTestCase {
         XCTAssertEqual(route.elevationGainMeters, 11.0, accuracy: 0.001)
         // net = 54 - 50 = 4
         XCTAssertEqual(route.netElevationChangeMeters, 4.0, accuracy: 0.001)
+    }
+
+    // MARK: - Route start reference
+
+    func test_routeStartReference_roundTripsThroughJSON() throws {
+        let sampleId = UUID()
+        var transform = matrix_identity_float4x4
+        transform.columns.3 = SIMD4<Float>(1.2, -0.3, 4.5, 1)
+        let location = CLLocation(
+            coordinate: CLLocationCoordinate2D(latitude: 37.33182, longitude: -122.03118),
+            altitude: 52,
+            horizontalAccuracy: 4,
+            verticalAccuracy: 3,
+            timestamp: Date(timeIntervalSince1970: 10)
+        )
+        let reference = RouteStartReference(
+            sampleId: sampleId,
+            location: location,
+            headingDegrees: 215,
+            headingAccuracy: 8,
+            headingTimestamp: Date(timeIntervalSince1970: 11),
+            headingIsTrueNorth: true,
+            cameraTransform: transform,
+            featurePointCount: 180,
+            trackingScore: 1,
+            worldMappingStatus: "mapped",
+            timestamp: Date(timeIntervalSince1970: 12)
+        )
+
+        let route = RecordedRoute(
+            name: "With Start Reference",
+            geoTrack: [],
+            localTrack: [],
+            checkpoints: [],
+            encryptedWorldMapData: nil,
+            captureQuality: RouteCaptureQuality(
+                matchedSampleRatio: 1,
+                averageFeaturePoints: 180,
+                averageTrackingScore: 1,
+                hasEncryptedWorldMap: true
+            ),
+            startReference: reference
+        )
+
+        let data = try JSONEncoder().encode(route)
+        let decoded = try JSONDecoder().decode(RecordedRoute.self, from: data)
+
+        XCTAssertEqual(decoded.startReference?.sampleId, sampleId)
+        XCTAssertEqual(decoded.startReference?.cameraPosition?.x ?? 0, 1.2, accuracy: 0.001)
+        XCTAssertEqual(decoded.startReference?.cameraPosition?.z ?? 0, 4.5, accuracy: 0.001)
+        XCTAssertEqual(decoded.startReference?.worldMappingStatus, "mapped")
+    }
+
+    func test_routeStartReference_missingFieldDecodesAsNil() throws {
+        let route = RecordedRoute(name: "Legacy", points: [
+            makePoint(lat: 37.331, lon: -122.031, alt: 50),
+            makePoint(lat: 37.332, lon: -122.031, alt: 50)
+        ])
+
+        let data = try JSONEncoder().encode(route)
+        let decoded = try JSONDecoder().decode(RecordedRoute.self, from: data)
+
+        XCTAssertNil(decoded.startReference)
+    }
+
+    // MARK: - Render path simplification
+
+    func test_simplifiedLocalTrack_capsThreeMileTightRouteUnderRenderLimit() {
+        let samples = (0..<16_100).map { i in
+            LocalRouteSample(
+                sampleId: UUID(),
+                x: Double(i) * 0.3,
+                y: 0,
+                z: 0,
+                timestamp: Date(timeIntervalSince1970: Double(i)),
+                progress: Double(i) / 16_099.0,
+                trackingScore: 1,
+                featurePointCount: 180
+            )
+        }
+
+        let simplified = RecordedRoute.simplifiedLocalTrack(samples, maxSegments: 1_500)
+
+        XCTAssertLessThanOrEqual(simplified.count, 1_501)
+        XCTAssertEqual(simplified.first?.id, samples.first?.id)
+        XCTAssertEqual(simplified.last?.id, samples.last?.id)
+    }
+
+    func test_simplifiedLocalTrack_preservesMonotonicProgress() {
+        let samples = (0..<5_000).map { i in
+            LocalRouteSample(
+                sampleId: UUID(),
+                x: Double(i),
+                y: 0,
+                z: 0,
+                timestamp: Date(timeIntervalSince1970: Double(i)),
+                progress: Double(i) / 4_999.0,
+                trackingScore: 1,
+                featurePointCount: 180
+            )
+        }
+
+        let simplified = RecordedRoute.simplifiedLocalTrack(samples, maxSegments: 1_500)
+        let progressValues = simplified.map(\.progress)
+
+        XCTAssertEqual(progressValues, progressValues.sorted())
     }
 }

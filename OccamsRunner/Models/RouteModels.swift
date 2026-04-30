@@ -32,6 +32,203 @@ enum RecordingMode: String, Codable, CaseIterable {
     }
 }
 
+// MARK: - Recording Readiness
+
+enum RecordingCoachingState: String, Codable {
+    case gettingReady
+    case scanStartArea
+    case recording
+    case needsMoreScan
+}
+
+struct RecordingReadinessInput {
+    let gpsAge: TimeInterval?
+    let gpsHorizontalAccuracy: Double?
+    let headingAccuracy: Double?
+    let trackingScore: Double
+    let featurePointCount: Int
+    let worldMappingStatus: String
+    let stableFrameCount: Int
+    let hasStartReference: Bool
+}
+
+struct RecordingReadinessResult {
+    let state: RecordingCoachingState
+    let canCaptureStartReference: Bool
+    let message: String
+}
+
+enum RecordingReadinessEvaluator {
+    static let maximumFreshGPSAge: TimeInterval = 1.0
+    static let maximumGPSAccuracy: Double = 25
+    static let maximumHeadingAccuracy: Double = 35
+    static let minimumTrackingScore: Double = 0.65
+    static let minimumFeaturePoints = 90
+    static let stableFramesForStart = 18
+
+    static func evaluate(_ input: RecordingReadinessInput) -> RecordingReadinessResult {
+        guard let gpsAge = input.gpsAge,
+              gpsAge <= maximumFreshGPSAge,
+              let gpsAccuracy = input.gpsHorizontalAccuracy,
+              gpsAccuracy >= 0,
+              gpsAccuracy <= maximumGPSAccuracy else {
+            return RecordingReadinessResult(
+                state: .gettingReady,
+                canCaptureStartReference: false,
+                message: "Hold still while GPS settles."
+            )
+        }
+
+        if let headingAccuracy = input.headingAccuracy,
+           headingAccuracy >= 0,
+           headingAccuracy > maximumHeadingAccuracy {
+            return RecordingReadinessResult(
+                state: .gettingReady,
+                canCaptureStartReference: false,
+                message: "Hold still while compass heading settles."
+            )
+        }
+
+        guard input.trackingScore >= minimumTrackingScore else {
+            return RecordingReadinessResult(
+                state: input.hasStartReference ? .needsMoreScan : .gettingReady,
+                canCaptureStartReference: false,
+                message: "Move slowly while AR tracking settles."
+            )
+        }
+
+        guard input.featurePointCount >= minimumFeaturePoints else {
+            return RecordingReadinessResult(
+                state: input.hasStartReference ? .needsMoreScan : .scanStartArea,
+                canCaptureStartReference: false,
+                message: "Scan the ground and nearby surroundings at the start."
+            )
+        }
+
+        guard input.worldMappingStatus == "extending" || input.worldMappingStatus == "mapped" else {
+            return RecordingReadinessResult(
+                state: input.hasStartReference ? .needsMoreScan : .scanStartArea,
+                canCaptureStartReference: false,
+                message: "Keep scanning the start area until AR mapping improves."
+            )
+        }
+
+        let canCapture = input.stableFrameCount >= stableFramesForStart
+        return RecordingReadinessResult(
+            state: input.hasStartReference ? .recording : .scanStartArea,
+            canCaptureStartReference: canCapture,
+            message: canCapture
+                ? "Start reference locked. Recording route."
+                : "Keep the phone steady on the start area."
+        )
+    }
+}
+
+// MARK: - Route Localization
+
+struct RouteLocalizationInput {
+    let distanceToStart: Double?
+    let gpsHorizontalAccuracy: Double?
+    let trackingScore: Double
+    let featurePointCount: Int
+    let worldMappingStatus: String
+    let consecutiveGoodFrames: Int
+    let scanDuration: TimeInterval
+    let startPoseDelta: Double?
+}
+
+struct RouteLocalizationResult {
+    let state: ARAlignmentState
+    let confidence: Double
+    let ready: Bool
+    let coachingMessage: String
+}
+
+enum RouteLocalizationEvaluator {
+    static let startGateDistanceMeters: Double = 3
+    static let minimumFeaturePoints = 120
+    static let stableFramesForLock = 15
+    static let maximumStartPoseDelta: Double = 1.5
+
+    static func evaluate(_ input: RouteLocalizationInput) -> RouteLocalizationResult {
+        if let distance = input.distanceToStart, distance > startGateDistanceMeters {
+            return RouteLocalizationResult(
+                state: .goToStart,
+                confidence: 0.2,
+                ready: false,
+                coachingMessage: "Follow the marker to the recorded start."
+            )
+        }
+
+        let featureScore = min(1.0, Double(input.featurePointCount) / 300.0)
+        let mappingScore: Double
+        switch input.worldMappingStatus {
+        case "mapped":
+            mappingScore = 1.0
+        case "extending":
+            mappingScore = 0.8
+        case "limited":
+            mappingScore = 0.45
+        default:
+            mappingScore = 0.2
+        }
+        let gpsScore: Double
+        if let accuracy = input.gpsHorizontalAccuracy, accuracy >= 0 {
+            gpsScore = max(0, min(1, 1 - (accuracy / 30.0)))
+        } else {
+            gpsScore = 0.4
+        }
+        let poseScore: Double
+        if let delta = input.startPoseDelta {
+            poseScore = max(0, min(1, 1 - (delta / maximumStartPoseDelta)))
+        } else {
+            poseScore = 0.8
+        }
+
+        let confidence = max(0.0, min(1.0,
+            (featureScore * 0.25)
+            + (input.trackingScore * 0.25)
+            + (mappingScore * 0.25)
+            + (gpsScore * 0.10)
+            + (poseScore * 0.15)
+        ))
+
+        let poseAcceptable = input.startPoseDelta.map { $0 <= maximumStartPoseDelta } ?? true
+        let canLock =
+            input.consecutiveGoodFrames >= stableFramesForLock
+            && input.trackingScore >= 0.70
+            && input.featurePointCount >= minimumFeaturePoints
+            && (input.worldMappingStatus == "extending" || input.worldMappingStatus == "mapped")
+            && poseAcceptable
+            && confidence >= 0.70
+
+        if canLock {
+            return RouteLocalizationResult(
+                state: .localized,
+                confidence: confidence,
+                ready: true,
+                coachingMessage: "Localized. Route is ready."
+            )
+        }
+
+        if input.scanDuration > 14, confidence >= 0.45 {
+            return RouteLocalizationResult(
+                state: .lowConfidence,
+                confidence: confidence,
+                ready: false,
+                coachingMessage: "Low confidence. Scan textured ground and nearby surroundings."
+            )
+        }
+
+        return RouteLocalizationResult(
+            state: .scanStartArea,
+            confidence: confidence,
+            ready: false,
+            coachingMessage: "Point at where recording began and scan slowly."
+        )
+    }
+}
+
 // MARK: - Legacy-Friendly Route Point
 
 /// Lightweight geographic point used by map views and overlays.
@@ -131,6 +328,68 @@ struct RouteCheckpoint: Codable, Identifiable {
     let featurePointCount: Int
 }
 
+struct RouteStartReference: Codable {
+    let sampleId: UUID
+    let latitude: Double
+    let longitude: Double
+    let altitude: Double
+    let horizontalAccuracy: Double
+    let verticalAccuracy: Double
+    let headingDegrees: Double?
+    let headingAccuracy: Double?
+    let headingTimestamp: Date?
+    let headingIsTrueNorth: Bool?
+    let cameraTransform: [Float]
+    let featurePointCount: Int
+    let trackingScore: Double
+    let worldMappingStatus: String
+    let timestamp: Date
+
+    init(
+        sampleId: UUID,
+        location: CLLocation,
+        headingDegrees: Double?,
+        headingAccuracy: Double?,
+        headingTimestamp: Date?,
+        headingIsTrueNorth: Bool?,
+        cameraTransform: simd_float4x4,
+        featurePointCount: Int,
+        trackingScore: Double,
+        worldMappingStatus: String,
+        timestamp: Date
+    ) {
+        self.sampleId = sampleId
+        self.latitude = location.coordinate.latitude
+        self.longitude = location.coordinate.longitude
+        self.altitude = location.altitude
+        self.horizontalAccuracy = location.horizontalAccuracy
+        self.verticalAccuracy = location.verticalAccuracy
+        self.headingDegrees = headingDegrees
+        self.headingAccuracy = headingAccuracy
+        self.headingTimestamp = headingTimestamp
+        self.headingIsTrueNorth = headingIsTrueNorth
+        self.cameraTransform = Self.flatten(cameraTransform)
+        self.featurePointCount = featurePointCount
+        self.trackingScore = trackingScore
+        self.worldMappingStatus = worldMappingStatus
+        self.timestamp = timestamp
+    }
+
+    var cameraPosition: SIMD3<Float>? {
+        guard cameraTransform.count == 16 else { return nil }
+        return SIMD3<Float>(cameraTransform[12], cameraTransform[13], cameraTransform[14])
+    }
+
+    static func flatten(_ transform: simd_float4x4) -> [Float] {
+        [
+            transform.columns.0.x, transform.columns.0.y, transform.columns.0.z, transform.columns.0.w,
+            transform.columns.1.x, transform.columns.1.y, transform.columns.1.z, transform.columns.1.w,
+            transform.columns.2.x, transform.columns.2.y, transform.columns.2.z, transform.columns.2.w,
+            transform.columns.3.x, transform.columns.3.y, transform.columns.3.z, transform.columns.3.w
+        ]
+    }
+}
+
 struct RouteCaptureQuality: Codable {
     let matchedSampleRatio: Double
     let averageFeaturePoints: Double
@@ -175,6 +434,7 @@ struct RecordedRoute: Codable, Identifiable {
     var startHeadingAccuracy: Double?
     var startHeadingTimestamp: Date?
     var startHeadingIsTrueNorth: Bool?
+    var startReference: RouteStartReference?
 
     /// Convenience map points for existing map-driven views.
     var points: [RoutePoint] {
@@ -252,6 +512,7 @@ struct RecordedRoute: Codable, Identifiable {
         self.startHeadingAccuracy = nil
         self.startHeadingTimestamp = nil
         self.startHeadingIsTrueNorth = nil
+        self.startReference = nil
         self.captureQuality = RouteCaptureQuality(
             matchedSampleRatio: 0,
             averageFeaturePoints: 0,
@@ -294,7 +555,8 @@ struct RecordedRoute: Codable, Identifiable {
         startHeadingDegrees: Double? = nil,
         startHeadingAccuracy: Double? = nil,
         startHeadingTimestamp: Date? = nil,
-        startHeadingIsTrueNorth: Bool? = nil
+        startHeadingIsTrueNorth: Bool? = nil,
+        startReference: RouteStartReference? = nil
     ) {
         self.id = UUID()
         self.name = name
@@ -310,6 +572,7 @@ struct RecordedRoute: Codable, Identifiable {
         self.startHeadingAccuracy = startHeadingAccuracy
         self.startHeadingTimestamp = startHeadingTimestamp
         self.startHeadingIsTrueNorth = startHeadingIsTrueNorth
+        self.startReference = startReference
     }
 
     // Custom decoder so routes saved before `recordingMode` was added
@@ -331,6 +594,7 @@ struct RecordedRoute: Codable, Identifiable {
         startHeadingAccuracy = try c.decodeIfPresent(Double.self,      forKey: .startHeadingAccuracy)
         startHeadingTimestamp = try c.decodeIfPresent(Date.self,       forKey: .startHeadingTimestamp)
         startHeadingIsTrueNorth = try c.decodeIfPresent(Bool.self,     forKey: .startHeadingIsTrueNorth)
+        startReference = try c.decodeIfPresent(RouteStartReference.self, forKey: .startReference)
     }
 
     func geoSample(atProgress progress: Double) -> GeoRouteSample? {
@@ -339,6 +603,38 @@ struct RecordedRoute: Codable, Identifiable {
 
     func localSample(atProgress progress: Double) -> LocalRouteSample? {
         interpolateLocal(at: progress)
+    }
+
+    static let defaultRenderableLocalSegmentLimit = 1_500
+
+    var renderLocalTrack: [LocalRouteSample] {
+        Self.simplifiedLocalTrack(localTrack, maxSegments: Self.defaultRenderableLocalSegmentLimit)
+    }
+
+    static func simplifiedLocalTrack(
+        _ samples: [LocalRouteSample],
+        maxSegments: Int = defaultRenderableLocalSegmentLimit
+    ) -> [LocalRouteSample] {
+        guard maxSegments > 0 else { return samples.prefix(1).map { $0 } }
+        let maxPoints = maxSegments + 1
+        guard samples.count > maxPoints else { return samples }
+
+        var result: [LocalRouteSample] = []
+        result.reserveCapacity(maxPoints)
+        var lastIndex = -1
+        let lastSampleIndex = samples.count - 1
+        for outputIndex in 0..<maxPoints {
+            let ratio = Double(outputIndex) / Double(maxPoints - 1)
+            let index = Int((ratio * Double(lastSampleIndex)).rounded())
+            let clampedIndex = min(lastSampleIndex, max(index, lastIndex + 1))
+            guard clampedIndex < samples.count else { break }
+            result.append(samples[clampedIndex])
+            lastIndex = clampedIndex
+        }
+        if result.last?.id != samples.last?.id {
+            result[result.count - 1] = samples[samples.count - 1]
+        }
+        return result
     }
 
     private func interpolateGeo(at progress: Double) -> GeoRouteSample? {

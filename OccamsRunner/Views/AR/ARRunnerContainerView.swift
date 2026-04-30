@@ -11,8 +11,6 @@ struct ARRunnerContainerView: UIViewRepresentable {
     let locationService: LocationService
     let runMode: ARRunMode
     let headingDegrees: Double
-    /// Shared state object that carries user-applied manual alignment corrections.
-    let manualAlignment: ManualAlignmentState
     let onAlignmentUpdate: (ARAlignmentState, Double, Double?, Bool) -> Void
     let onNearestItemDistance: (Double?) -> Void
     let onItemCollected: (UUID) -> Void
@@ -32,18 +30,19 @@ struct ARRunnerContainerView: UIViewRepresentable {
         config.worldAlignment = .gravity
         config.planeDetection = []
 
+        var loadedInitialWorldMap = false
         if let encrypted = route.encryptedWorldMapData,
            let decrypted = locationService.decryptWorldMapData(encrypted),
            let worldMap = try? NSKeyedUnarchiver.unarchivedObject(ofClass: ARWorldMap.self, from: decrypted) {
             config.initialWorldMap = worldMap
+            loadedInitialWorldMap = true
         }
 
         arView.session.run(config, options: [.resetTracking, .removeExistingAnchors])
 
         context.coordinator.arView = arView
-        // Wire the manual alignment state before the initial scene is built.
-        context.coordinator.manualAlignment = manualAlignment
         context.coordinator.headingDegrees = headingDegrees
+        context.coordinator.hasLoadedInitialWorldMap = loadedInitialWorldMap
         context.coordinator.configureInitialScene()
 
         return arView
@@ -63,9 +62,6 @@ struct ARRunnerContainerView: UIViewRepresentable {
         context.coordinator.onDebugTick          = onDebugTick
         context.coordinator.onStartPlacementDebugUpdate = onStartPlacementDebugUpdate
 
-        // Keep the manual alignment reference in sync (same instance in practice,
-        // but explicit assignment ensures correctness across any future refactors).
-        context.coordinator.manualAlignment = manualAlignment
         context.coordinator.headingDegrees = headingDegrees
 
         // Always pull the live quest from dataStore rather than using the
