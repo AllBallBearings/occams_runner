@@ -1,5 +1,7 @@
 import SwiftUI
 import MapKit
+import ARKit
+import SceneKit
 #if canImport(UIKit)
 import UIKit
 #endif
@@ -37,7 +39,6 @@ struct RecordRunView: View {
     @State private var routeName = ""
     @State private var elapsedTime: TimeInterval = 0
     @State private var timer: Timer?
-    @State private var selectedMode: RecordingMode = .vast
     @State private var saveErrorMessage: String?
     @State private var didCopyDebugLog = false
     @State private var beaconPulse = false
@@ -59,39 +60,9 @@ struct RecordRunView: View {
     var body: some View {
         NavigationStack {
             ZStack(alignment: .top) {
-                // ── Full-bleed dark map ──────────────────────────────────
-                Map(coordinateRegion: $region,
-                    showsUserLocation: false,
-                    annotationItems: mapPins) { pin in
-                    MapAnnotation(coordinate: pin.coordinate) {
-                        switch pin {
-                        case .trackPoint:
-                            Circle()
-                                .fill(Color.orange.opacity(0.60))
-                                .frame(width: 6, height: 6)
-                        case .userLocation:
-                            locationBeacon
-                        }
-                    }
-                }
-                .environment(\.colorScheme, .dark)
-                .ignoresSafeArea()
-                .onAppear {
-                    locationService.startUpdating()
-                    if let loc = locationService.currentLocation {
-                        region.center = loc.coordinate
-                    }
-                    withAnimation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true)) {
-                        beaconPulse = true
-                    }
-                }
-                .onChange(of: locationService.currentLocation) { loc in
-                    if let loc {
-                        withAnimation(.easeOut(duration: 0.4)) {
-                            region.center = loc.coordinate
-                        }
-                    }
-                }
+                // ── Full-bleed AR recording view ────────────────────────
+                RecordingARContainerView(locationService: locationService)
+                    .ignoresSafeArea()
 
                 // ── Stats overlay (top) ──────────────────────────────────
                 statsOverlay
@@ -101,14 +72,31 @@ struct RecordRunView: View {
                 // ── Bottom controls ──────────────────────────────────────
                 VStack(spacing: 0) {
                     Spacer()
-                    if !locationService.isRecording {
-                        modePicker
-                            .padding(.horizontal, 40)
-                            .padding(.bottom, 14)
+                    HStack {
+                        miniMap
+                            .padding(.leading, 18)
+                        Spacer()
                     }
+                    .padding(.bottom, 14)
                     actionButton
                         .padding(.horizontal, 28)
                         .padding(.bottom, 36)
+                }
+            }
+            .onAppear {
+                locationService.startUpdating()
+                if let loc = locationService.currentLocation {
+                    region.center = loc.coordinate
+                }
+                withAnimation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true)) {
+                    beaconPulse = true
+                }
+            }
+            .onChange(of: locationService.currentLocation) { loc in
+                if let loc {
+                    withAnimation(.easeOut(duration: 0.4)) {
+                        region.center = loc.coordinate
+                    }
                 }
             }
             .navigationTitle("Record Run")
@@ -183,10 +171,13 @@ struct RecordRunView: View {
                 glassQualityPill(
                     "Track \(Int(locationService.preciseCaptureQuality.averageTrackingScore * 100))%",
                     ok: locationService.preciseCaptureQuality.averageTrackingScore >= 0.65)
+                glassQualityPill(
+                    "AR \(locationService.arFeaturePointCount)",
+                    ok: locationService.arFeaturePointCount >= RecordingReadinessEvaluator.minimumFeaturePoints)
             }
 
             // Status line
-            Text(locationService.preciseCaptureStatus.uppercased())
+            Text(recordingInstruction.uppercased())
                 .font(.system(size: 10, weight: .bold))
                 .foregroundColor(darkText.opacity(0.45))
                 .kerning(1.2)
@@ -231,16 +222,33 @@ struct RecordRunView: View {
             .clipShape(Capsule())
     }
 
-    // MARK: - Mode Picker
+    // MARK: - Mini Map
 
-    private var modePicker: some View {
-        Picker("Mode", selection: $selectedMode) {
-            Label("Tight", systemImage: "house.fill").tag(RecordingMode.tight)
-            Label("Vast",  systemImage: "figure.run").tag(RecordingMode.vast)
+    private var miniMap: some View {
+        Map(coordinateRegion: $region,
+            showsUserLocation: false,
+            annotationItems: mapPins) { pin in
+            MapAnnotation(coordinate: pin.coordinate) {
+                switch pin {
+                case .trackPoint:
+                    Circle()
+                        .fill(Color.orange.opacity(0.70))
+                        .frame(width: 4, height: 4)
+                case .userLocation:
+                    locationBeacon
+                        .scaleEffect(0.55)
+                }
+            }
         }
-        .pickerStyle(.segmented)
-        .background(Color(red: 0.76, green: 0.78, blue: 0.88))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .environment(\.colorScheme, .dark)
+        .disabled(true)
+        .frame(width: 132, height: 132)
+        .clipShape(RoundedRectangle(cornerRadius: 18))
+        .overlay(
+            RoundedRectangle(cornerRadius: 18)
+                .stroke(Color.white.opacity(0.22), lineWidth: 1.5)
+        )
+        .shadow(color: .black.opacity(0.45), radius: 12)
     }
 
     // MARK: - Action Button
@@ -434,7 +442,7 @@ struct RecordRunView: View {
             }
         } else {
             elapsedTime = 0
-            locationService.startRecording(mode: selectedMode)
+            locationService.startRecording()
             timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
                 elapsedTime += 1
             }
@@ -458,5 +466,51 @@ struct RecordRunView: View {
         let mins = Int(seconds) / 60
         let secs = Int(seconds) % 60
         return String(format: "%02d:%02d", mins, secs)
+    }
+
+    private var recordingInstruction: String {
+        if locationService.isRecording {
+            return locationService.recordingCoachingMessage
+        }
+        return "AR camera ready. Start run, hold still, then scan the start area."
+    }
+}
+
+// MARK: - Recording AR Container
+
+private struct RecordingARContainerView: UIViewRepresentable {
+    let locationService: LocationService
+
+    func makeUIView(context: Context) -> ARSCNView {
+        let arView = ARSCNView()
+        arView.delegate = context.coordinator
+        arView.autoenablesDefaultLighting = true
+        arView.automaticallyUpdatesLighting = true
+        arView.debugOptions = [.showFeaturePoints]
+        arView.scene = SCNScene()
+        locationService.attachRecordingSession(arView.session)
+        return arView
+    }
+
+    func updateUIView(_ uiView: ARSCNView, context: Context) {
+        if !uiView.debugOptions.contains(.showFeaturePoints) {
+            uiView.debugOptions.insert(.showFeaturePoints)
+        }
+    }
+
+    static func dismantleUIView(_ uiView: ARSCNView, coordinator: Coordinator) {
+        coordinator.locationService.detachRecordingSession(uiView.session)
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(locationService: locationService)
+    }
+
+    final class Coordinator: NSObject, ARSCNViewDelegate {
+        let locationService: LocationService
+
+        init(locationService: LocationService) {
+            self.locationService = locationService
+        }
     }
 }
