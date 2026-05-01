@@ -41,6 +41,18 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
     private(set) var boxNodes: [UUID: SCNNode] = [:]
     private var pendingBoxIds: Set<UUID> = []
 
+    // Fake shadow discs placed beneath each item at the approximate floor level.
+    // We can't do real-time shadow casting because plane detection is disabled,
+    // so a soft radial-gradient blob underneath each object is the best we can do.
+    private var coinShadowNodes: [UUID: SCNNode] = [:]
+    private var boxShadowNodes: [UUID: SCNNode] = [:]
+    private var markerShadowNodes: [SCNNode] = []
+
+    /// Approximate distance from the recorded route altitude (chest height during
+    /// recording) down to the floor in route-local space. Used to position the
+    /// fake shadow blobs.
+    private let shadowDropDistance: Float = 1.2
+
     private var arrowIndicatorNode: SCNNode?
 
     // Hand pose detection
@@ -204,11 +216,20 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
         for node in pathNodes {
             node.isHidden = !showPath
         }
+        for shadow in markerShadowNodes {
+            shadow.isHidden = !showPath
+        }
         for node in coinNodes.values {
             node.isHidden = !showCollectibles
         }
+        for shadow in coinShadowNodes.values {
+            shadow.isHidden = !showCollectibles
+        }
         for node in boxNodes.values {
             node.isHidden = !showCollectibles
+        }
+        for shadow in boxShadowNodes.values {
+            shadow.isHidden = !showCollectibles
         }
         startGuidanceNode.isHidden =
             !(runMode == .aligning || runMode == .realigning) ||
@@ -227,6 +248,8 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
     private func buildRoutePath() {
         for node in pathNodes { node.removeFromParentNode() }
         pathNodes.removeAll()
+        for s in markerShadowNodes { s.removeFromParentNode() }
+        markerShadowNodes.removeAll()
 
         guard route.localTrack.count > 1 else { return }
 
@@ -246,11 +269,13 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
         start.simdPosition = points[0]
         routeGroupNode.addChildNode(start)
         pathNodes.append(start)
+        addShadow(forItemAt: points[0], radius: 0.32, into: &markerShadowNodes)
 
         let end = markerNode(color: UIColor(red: 0.9, green: 0.2, blue: 0.2, alpha: 0.9))
         end.simdPosition = points[points.count - 1]
         routeGroupNode.addChildNode(end)
         pathNodes.append(end)
+        addShadow(forItemAt: points[points.count - 1], radius: 0.32, into: &markerShadowNodes)
     }
 
     func buildCoinNodes(forceRebuild: Bool) {
@@ -260,6 +285,8 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
         if forceRebuild {
             for node in coinNodes.values { node.removeFromParentNode() }
             coinNodes.removeAll()
+            for shadow in coinShadowNodes.values { shadow.removeFromParentNode() }
+            coinShadowNodes.removeAll()
         }
 
         for item in currentQuest.items {
@@ -271,6 +298,10 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
                 if let existing = coinNodes[item.id] {
                     existing.removeFromParentNode()
                     coinNodes.removeValue(forKey: item.id)
+                }
+                if let shadow = coinShadowNodes[item.id] {
+                    shadow.removeFromParentNode()
+                    coinShadowNodes.removeValue(forKey: item.id)
                 }
                 continue
             }
@@ -288,6 +319,16 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
                 coinNode.isHidden = alignmentState == .moveToStart
                 routeGroupNode.addChildNode(coinNode)
                 coinNodes[item.id] = coinNode
+
+                let shadow = makeShadowDiscNode(radius: 0.18)
+                shadow.simdPosition = SIMD3<Float>(
+                    local.x,
+                    local.y - Float(item.verticalOffset) - shadowDropDistance,
+                    local.z
+                )
+                shadow.isHidden = coinNode.isHidden
+                routeGroupNode.addChildNode(shadow)
+                coinShadowNodes[item.id] = shadow
             }
         }
     }
@@ -300,6 +341,8 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
             for node in boxNodes.values { node.removeFromParentNode() }
             boxNodes.removeAll()
             pendingBoxIds.removeAll()
+            for shadow in boxShadowNodes.values { shadow.removeFromParentNode() }
+            boxShadowNodes.removeAll()
         }
 
         for box in currentQuest.boxes {
@@ -311,6 +354,18 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
                 node.isHidden = alignmentState == .moveToStart
                 routeGroupNode.addChildNode(node)
                 boxNodes[box.id] = node
+
+                // Strip the box's verticalOffset out of the local Y so the shadow
+                // sits on the floor regardless of whether the box is low/mid/high.
+                let shadow = makeShadowDiscNode(radius: 0.22)
+                shadow.simdPosition = SIMD3<Float>(
+                    local.x,
+                    local.y - Float(box.verticalOffsetMeters) - shadowDropDistance,
+                    local.z
+                )
+                shadow.isHidden = node.isHidden
+                routeGroupNode.addChildNode(shadow)
+                boxShadowNodes[box.id] = shadow
             }
         }
     }
@@ -408,6 +463,10 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
         // Remove box node immediately
         node.removeFromParentNode()
         boxNodes.removeValue(forKey: id)
+        if let shadow = boxShadowNodes[id] {
+            shadow.removeFromParentNode()
+            boxShadowNodes.removeValue(forKey: id)
+        }
 
         // Particle burst at box world position
         let particleNode = SCNNode()
@@ -1268,6 +1327,66 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
         mat.isDoubleSided = true
         sphere.materials = [mat]
         return SCNNode(geometry: sphere)
+    }
+
+    /// Soft circular alpha texture used by the fake shadow blobs. Generated
+    /// once and reused across every shadow node.
+    private static let shadowTexture: UIImage = {
+        let size: CGFloat = 128
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: size, height: size))
+        return renderer.image { ctx in
+            let cgctx = ctx.cgContext
+            cgctx.clear(CGRect(x: 0, y: 0, width: size, height: size))
+            let center = CGPoint(x: size / 2, y: size / 2)
+            let colors = [
+                UIColor(white: 0, alpha: 0.55).cgColor,
+                UIColor(white: 0, alpha: 0.0).cgColor
+            ]
+            guard let gradient = CGGradient(
+                colorsSpace: CGColorSpaceCreateDeviceRGB(),
+                colors: colors as CFArray,
+                locations: [0, 1]
+            ) else { return }
+            cgctx.drawRadialGradient(
+                gradient,
+                startCenter: center, startRadius: 0,
+                endCenter: center, endRadius: size / 2,
+                options: []
+            )
+        }
+    }()
+
+    /// Builds a horizontally-oriented soft shadow disc. The caller is
+    /// responsible for positioning it on the floor below the casting object.
+    private func makeShadowDiscNode(radius: CGFloat) -> SCNNode {
+        let plane = SCNPlane(width: radius * 2, height: radius * 2)
+        let material = SCNMaterial()
+        material.diffuse.contents = ARCoordinator.shadowTexture
+        material.lightingModel = .constant
+        material.isDoubleSided = false
+        material.writesToDepthBuffer = false
+        material.blendMode = .alpha
+        plane.materials = [material]
+
+        let node = SCNNode(geometry: plane)
+        // Lay the plane flat (default SCNPlane is in the XY plane facing +Z).
+        node.eulerAngles = SCNVector3(-Float.pi / 2, 0, 0)
+        // Render before opaque geometry so transparent edges blend cleanly.
+        node.renderingOrder = -10
+        return node
+    }
+
+    /// Convenience for buildRoutePath — adds a shadow disc in routeGroupNode
+    /// directly below `position`'s XZ at the approximate floor level.
+    private func addShadow(forItemAt position: SIMD3<Float>, radius: CGFloat, into list: inout [SCNNode]) {
+        let shadow = makeShadowDiscNode(radius: radius)
+        shadow.simdPosition = SIMD3<Float>(
+            position.x,
+            position.y - shadowDropDistance,
+            position.z
+        )
+        routeGroupNode.addChildNode(shadow)
+        list.append(shadow)
     }
 
     private func pathSegmentNode(from: SIMD3<Float>, to: SIMD3<Float>) -> SCNNode {
