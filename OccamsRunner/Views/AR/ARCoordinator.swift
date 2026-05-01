@@ -48,10 +48,11 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
     private var boxShadowNodes: [UUID: SCNNode] = [:]
     private var markerShadowNodes: [SCNNode] = []
 
-    /// Approximate distance from the recorded route altitude (chest height during
-    /// recording) down to the floor in route-local space. Used to position the
-    /// fake shadow blobs.
-    private let shadowDropDistance: Float = 1.2
+    /// How far below an item's position to place its fake shadow disc.
+    /// Plane detection is disabled so we don't know where the actual floor is —
+    /// instead we drop a small "contact shadow" just below each item so it stays
+    /// in the camera's view alongside the item itself.
+    private let shadowDropDistance: Float = 0.2
 
     private var arrowIndicatorNode: SCNNode?
 
@@ -320,10 +321,10 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
                 routeGroupNode.addChildNode(coinNode)
                 coinNodes[item.id] = coinNode
 
-                let shadow = makeShadowDiscNode(radius: 0.18)
+                let shadow = makeShadowDiscNode(radius: 0.22)
                 shadow.simdPosition = SIMD3<Float>(
                     local.x,
-                    local.y - Float(item.verticalOffset) - shadowDropDistance,
+                    local.y - shadowDropDistance,
                     local.z
                 )
                 shadow.isHidden = coinNode.isHidden
@@ -355,12 +356,10 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
                 routeGroupNode.addChildNode(node)
                 boxNodes[box.id] = node
 
-                // Strip the box's verticalOffset out of the local Y so the shadow
-                // sits on the floor regardless of whether the box is low/mid/high.
-                let shadow = makeShadowDiscNode(radius: 0.22)
+                let shadow = makeShadowDiscNode(radius: 0.28)
                 shadow.simdPosition = SIMD3<Float>(
                     local.x,
-                    local.y - Float(box.verticalOffsetMeters) - shadowDropDistance,
+                    local.y - shadowDropDistance,
                     local.z
                 )
                 shadow.isHidden = node.isHidden
@@ -1333,19 +1332,22 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
     /// once and reused across every shadow node.
     private static let shadowTexture: UIImage = {
         let size: CGFloat = 128
-        let renderer = UIGraphicsImageRenderer(size: CGSize(width: size, height: size))
+        let format = UIGraphicsImageRendererFormat.default()
+        format.opaque = false
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: size, height: size), format: format)
         return renderer.image { ctx in
             let cgctx = ctx.cgContext
             cgctx.clear(CGRect(x: 0, y: 0, width: size, height: size))
             let center = CGPoint(x: size / 2, y: size / 2)
             let colors = [
+                UIColor(white: 0, alpha: 0.75).cgColor,
                 UIColor(white: 0, alpha: 0.55).cgColor,
                 UIColor(white: 0, alpha: 0.0).cgColor
             ]
             guard let gradient = CGGradient(
                 colorsSpace: CGColorSpaceCreateDeviceRGB(),
                 colors: colors as CFArray,
-                locations: [0, 1]
+                locations: [0, 0.55, 1]
             ) else { return }
             cgctx.drawRadialGradient(
                 gradient,
@@ -1363,16 +1365,20 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
         let material = SCNMaterial()
         material.diffuse.contents = ARCoordinator.shadowTexture
         material.lightingModel = .constant
-        material.isDoubleSided = false
+        // Double-sided so the disc is visible whether the camera is above or
+        // (briefly, during AR drift) below the item.
+        material.isDoubleSided = true
         material.writesToDepthBuffer = false
+        material.transparencyMode = .aOne
         material.blendMode = .alpha
         plane.materials = [material]
 
         let node = SCNNode(geometry: plane)
         // Lay the plane flat (default SCNPlane is in the XY plane facing +Z).
         node.eulerAngles = SCNVector3(-Float.pi / 2, 0, 0)
-        // Render before opaque geometry so transparent edges blend cleanly.
-        node.renderingOrder = -10
+        // Render after opaque geometry so depth sorting works against the
+        // camera-feed background and other route nodes.
+        node.renderingOrder = 50
         return node
     }
 
