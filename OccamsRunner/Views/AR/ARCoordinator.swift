@@ -1430,29 +1430,10 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
     private func createCoinNode() -> SCNNode {
         let containerNode = SCNNode()
 
-        let coin = SCNCylinder(radius: 0.15, height: 0.02)
-
-        let goldMaterial = SCNMaterial()
-        goldMaterial.diffuse.contents = UIColor(red: 1.0, green: 0.84, blue: 0.0, alpha: 1.0)
-        goldMaterial.specular.contents = UIColor.white
-        goldMaterial.metalness.contents = 0.8
-        goldMaterial.roughness.contents = 0.2
-        goldMaterial.emission.contents = UIColor(red: 0.6, green: 0.45, blue: 0.0, alpha: 1.0)
-        goldMaterial.isDoubleSided = true
-
-        coin.materials = [goldMaterial]
-
-        let coinDisc = SCNNode(geometry: coin)
-        coinDisc.eulerAngles = SCNVector3(Float.pi / 2, 0, 0)
-        containerNode.addChildNode(coinDisc)
-
-        let glow = SCNSphere(radius: 0.2)
-        let glowMaterial = SCNMaterial()
-        glowMaterial.diffuse.contents = UIColor(red: 1.0, green: 0.9, blue: 0.3, alpha: 0.15)
-        glowMaterial.emission.contents = UIColor(red: 1.0, green: 0.84, blue: 0.0, alpha: 0.3)
-        glowMaterial.isDoubleSided = true
-        glow.materials = [glowMaterial]
-        containerNode.addChildNode(SCNNode(geometry: glow))
+        if let coinScene = SCNScene(named: "fire_coin_subsurface.usdz"),
+           let coinNode = coinScene.rootNode.childNodes.first {
+            containerNode.addChildNode(coinNode)
+        }
 
         let spin = CABasicAnimation(keyPath: "rotation")
         spin.toValue = NSValue(scnVector4: SCNVector4(0, 1, 0, Float.pi * 2))

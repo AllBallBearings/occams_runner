@@ -386,16 +386,10 @@ struct Route3DView: View {
             let container = SCNNode()
             container.position = SCNVector3(x, y, z)
 
-            let coin = SCNCylinder(radius: 0.22, height: 0.05)
-            let coinColor = UIColor(red: 1.0, green: 0.84, blue: 0.0, alpha: 1.0)
-            coin.firstMaterial?.diffuse.contents  = coinColor
-            coin.firstMaterial?.emission.contents = UIColor(red: 0.9, green: 0.65, blue: 0.0, alpha: 0.6)
-            coin.firstMaterial?.specular.contents = UIColor.white
-            coin.firstMaterial?.isDoubleSided = true
-
-            let disc = SCNNode(geometry: coin)
-            disc.eulerAngles = SCNVector3(Float.pi / 2, 0, 0)
-            container.addChildNode(disc)
+            if let coinScene = SCNScene(named: "fire_coin_subsurface.usdz"),
+               let coinNode = coinScene.rootNode.childNodes.first {
+                container.addChildNode(coinNode)
+            }
 
             let spin = CABasicAnimation(keyPath: "rotation")
             spin.toValue    = NSValue(scnVector4: SCNVector4(0, 1, 0, Float.pi * 2))

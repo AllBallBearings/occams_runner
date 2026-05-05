@@ -11,6 +11,7 @@ struct QuestsListView: View {
 
     // Delete confirmation state
     @State private var questToDelete: Quest? = nil
+    @State private var showingAssetPreview = false
 
     private var sortedQuests: [Quest] {
         let sorted = dataStore.quests.sorted { $0.dateCreated > $1.dateCreated }
@@ -35,7 +36,11 @@ struct QuestsListView: View {
                     // Search bar
                     searchBar
                         .padding(.horizontal, 20)
-                        .padding(.bottom, 24)
+                        .padding(.bottom, 14)
+
+                    assetPreviewEntry
+                        .padding(.horizontal, 20)
+                        .padding(.bottom, 22)
 
                     if sortedQuests.isEmpty {
                         emptyState
@@ -108,6 +113,9 @@ struct QuestsListView: View {
             } message: { quest in
                 Text("\"\(quest.name)\" and its progress will be removed. The underlying route will be kept.")
             }
+            .fullScreenCover(isPresented: $showingAssetPreview) {
+                ARAssetPreviewView()
+            }
         }
     }
 
@@ -152,6 +160,43 @@ struct QuestsListView: View {
         .clipShape(Capsule())
         .shadow(color: Color(red: 0.01, green: 0.01, blue: 0.04), radius: 8, x: 4, y: 4)
         .shadow(color: Color(red: 0.14, green: 0.16, blue: 0.28).opacity(0.40), radius: 6, x: -3, y: -3)
+    }
+
+    private var assetPreviewEntry: some View {
+        Button {
+            showingAssetPreview = true
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "arkit")
+                    .font(.system(size: 18, weight: .black))
+                    .foregroundColor(.white)
+                    .frame(width: 38, height: 38)
+                    .background(Color(red: 0.45, green: 0.35, blue: 0.80))
+                    .clipShape(Circle())
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("AR Asset Preview")
+                        .font(.system(size: 15, weight: .black))
+                        .foregroundColor(Color(red: 0.12, green: 0.13, blue: 0.20))
+                    Text("View quest items at full scale")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(Color(red: 0.12, green: 0.13, blue: 0.20).opacity(0.48))
+                }
+
+                Spacer(minLength: 8)
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 13, weight: .black))
+                    .foregroundColor(Color(red: 0.12, green: 0.13, blue: 0.20).opacity(0.35))
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .background(Color(red: 0.76, green: 0.78, blue: 0.88))
+            .clipShape(RoundedRectangle(cornerRadius: 16))
+            .shadow(color: Color(red: 0.01, green: 0.01, blue: 0.04).opacity(0.8), radius: 7, x: 4, y: 4)
+            .shadow(color: Color.white.opacity(0.18), radius: 5, x: -2, y: -2)
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: - Quest Card

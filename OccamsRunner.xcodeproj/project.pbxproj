@@ -21,6 +21,8 @@
 		A10012 /* QuestsListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20012 /* QuestsListView.swift */; };
 		A10013 /* QuestDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20013 /* QuestDetailView.swift */; };
 		A10014 /* ARRunnerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20014 /* ARRunnerView.swift */; };
+		A10015 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A20015 /* Assets.xcassets */; };
+		A10016 /* Preview Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A20016 /* Preview Assets.xcassets */; };
 		A10018 /* CoinSoundPlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20018 /* CoinSoundPlayer.swift */; };
 		A10019 /* ARRunMode.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20019 /* ARRunMode.swift */; };
 		A10020 /* ARRunnerContainerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20020 /* ARRunnerContainerView.swift */; };
@@ -32,8 +34,7 @@
 		A10026 /* ProfileView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20026 /* ProfileView.swift */; };
 		A10027 /* AppSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20027 /* AppSettings.swift */; };
 		A10028 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20028 /* SettingsView.swift */; };
-		A10015 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A20015 /* Assets.xcassets */; };
-		A10016 /* Preview Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A20016 /* Preview Assets.xcassets */; };
+		A10029 /* ARAssetPreviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20029 /* ARAssetPreviewView.swift */; };
 		C10001 /* RouteModelsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20001 /* RouteModelsTests.swift */; };
 		C10002 /* QuestGeneratorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20002 /* QuestGeneratorTests.swift */; };
 		C10003 /* DataStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20003 /* DataStoreTests.swift */; };
@@ -41,7 +42,20 @@
 		C10005 /* FixtureLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20005 /* FixtureLoader.swift */; };
 		C10006 /* CollectionStateMachineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20006 /* CollectionStateMachineTests.swift */; };
 		C10007 /* CollectionIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20007 /* CollectionIntegrationTests.swift */; };
+		C17EBC272FA8FCE400ABC5B7 /* VoxelKingCoin.usdz in Resources */ = {isa = PBXBuildFile; fileRef = C17EBC262FA8FCE400ABC5B7 /* VoxelKingCoin.usdz */; };
 		D10001 /* NavigationFlowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20001 /* NavigationFlowTests.swift */; };
+		D3D10001 /* VoxelCoin.usdz in Resources */ = {isa = PBXBuildFile; fileRef = D3D20001 /* VoxelCoin.usdz */; };
+		D3D10002 /* VoxelRubyGem.usdz in Resources */ = {isa = PBXBuildFile; fileRef = D3D20002 /* VoxelRubyGem.usdz */; };
+		D3D10003 /* VoxelEmeraldGem.usdz in Resources */ = {isa = PBXBuildFile; fileRef = D3D20003 /* VoxelEmeraldGem.usdz */; };
+		D3D10004 /* VoxelLootBox.usdz in Resources */ = {isa = PBXBuildFile; fileRef = D3D20004 /* VoxelLootBox.usdz */; };
+		D3D10005 /* VoxelFireball.usdz in Resources */ = {isa = PBXBuildFile; fileRef = D3D20005 /* VoxelFireball.usdz */; };
+		D3D10006 /* VoxelSpinachCan.usdz in Resources */ = {isa = PBXBuildFile; fileRef = D3D20006 /* VoxelSpinachCan.usdz */; };
+		D3D10007 /* VoxelBoulder.usdz in Resources */ = {isa = PBXBuildFile; fileRef = D3D20007 /* VoxelBoulder.usdz */; };
+		D3D10008 /* VoxelDiamondGem.usdz in Resources */ = {isa = PBXBuildFile; fileRef = D3D20008 /* VoxelDiamondGem.usdz */; };
+		D3D10009 /* VoxelIceSword.usdz in Resources */ = {isa = PBXBuildFile; fileRef = D3D20009 /* VoxelIceSword.usdz */; };
+		D3D1000A /* VoxelBowArrow.usdz in Resources */ = {isa = PBXBuildFile; fileRef = D3D2000A /* VoxelBowArrow.usdz */; };
+		D3D1000B /* VoxelPotionBottle.usdz in Resources */ = {isa = PBXBuildFile; fileRef = D3D2000B /* VoxelPotionBottle.usdz */; };
+		D3D1000C /* VoxelJewelCluster.usdz in Resources */ = {isa = PBXBuildFile; fileRef = D3D2000C /* VoxelJewelCluster.usdz */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -76,6 +90,9 @@
 		A20012 /* QuestsListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuestsListView.swift; sourceTree = "<group>"; };
 		A20013 /* QuestDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuestDetailView.swift; sourceTree = "<group>"; };
 		A20014 /* ARRunnerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ARRunnerView.swift; sourceTree = "<group>"; };
+		A20015 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		A20016 /* Preview Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = "Preview Assets.xcassets"; sourceTree = "<group>"; };
+		A20017 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		A20018 /* CoinSoundPlayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoinSoundPlayer.swift; sourceTree = "<group>"; };
 		A20019 /* ARRunMode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ARRunMode.swift; sourceTree = "<group>"; };
 		A20020 /* ARRunnerContainerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ARRunnerContainerView.swift; sourceTree = "<group>"; };
@@ -87,10 +104,9 @@
 		A20026 /* ProfileView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileView.swift; sourceTree = "<group>"; };
 		A20027 /* AppSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettings.swift; sourceTree = "<group>"; };
 		A20028 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
-		A20015 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
-		A20016 /* Preview Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = "Preview Assets.xcassets"; sourceTree = "<group>"; };
-		A20017 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		A20029 /* ARAssetPreviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ARAssetPreviewView.swift; sourceTree = "<group>"; };
 		A30001 /* OccamsRunner.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = OccamsRunner.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		C17EBC262FA8FCE400ABC5B7 /* VoxelKingCoin.usdz */ = {isa = PBXFileReference; lastKnownFileType = file; path = VoxelKingCoin.usdz; sourceTree = "<group>"; };
 		C20001 /* RouteModelsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RouteModelsTests.swift; sourceTree = "<group>"; };
 		C20002 /* QuestGeneratorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuestGeneratorTests.swift; sourceTree = "<group>"; };
 		C20003 /* DataStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DataStoreTests.swift; sourceTree = "<group>"; };
@@ -101,6 +117,18 @@
 		C30001 /* OccamsRunnerTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = OccamsRunnerTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		D20001 /* NavigationFlowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NavigationFlowTests.swift; sourceTree = "<group>"; };
 		D30001 /* OccamsRunnerUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = OccamsRunnerUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		D3D20001 /* VoxelCoin.usdz */ = {isa = PBXFileReference; lastKnownFileType = file; path = VoxelCoin.usdz; sourceTree = "<group>"; };
+		D3D20002 /* VoxelRubyGem.usdz */ = {isa = PBXFileReference; lastKnownFileType = file; path = VoxelRubyGem.usdz; sourceTree = "<group>"; };
+		D3D20003 /* VoxelEmeraldGem.usdz */ = {isa = PBXFileReference; lastKnownFileType = file; path = VoxelEmeraldGem.usdz; sourceTree = "<group>"; };
+		D3D20004 /* VoxelLootBox.usdz */ = {isa = PBXFileReference; lastKnownFileType = file; path = VoxelLootBox.usdz; sourceTree = "<group>"; };
+		D3D20005 /* VoxelFireball.usdz */ = {isa = PBXFileReference; lastKnownFileType = file; path = VoxelFireball.usdz; sourceTree = "<group>"; };
+		D3D20006 /* VoxelSpinachCan.usdz */ = {isa = PBXFileReference; lastKnownFileType = file; path = VoxelSpinachCan.usdz; sourceTree = "<group>"; };
+		D3D20007 /* VoxelBoulder.usdz */ = {isa = PBXFileReference; lastKnownFileType = file; path = VoxelBoulder.usdz; sourceTree = "<group>"; };
+		D3D20008 /* VoxelDiamondGem.usdz */ = {isa = PBXFileReference; lastKnownFileType = file; path = VoxelDiamondGem.usdz; sourceTree = "<group>"; };
+		D3D20009 /* VoxelIceSword.usdz */ = {isa = PBXFileReference; lastKnownFileType = file; path = VoxelIceSword.usdz; sourceTree = "<group>"; };
+		D3D2000A /* VoxelBowArrow.usdz */ = {isa = PBXFileReference; lastKnownFileType = file; path = VoxelBowArrow.usdz; sourceTree = "<group>"; };
+		D3D2000B /* VoxelPotionBottle.usdz */ = {isa = PBXFileReference; lastKnownFileType = file; path = VoxelPotionBottle.usdz; sourceTree = "<group>"; };
+		D3D2000C /* VoxelJewelCluster.usdz */ = {isa = PBXFileReference; lastKnownFileType = file; path = VoxelJewelCluster.usdz; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -170,6 +198,7 @@
 				A20019 /* ARRunMode.swift */,
 				A20023 /* ManualAlignmentState.swift */,
 				A20027 /* AppSettings.swift */,
+				C101B2C92FA69B21008C519C /* 3DModels */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -213,6 +242,45 @@
 			path = "Preview Content";
 			sourceTree = "<group>";
 		};
+		A50008 /* Audio */ = {
+			isa = PBXGroup;
+			children = (
+				A20018 /* CoinSoundPlayer.swift */,
+			);
+			path = Audio;
+			sourceTree = "<group>";
+		};
+		A50009 /* AR */ = {
+			isa = PBXGroup;
+			children = (
+				A20014 /* ARRunnerView.swift */,
+				A20020 /* ARRunnerContainerView.swift */,
+				A20021 /* ARCoordinator.swift */,
+				A20029 /* ARAssetPreviewView.swift */,
+			);
+			path = AR;
+			sourceTree = "<group>";
+		};
+		C101B2C92FA69B21008C519C /* 3DModels */ = {
+			isa = PBXGroup;
+			children = (
+				C17EBC262FA8FCE400ABC5B7 /* VoxelKingCoin.usdz */,
+				D3D20001 /* VoxelCoin.usdz */,
+				D3D20002 /* VoxelRubyGem.usdz */,
+				D3D20003 /* VoxelEmeraldGem.usdz */,
+				D3D20004 /* VoxelLootBox.usdz */,
+				D3D20005 /* VoxelFireball.usdz */,
+				D3D20006 /* VoxelSpinachCan.usdz */,
+				D3D20007 /* VoxelBoulder.usdz */,
+				D3D20008 /* VoxelDiamondGem.usdz */,
+				D3D20009 /* VoxelIceSword.usdz */,
+				D3D2000A /* VoxelBowArrow.usdz */,
+				D3D2000B /* VoxelPotionBottle.usdz */,
+				D3D2000C /* VoxelJewelCluster.usdz */,
+			);
+			path = 3DModels;
+			sourceTree = "<group>";
+		};
 		C50001 /* OccamsRunnerTests */ = {
 			isa = PBXGroup;
 			children = (
@@ -241,24 +309,6 @@
 				D20001 /* NavigationFlowTests.swift */,
 			);
 			path = OccamsRunnerUITests;
-			sourceTree = "<group>";
-		};
-		A50008 /* Audio */ = {
-			isa = PBXGroup;
-			children = (
-				A20018 /* CoinSoundPlayer.swift */,
-			);
-			path = Audio;
-			sourceTree = "<group>";
-		};
-		A50009 /* AR */ = {
-			isa = PBXGroup;
-			children = (
-				A20014 /* ARRunnerView.swift */,
-				A20020 /* ARRunnerContainerView.swift */,
-				A20021 /* ARCoordinator.swift */,
-			);
-			path = AR;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -364,6 +414,19 @@
 			buildActionMask = 2147483647;
 			files = (
 				A10016 /* Preview Assets.xcassets in Resources */,
+				D3D10001 /* VoxelCoin.usdz in Resources */,
+				D3D10002 /* VoxelRubyGem.usdz in Resources */,
+				D3D10003 /* VoxelEmeraldGem.usdz in Resources */,
+				D3D10004 /* VoxelLootBox.usdz in Resources */,
+				D3D10005 /* VoxelFireball.usdz in Resources */,
+				C17EBC272FA8FCE400ABC5B7 /* VoxelKingCoin.usdz in Resources */,
+				D3D10006 /* VoxelSpinachCan.usdz in Resources */,
+				D3D10007 /* VoxelBoulder.usdz in Resources */,
+				D3D10008 /* VoxelDiamondGem.usdz in Resources */,
+				D3D10009 /* VoxelIceSword.usdz in Resources */,
+				D3D1000A /* VoxelBowArrow.usdz in Resources */,
+				D3D1000B /* VoxelPotionBottle.usdz in Resources */,
+				D3D1000C /* VoxelJewelCluster.usdz in Resources */,
 				A10015 /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -393,6 +456,7 @@
 				A10019 /* ARRunMode.swift in Sources */,
 				A10020 /* ARRunnerContainerView.swift in Sources */,
 				A10021 /* ARCoordinator.swift in Sources */,
+				A10029 /* ARAssetPreviewView.swift in Sources */,
 				A10022 /* CollectionEngine.swift in Sources */,
 				A10023 /* ManualAlignmentState.swift in Sources */,
 				A10024 /* SplashScreenView.swift in Sources */,
