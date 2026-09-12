@@ -30,7 +30,11 @@ struct ARRunnerContainerView: UIViewRepresentable {
 
         let config = ARWorldTrackingConfiguration()
         config.worldAlignment = .gravity
-        config.planeDetection = []
+        // Horizontal plane detection feeds the shadow-catcher plane nodes the
+        // ARCoordinator builds in `renderer(_:didAdd:for:)`. Real shadows from
+        // the directional shadow light land on these surfaces.
+        config.planeDetection = [.horizontal]
+        config.environmentTexturing = .automatic
 
         if let encrypted = route.encryptedWorldMapData,
            let decrypted = locationService.decryptWorldMapData(encrypted),

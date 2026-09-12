@@ -383,25 +383,8 @@ struct Route3DView: View {
             let y = Float(((geo.altitude + item.verticalOffset) - minAlt) * altScale) + 0.5
             let z = Float(-(geo.latitude - minLat) * scale)
 
-            let container = SCNNode()
+            let container = StarCoinAsset.makeNode(bobs: false)
             container.position = SCNVector3(x, y, z)
-
-            let coin = SCNCylinder(radius: 0.22, height: 0.05)
-            let coinColor = UIColor(red: 1.0, green: 0.84, blue: 0.0, alpha: 1.0)
-            coin.firstMaterial?.diffuse.contents  = coinColor
-            coin.firstMaterial?.emission.contents = UIColor(red: 0.9, green: 0.65, blue: 0.0, alpha: 0.6)
-            coin.firstMaterial?.specular.contents = UIColor.white
-            coin.firstMaterial?.isDoubleSided = true
-
-            let disc = SCNNode(geometry: coin)
-            disc.eulerAngles = SCNVector3(Float.pi / 2, 0, 0)
-            container.addChildNode(disc)
-
-            let spin = CABasicAnimation(keyPath: "rotation")
-            spin.toValue    = NSValue(scnVector4: SCNVector4(0, 1, 0, Float.pi * 2))
-            spin.duration   = 2
-            spin.repeatCount = .infinity
-            container.addAnimation(spin, forKey: "spin")
 
             container.opacity = item.collected ? 0.25 : 1.0
             scene.rootNode.addChildNode(container)

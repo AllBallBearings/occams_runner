@@ -41,6 +41,14 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
     private(set) var boxNodes: [UUID: SCNNode] = [:]
     private var pendingBoxIds: Set<UUID> = []
 
+    /// Shadow-catcher plane nodes keyed by ARPlaneAnchor identifier. Each one is
+    /// an invisible plane that writes to the depth buffer; the directional
+    /// shadow light's deferred shadow pass darkens pixels behind shadow casters
+    /// wherever those planes exist.
+    private var shadowPlaneNodes: [UUID: SCNNode] = [:]
+    private var shadowLightNode: SCNNode?
+    private var ambientLightNode: SCNNode?
+
     private var arrowIndicatorNode: SCNNode?
 
     // Hand pose detection
@@ -152,12 +160,67 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
         // appear at chest/waist height rather than eye/head height.
         routeGroupNode.position.y = baseRouteY
 
+        setupShadowLighting()
         buildRoutePath()
         buildCoinNodes(forceRebuild: true)
         buildBoxNodes(forceRebuild: true)
         setupArrowIndicator()
         updateAlignmentStatusFromGPS()
         updateRouteNodeVisibility()
+    }
+
+    // MARK: - Shadow Lighting
+
+    /// Adds the directional shadow-casting light plus an ambient fill so items
+    /// stay visible. The shadow-receiving planes are added later by the
+    /// `renderer(_:didAdd:for:)` delegate as ARKit detects horizontal surfaces.
+    private func setupShadowLighting() {
+        guard let arView, shadowLightNode == nil else { return }
+
+        // Adding our own lights disables ARSCNView's autoenabled default light,
+        // so provide an ambient fill explicitly.
+        let ambient = SCNLight()
+        ambient.type = .ambient
+        ambient.color = UIColor(white: 0.75, alpha: 1.0)
+        let ambientNode = SCNNode()
+        ambientNode.light = ambient
+        arView.scene.rootNode.addChildNode(ambientNode)
+        ambientLightNode = ambientNode
+
+        let directional = SCNLight()
+        directional.type = .directional
+        directional.color = UIColor(white: 1.0, alpha: 1.0)
+        directional.castsShadow = true
+        // Deferred shadow mode renders shadows as a screen-space pass that
+        // works with invisible shadow-catcher planes (color mask = []).
+        directional.shadowMode = .deferred
+        directional.shadowSampleCount = 16
+        directional.shadowRadius = 4
+        directional.shadowMapSize = CGSize(width: 2048, height: 2048)
+        directional.shadowColor = UIColor(white: 0, alpha: 0.55)
+        directional.orthographicScale = 8
+
+        let dirNode = SCNNode()
+        dirNode.light = directional
+        // Position high above the camera so the orthographic shadow frustum
+        // covers the route, then tilt the light down with a slight side angle
+        // for natural-looking shadow direction.
+        dirNode.position = SCNVector3(2, 6, 2)
+        dirNode.eulerAngles = SCNVector3(-Float.pi / 2.4, Float.pi / 8, 0)
+        arView.scene.rootNode.addChildNode(dirNode)
+        shadowLightNode = dirNode
+    }
+
+    /// Builds the invisible material used by shadow-catcher planes: writes
+    /// depth so the deferred shadow pass darkens shadowed pixels, but writes
+    /// no color so the real ground from the camera feed shows through.
+    private func makeShadowCatcherMaterial() -> SCNMaterial {
+        let mat = SCNMaterial()
+        mat.lightingModel = .constant
+        mat.writesToDepthBuffer = true
+        mat.readsFromDepthBuffer = true
+        mat.colorBufferWriteMask = []
+        return mat
     }
 
     func applyRunMode(_ newMode: ARRunMode) {
@@ -684,6 +747,50 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
         guard let current = locationService.currentLocation,
               let start = route.startLocation else { return nil }
         return current.distance(from: start)
+    }
+
+    // MARK: - ARSCNViewDelegate (plane anchors → shadow catchers)
+
+    func renderer(_ renderer: SCNSceneRenderer, didAdd node: SCNNode, for anchor: ARAnchor) {
+        guard let planeAnchor = anchor as? ARPlaneAnchor,
+              planeAnchor.alignment == .horizontal else { return }
+
+        let plane = SCNPlane(
+            width: CGFloat(planeAnchor.extent.x),
+            height: CGFloat(planeAnchor.extent.z)
+        )
+        plane.materials = [makeShadowCatcherMaterial()]
+
+        let planeNode = SCNNode(geometry: plane)
+        // ARPlaneAnchor.center is offset from the anchor's transform origin in
+        // its local horizontal plane. Lay our SCNPlane flat in that plane.
+        planeNode.simdPosition = SIMD3<Float>(
+            planeAnchor.center.x, 0, planeAnchor.center.z
+        )
+        planeNode.eulerAngles = SCNVector3(-Float.pi / 2, 0, 0)
+        planeNode.castsShadow = false
+        planeNode.name = "shadowCatcherPlane"
+
+        node.addChildNode(planeNode)
+        shadowPlaneNodes[planeAnchor.identifier] = planeNode
+    }
+
+    func renderer(_ renderer: SCNSceneRenderer, didUpdate node: SCNNode, for anchor: ARAnchor) {
+        guard let planeAnchor = anchor as? ARPlaneAnchor,
+              planeAnchor.alignment == .horizontal,
+              let planeNode = shadowPlaneNodes[planeAnchor.identifier],
+              let plane = planeNode.geometry as? SCNPlane else { return }
+
+        plane.width = CGFloat(planeAnchor.extent.x)
+        plane.height = CGFloat(planeAnchor.extent.z)
+        planeNode.simdPosition = SIMD3<Float>(
+            planeAnchor.center.x, 0, planeAnchor.center.z
+        )
+    }
+
+    func renderer(_ renderer: SCNSceneRenderer, didRemove node: SCNNode, for anchor: ARAnchor) {
+        guard let planeAnchor = anchor as? ARPlaneAnchor else { return }
+        shadowPlaneNodes.removeValue(forKey: planeAnchor.identifier)
     }
 
     func session(_ session: ARSession, didUpdate frame: ARFrame) {
@@ -1297,6 +1404,40 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
     }
 
     private func createBoxNode() -> SCNNode {
+        let candidates = [
+            "3DModels/VoxelLootBox.usdz",
+            "Models/3DModels/VoxelLootBox.usdz",
+            "VoxelLootBox.usdz"
+        ]
+        for candidate in candidates {
+            guard let scene = SCNScene(named: candidate) else { continue }
+
+            let content = SCNNode()
+            for child in scene.rootNode.childNodes {
+                content.addChildNode(child.clone())
+            }
+
+            let (minBounds, maxBounds) = content.boundingBox
+            let width = maxBounds.x - minBounds.x
+            let height = maxBounds.y - minBounds.y
+            let depth = maxBounds.z - minBounds.z
+            let largestDimension = max(width, max(height, depth))
+            guard largestDimension > 0.0001 else { continue }
+
+            let scale: Float = 0.34 / largestDimension
+            let center = SCNVector3(
+                (minBounds.x + maxBounds.x) * 0.5,
+                (minBounds.y + maxBounds.y) * 0.5,
+                (minBounds.z + maxBounds.z) * 0.5
+            )
+            content.scale = SCNVector3(scale, scale, scale)
+            content.position = SCNVector3(-center.x * scale, -center.y * scale, -center.z * scale)
+
+            let wrapper = SCNNode()
+            wrapper.addChildNode(content)
+            return wrapper
+        }
+
         let box = SCNBox(width: 0.305, height: 0.305, length: 0.305, chamferRadius: 0.015)
         let material = SCNMaterial()
         material.diffuse.contents  = UIColor(red: 0.55, green: 0.35, blue: 0.15, alpha: 1.0)
@@ -1309,48 +1450,9 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
     }
 
     private func createCoinNode() -> SCNNode {
-        let containerNode = SCNNode()
-
-        let coin = SCNCylinder(radius: 0.15, height: 0.02)
-
-        let goldMaterial = SCNMaterial()
-        goldMaterial.diffuse.contents = UIColor(red: 1.0, green: 0.84, blue: 0.0, alpha: 1.0)
-        goldMaterial.specular.contents = UIColor.white
-        goldMaterial.metalness.contents = 0.8
-        goldMaterial.roughness.contents = 0.2
-        goldMaterial.emission.contents = UIColor(red: 0.6, green: 0.45, blue: 0.0, alpha: 1.0)
-        goldMaterial.isDoubleSided = true
-
-        coin.materials = [goldMaterial]
-
-        let coinDisc = SCNNode(geometry: coin)
-        coinDisc.eulerAngles = SCNVector3(Float.pi / 2, 0, 0)
-        containerNode.addChildNode(coinDisc)
-
-        let glow = SCNSphere(radius: 0.2)
-        let glowMaterial = SCNMaterial()
-        glowMaterial.diffuse.contents = UIColor(red: 1.0, green: 0.9, blue: 0.3, alpha: 0.15)
-        glowMaterial.emission.contents = UIColor(red: 1.0, green: 0.84, blue: 0.0, alpha: 0.3)
-        glowMaterial.isDoubleSided = true
-        glow.materials = [glowMaterial]
-        containerNode.addChildNode(SCNNode(geometry: glow))
-
-        let spin = CABasicAnimation(keyPath: "rotation")
-        spin.toValue = NSValue(scnVector4: SCNVector4(0, 1, 0, Float.pi * 2))
-        spin.duration = 2.0
-        spin.repeatCount = .infinity
-        containerNode.addAnimation(spin, forKey: "spin")
-
-        let bob = CABasicAnimation(keyPath: "position.y")
-        bob.byValue = 0.1
-        bob.duration = 1.0
-        bob.autoreverses = true
-        bob.repeatCount = .infinity
-        bob.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-        containerNode.addAnimation(bob, forKey: "bob")
-
-        return containerNode
+        StarCoinAsset.makeNode()
     }
+
 }
 
 // MARK: - Testable Pure Helpers

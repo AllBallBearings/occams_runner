@@ -6,6 +6,66 @@ import SceneKit
 /// No ARSCNView or ARSession required.
 final class ARCoordinatorLogicTests: XCTestCase {
 
+    func test_fireballPreview_loadsBundledSolidEmissiveAsset() throws {
+        let asset = try XCTUnwrap(ARPreviewAsset.library.first { $0.displayName == "Fireball" })
+        let url = try XCTUnwrap(Bundle.main.url(forResource: (asset.fileName as NSString).deletingPathExtension,
+                                               withExtension: "usdz"))
+        let scene = try SCNScene(url: url, options: nil)
+        var geometries: [SCNGeometry] = []
+        scene.rootNode.enumerateChildNodes { node, _ in
+            if let geometry = node.geometry { geometries.append(geometry) }
+            XCTAssertNil(node.camera, "Asset must not include the Blender studio camera")
+            XCTAssertNil(node.light, "Asset must not include studio lights")
+        }
+        XCTAssertEqual(geometries.count, 1)
+        let geometry = try XCTUnwrap(geometries.first)
+        XCTAssertEqual(geometry.materials.count, 7)
+        XCTAssertTrue(geometry.materials.allSatisfy { $0.lightingModel == .physicallyBased })
+        XCTAssertTrue(geometry.materials.contains { material in
+            guard let color = material.emission.contents as? UIColor else { return false }
+            var red: CGFloat = 0, green: CGFloat = 0, blue: CGFloat = 0, alpha: CGFloat = 0
+            return color.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
+                && max(red, max(green, blue)) > 0.1
+        }, "The exported flame must retain emissive materials")
+        let (lower, upper) = scene.rootNode.boundingBox
+        XCTAssertEqual(upper.y - lower.y, 0.295, accuracy: 0.001)
+        XCTAssertGreaterThan(upper.z - lower.z, 0.15, "Fireball must have real volume")
+    }
+
+    func test_starCoin_isTheOnlyCoinAndDefaultARPreview() {
+        let coins = ARPreviewAsset.library.filter { $0.behavior == .coin }
+        XCTAssertEqual(coins.map(\.fileName), ["StarCoin.usdz"])
+        XCTAssertEqual(ARPreviewAsset.library.first?.fileName, "StarCoin.usdz")
+    }
+
+    func test_starCoin_loadsBundledGeometryUprightAtARSize() throws {
+        let node = StarCoinAsset.makeNode()
+        var geometries: [SCNGeometry] = []
+        node.enumerateChildNodes { child, _ in
+            if let geometry = child.geometry { geometries.append(geometry) }
+        }
+        let geometry = try XCTUnwrap(geometries.first, "Bundled coin must contain visible geometry")
+        XCTAssertEqual(geometries.count, 1)
+        XCTAssertEqual(geometry.materials.count, 6)
+        XCTAssertTrue(geometry.materials.allSatisfy { $0.lightingModel == .physicallyBased })
+        let (lower, upper) = node.boundingBox
+        XCTAssertEqual(upper.x - lower.x, 0.26, accuracy: 0.001)
+        XCTAssertEqual(upper.y - lower.y, 0.26, accuracy: 0.001)
+        XCTAssertEqual(upper.z - lower.z, 0.05746, accuracy: 0.001)
+        XCTAssertEqual(lower.x + upper.x, 0, accuracy: 0.001)
+        XCTAssertEqual(lower.y + upper.y, 0, accuracy: 0.001)
+        XCTAssertEqual(lower.z + upper.z, 0, accuracy: 0.001)
+
+        let second = StarCoinAsset.makeNode(bobs: false)
+        let spin = try XCTUnwrap(node.childNode(withName: "StarCoinSpin", recursively: false))
+        let secondSpin = try XCTUnwrap(second.childNode(withName: "StarCoinSpin", recursively: false))
+        XCTAssertFalse(spin === secondSpin)
+        spin.removeFromParentNode()
+        XCTAssertTrue(secondSpin.parent === second)
+        XCTAssertTrue(node.animationKeys.contains("bob"))
+        XCTAssertFalse(second.animationKeys.contains("bob"))
+    }
+
     // MARK: - distance3D (ARCoordinator)
 
     func test_distance3D_samePoint_isZero() {
