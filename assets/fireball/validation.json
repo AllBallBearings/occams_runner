@@ -1,0 +1,22 @@
+{
+  "triangles": 2752,
+  "vertices": 1402,
+  "non_manifold_edges": 0,
+  "degenerate_faces": 0,
+  "dimensions_blender_m": [
+    0.2574999928474426,
+    0.20600000023841858,
+    0.29500001668930054
+  ],
+  "materials": 7,
+  "usdz": "/Users/jaredgoolsby/Documents/Github/occams_runner/OccamsRunner/Models/3DModels/Fireball.usdz",
+  "blend": "/Users/jaredgoolsby/Documents/Github/occams_runner/assets/fireball/Fireball.blend",
+  "usdz_reimport_meshes": 1,
+  "usdz_reimport_materials": 7,
+  "arkit_usdchecker": "Success",
+  "glb_meshes": 1,
+  "app_bundle_asset_matches": true,
+  "ios_simulator": "iPhone 17 Pro / iOS 26.5",
+  "focused_tests_passed": 2,
+  "physical_iphone_tested": false
+}

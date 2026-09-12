@@ -1,0 +1,13 @@
+{
+  "triangles": 5060,
+  "vertices": 2536,
+  "non_manifold_edges": 0,
+  "degenerate_faces": 0,
+  "front_back_vertex_symmetry": true,
+  "mesh_objects_in_asset": 1,
+  "imported_meshes": 1,
+  "imported_material_count": 6,
+  "arkit_usdchecker": "Success",
+  "native_scenekit_load": "Success",
+  "physical_iphone_tested": false
+}

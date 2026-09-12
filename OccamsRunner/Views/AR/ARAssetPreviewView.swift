@@ -146,6 +146,7 @@ private struct ARAssetPreviewContainerView: UIViewRepresentable {
             let configuration = ARWorldTrackingConfiguration()
             configuration.worldAlignment = .gravity
             configuration.planeDetection = [.horizontal]
+            configuration.environmentTexturing = .automatic
             view.session.run(configuration, options: [.resetTracking, .removeExistingAnchors])
 
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self, weak view] in
@@ -179,58 +180,11 @@ private struct ARAssetPreviewContainerView: UIViewRepresentable {
 
         private func makePreviewNode(for asset: ARPreviewAsset) -> SCNNode {
             if asset.behavior == .coin {
-                return makeCoinPreviewNode(for: asset)
+                return StarCoinAsset.makeNode()
             }
 
             let node = loadModelNode(for: asset) ?? fallbackNode(for: asset)
             return node
-        }
-
-        private func makeCoinPreviewNode(for asset: ARPreviewAsset) -> SCNNode {
-            let root = SCNNode()
-            let spinPivot = SCNNode()
-            let visual = makeTexturedCoinNode(for: asset)
-                ?? loadModelNode(for: asset)
-                ?? fallbackNode(for: asset)
-
-            visual.removeAnimationsRecursively()
-            visual.eulerAngles.x += asset.coinTiltRadians
-
-            spinPivot.addChildNode(visual)
-            root.addChildNode(spinPivot)
-            addCoinAnimations(toRoot: root, spinPivot: spinPivot)
-            return root
-        }
-
-        private func makeTexturedCoinNode(for asset: ARPreviewAsset) -> SCNNode? {
-            guard let textureFileName = asset.textureFileName,
-                  let texture = loadImage(fileName: textureFileName) else { return nil }
-
-            let radius = CGFloat(asset.targetSize) * 0.48
-            let height = CGFloat(asset.targetSize) * 0.10
-            let coin = SCNCylinder(radius: radius, height: height)
-            coin.radialSegmentCount = 96
-            coin.materials = [
-                material(color: UIColor(red: 0.95, green: 0.55, blue: 0.12, alpha: 1), emission: 0.08),
-                texturedMaterial(image: texture),
-                texturedMaterial(image: texture)
-            ]
-            return SCNNode(geometry: coin)
-        }
-
-        private func loadImage(fileName: String) -> UIImage? {
-            let nsName = fileName as NSString
-            let base = nsName.deletingPathExtension
-            let ext = nsName.pathExtension
-            let subdirectories = ["3DModels", "Models/3DModels", nil]
-
-            for subdirectory in subdirectories {
-                if let url = Bundle.main.url(forResource: base, withExtension: ext, subdirectory: subdirectory),
-                   let image = UIImage(contentsOfFile: url.path) {
-                    return image
-                }
-            }
-            return UIImage(named: fileName)
         }
 
         private func loadModelNode(for asset: ARPreviewAsset) -> SCNNode? {
@@ -292,12 +246,7 @@ private struct ARAssetPreviewContainerView: UIViewRepresentable {
         private func fallbackNode(for asset: ARPreviewAsset) -> SCNNode {
             switch asset.behavior {
             case .coin:
-                let coin = SCNCylinder(radius: 0.12, height: 0.024)
-                coin.radialSegmentCount = 48
-                coin.materials = [material(color: UIColor(red: 1.0, green: 0.54, blue: 0.08, alpha: 1), emission: 0.18)]
-                let node = SCNNode(geometry: coin)
-                node.eulerAngles.x = .pi / 2
-                return node
+                return StarCoinAsset.makeNode()
             case .box:
                 let box = SCNBox(width: 0.30, height: 0.30, length: 0.30, chamferRadius: 0.02)
                 box.materials = [material(color: UIColor(red: 0.55, green: 0.35, blue: 0.15, alpha: 1), emission: 0.04)]
@@ -317,33 +266,6 @@ private struct ARAssetPreviewContainerView: UIViewRepresentable {
             material.roughness.contents = NSNumber(value: 0.45)
             material.isDoubleSided = true
             return material
-        }
-
-        private func texturedMaterial(image: UIImage) -> SCNMaterial {
-            let material = SCNMaterial()
-            material.diffuse.contents = image
-            material.diffuse.mipFilter = .linear
-            material.diffuse.minificationFilter = .linear
-            material.diffuse.magnificationFilter = .linear
-            material.specular.contents = UIColor(white: 1.0, alpha: 0.28)
-            material.roughness.contents = NSNumber(value: 0.42)
-            material.isDoubleSided = true
-            return material
-        }
-
-        private func addCoinAnimations(toRoot root: SCNNode, spinPivot: SCNNode) {
-            root.removeAllActions()
-            spinPivot.removeAllActions()
-
-            let spin = SCNAction.repeatForever(.rotateBy(x: 0, y: CGFloat.pi * 2, z: 0, duration: 2.0))
-            spin.timingMode = .linear
-            spinPivot.runAction(spin, forKey: "spin")
-
-            let bobUp = SCNAction.moveBy(x: 0, y: 0.10, z: 0, duration: 1.0)
-            bobUp.timingMode = .easeInEaseOut
-            let bobDown = SCNAction.moveBy(x: 0, y: -0.10, z: 0, duration: 1.0)
-            bobDown.timingMode = .easeInEaseOut
-            root.runAction(.repeatForever(.sequence([bobUp, bobDown])), forKey: "bob")
         }
 
         private func positionOneMeterInFront(of view: ARSCNView) -> SIMD3<Float> {
@@ -462,7 +384,7 @@ private struct ARAssetPreviewContainerView: UIViewRepresentable {
     }
 }
 
-private struct ARPreviewAsset: Identifiable, Equatable {
+struct ARPreviewAsset: Identifiable, Equatable {
     enum Behavior {
         case coin
         case box
@@ -473,33 +395,13 @@ private struct ARPreviewAsset: Identifiable, Equatable {
     let fileName: String
     let behavior: Behavior
     let targetSize: Float
-    let textureFileName: String?
-    let coinTiltRadians: Float
-
     var id: String { fileName }
 
-    init(
-        displayName: String,
-        fileName: String,
-        behavior: Behavior,
-        targetSize: Float,
-        textureFileName: String? = nil,
-        coinTiltRadians: Float = .pi / 2
-    ) {
-        self.displayName = displayName
-        self.fileName = fileName
-        self.behavior = behavior
-        self.targetSize = targetSize
-        self.textureFileName = textureFileName
-        self.coinTiltRadians = coinTiltRadians
-    }
-
     static let library: [ARPreviewAsset] = [
-        ARPreviewAsset(displayName: "King Coin", fileName: "VoxelKingCoin.usdz", behavior: .coin, targetSize: 0.26, coinTiltRadians: 0),
-        ARPreviewAsset(displayName: "Fire Coin", fileName: "fire_coin_subsurface.usdz", behavior: .coin, targetSize: 0.26),
-        ARPreviewAsset(displayName: "Coin", fileName: "Coin.usdz", behavior: .coin, targetSize: 0.26),
-        ARPreviewAsset(displayName: "Voxel Coin", fileName: "VoxelCoin.usdz", behavior: .coin, targetSize: 0.26),
+        ARPreviewAsset(displayName: "Star Coin", fileName: StarCoinAsset.fileName, behavior: .coin, targetSize: StarCoinAsset.diameter),
+        ARPreviewAsset(displayName: "Fireball", fileName: "Fireball.usdz", behavior: .staticModel, targetSize: 0.34),
         ARPreviewAsset(displayName: "Voxel Loot Box", fileName: "VoxelLootBox.usdz", behavior: .box, targetSize: 0.34),
+        ARPreviewAsset(displayName: "Voxel Loot Box (Open)", fileName: "VoxelLootBoxOpen.usdz", behavior: .box, targetSize: 0.34),
         ARPreviewAsset(displayName: "Voxel Ruby Gem", fileName: "VoxelRubyGem.usdz", behavior: .staticModel, targetSize: 0.32),
         ARPreviewAsset(displayName: "Voxel Emerald Gem", fileName: "VoxelEmeraldGem.usdz", behavior: .staticModel, targetSize: 0.32),
         ARPreviewAsset(displayName: "Voxel Diamond Gem", fileName: "VoxelDiamondGem.usdz", behavior: .staticModel, targetSize: 0.32),
@@ -507,18 +409,8 @@ private struct ARPreviewAsset: Identifiable, Equatable {
         ARPreviewAsset(displayName: "Voxel Potion Bottle", fileName: "VoxelPotionBottle.usdz", behavior: .staticModel, targetSize: 0.34),
         ARPreviewAsset(displayName: "Voxel Spinach Can", fileName: "VoxelSpinachCan.usdz", behavior: .staticModel, targetSize: 0.34),
         ARPreviewAsset(displayName: "Voxel Fireball", fileName: "VoxelFireball.usdz", behavior: .staticModel, targetSize: 0.34),
-        ARPreviewAsset(displayName: "Voxel Ice Sword", fileName: "VoxelIceSword.usdz", behavior: .staticModel, targetSize: 0.42),
+        ARPreviewAsset(displayName: "Voxel Sword", fileName: "VoxelSword.usdz", behavior: .staticModel, targetSize: 0.46),
         ARPreviewAsset(displayName: "Voxel Bow Arrow", fileName: "VoxelBowArrow.usdz", behavior: .staticModel, targetSize: 0.42),
         ARPreviewAsset(displayName: "Voxel Boulder", fileName: "VoxelBoulder.usdz", behavior: .staticModel, targetSize: 0.36)
     ]
-}
-
-private extension SCNNode {
-    func removeAnimationsRecursively() {
-        removeAllAnimations()
-        removeAllActions()
-        for child in childNodes {
-            child.removeAnimationsRecursively()
-        }
-    }
 }

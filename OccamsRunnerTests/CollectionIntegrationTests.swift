@@ -114,6 +114,28 @@ final class CollectionIntegrationTests: XCTestCase {
 
     // MARK: - buildCoinNodes Tests
 
+    func test_newQuest_buildsVisibleStarCoinsByDefault() {
+        let route = makeDualTrackRoute(pointCount: 11)
+        let items = QuestGenerator.generateItems(along: route)
+        XCTAssertFalse(items.isEmpty)
+        XCTAssertTrue(items.allSatisfy { $0.type == .coin })
+        let quest = Quest(name: "Default Coin Quest", routeId: route.id, items: items)
+        store.saveRoute(route)
+        store.saveQuest(quest)
+        let coordinator = makeCoordinator(route: route, quest: quest)
+        coordinator.testBuildCoinNodes(forceRebuild: true)
+
+        XCTAssertEqual(coordinator.coinNodes.count, items.count)
+        for node in coordinator.coinNodes.values {
+            XCTAssertEqual(node.name, "StarCoin")
+            var hasGeometry = false
+            node.enumerateChildNodes { child, _ in
+                if child.geometry != nil { hasGeometry = true }
+            }
+            XCTAssertTrue(hasGeometry, "Quest coins must render the asset, not an empty placeholder")
+        }
+    }
+
     func test_buildCoinNodes_createsNodesForAllUncollectedItems() {
         let route = makeDualTrackRoute(pointCount: 11)
         let quest = makeQuest(routeId: route.id, coinCount: 5)

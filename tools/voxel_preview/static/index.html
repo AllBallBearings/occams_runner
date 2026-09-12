@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Occam's Runner Voxel Preview</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main class="app">
+      <section class="viewport">
+        <canvas id="scene" aria-label="Live voxel model preview"></canvas>
+        <div class="hud">
+          <select id="modelSelect" aria-label="Voxel asset"></select>
+          <button id="spinToggle" type="button">Pause</button>
+          <a id="usdzLink" href="#" target="_blank" rel="noreferrer">USDZ</a>
+        </div>
+        <div class="status" id="status">Loading...</div>
+      </section>
+      <aside class="panel">
+        <div>
+          <h1>Voxel Preview</h1>
+          <p>Live app-style render. Assets float, bob, pirouette upright, and reload when the generator changes.</p>
+        </div>
+        <div class="metrics">
+          <div>
+            <span>Asset</span>
+            <strong id="assetName">-</strong>
+          </div>
+          <div>
+            <span>Voxels</span>
+            <strong id="voxelCount">-</strong>
+          </div>
+          <div>
+            <span>Source</span>
+            <strong id="sourceState">-</strong>
+          </div>
+        </div>
+        <div class="reference">
+          <div class="referenceHeader">
+            <span>Concept Sheet</span>
+            <button id="coinCropToggle" type="button">Coin Crop</button>
+          </div>
+          <div class="referenceFrame" id="referenceFrame">
+            <img src="/asset/assets.png" alt="Voxel concept sheet">
+          </div>
+        </div>
+      </aside>
+    </main>
+    <script src="/viewer.js"></script>
+  </body>
+</html>

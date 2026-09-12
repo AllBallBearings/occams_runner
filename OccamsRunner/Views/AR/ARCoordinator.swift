@@ -1404,6 +1404,40 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
     }
 
     private func createBoxNode() -> SCNNode {
+        let candidates = [
+            "3DModels/VoxelLootBox.usdz",
+            "Models/3DModels/VoxelLootBox.usdz",
+            "VoxelLootBox.usdz"
+        ]
+        for candidate in candidates {
+            guard let scene = SCNScene(named: candidate) else { continue }
+
+            let content = SCNNode()
+            for child in scene.rootNode.childNodes {
+                content.addChildNode(child.clone())
+            }
+
+            let (minBounds, maxBounds) = content.boundingBox
+            let width = maxBounds.x - minBounds.x
+            let height = maxBounds.y - minBounds.y
+            let depth = maxBounds.z - minBounds.z
+            let largestDimension = max(width, max(height, depth))
+            guard largestDimension > 0.0001 else { continue }
+
+            let scale: Float = 0.34 / largestDimension
+            let center = SCNVector3(
+                (minBounds.x + maxBounds.x) * 0.5,
+                (minBounds.y + maxBounds.y) * 0.5,
+                (minBounds.z + maxBounds.z) * 0.5
+            )
+            content.scale = SCNVector3(scale, scale, scale)
+            content.position = SCNVector3(-center.x * scale, -center.y * scale, -center.z * scale)
+
+            let wrapper = SCNNode()
+            wrapper.addChildNode(content)
+            return wrapper
+        }
+
         let box = SCNBox(width: 0.305, height: 0.305, length: 0.305, chamferRadius: 0.015)
         let material = SCNMaterial()
         material.diffuse.contents  = UIColor(red: 0.55, green: 0.35, blue: 0.15, alpha: 1.0)
@@ -1416,29 +1450,9 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
     }
 
     private func createCoinNode() -> SCNNode {
-        let containerNode = SCNNode()
-
-        if let coinScene = SCNScene(named: "fire_coin_subsurface.usdz"),
-           let coinNode = coinScene.rootNode.childNodes.first {
-            containerNode.addChildNode(coinNode)
-        }
-
-        let spin = CABasicAnimation(keyPath: "rotation")
-        spin.toValue = NSValue(scnVector4: SCNVector4(0, 1, 0, Float.pi * 2))
-        spin.duration = 2.0
-        spin.repeatCount = .infinity
-        containerNode.addAnimation(spin, forKey: "spin")
-
-        let bob = CABasicAnimation(keyPath: "position.y")
-        bob.byValue = 0.1
-        bob.duration = 1.0
-        bob.autoreverses = true
-        bob.repeatCount = .infinity
-        bob.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-        containerNode.addAnimation(bob, forKey: "bob")
-
-        return containerNode
+        StarCoinAsset.makeNode()
     }
+
 }
 
 // MARK: - Testable Pure Helpers
