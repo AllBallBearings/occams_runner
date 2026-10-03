@@ -94,7 +94,7 @@ final class CollectionIntegrationTests: XCTestCase {
             quest: quest,
             dataStore: store,
             locationService: locationService,
-            onAlignmentUpdate: { _, _, _, _ in },
+            onAlignmentUpdate: { _ in },
             onNearestItemDistance: { _ in },
             onItemCollected: { [weak self] itemId in
                 self?.collectedCallbackIds.append(itemId)

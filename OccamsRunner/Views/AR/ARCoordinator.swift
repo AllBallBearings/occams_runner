@@ -19,7 +19,7 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
     // struct copy of ARRunnerView. By re-assigning these from updateUIView we ensure
     // each collection callback always closes over the live @State / @EnvironmentObject
     // values rather than the stale snapshot from the first render.
-    var onAlignmentUpdate: (ARAlignmentState, Double, Double?, Bool) -> Void
+    var onAlignmentUpdate: (ARAlignmentStatus) -> Void
     var onNearestItemDistance: (Double?) -> Void
     var onItemCollected: (UUID) -> Void
     var onDebugTick: (String) -> Void
@@ -28,14 +28,18 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
     /// Shared state object written by SwiftUI gesture handlers and read each
     /// AR frame to apply manual position / rotation corrections to the route.
     var manualAlignment: ManualAlignmentState?
-    var headingDegrees: Double = 0
+
+    /// Set by the container when the session runs with the route's world map, so a
+    /// later relocalization means the session adopted the recording's coordinates.
+    var expectsRelocalization = false
 
     private let routeGroupNode = SCNNode()
+    /// Child of `routeGroupNode` at the route start, so the beacon always sits exactly
+    /// where the route begins and moves with every placement or manual correction.
     private let startGuidanceNode = SCNNode()
-    private var startGuidanceWorldPosition: SIMD3<Float>?
-    private var startGuidanceAnchorLocation: CLLocation?
     private let guidanceOrange = UIColor(red: 1.0, green: 0.42, blue: 0.02, alpha: 1.0)
     private var pathNodes: [SCNNode] = []
+    private var pathSegmentNodes: [SCNNode] = []
     private(set) var coinNodes: [UUID: SCNNode] = [:]
     private(set) var pendingCollectionIds: Set<UUID> = []
     private(set) var boxNodes: [UUID: SCNNode] = [:]
@@ -61,6 +65,7 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
     private let handPoseInterval: TimeInterval = 0.1  // 10 fps
 
     private var runMode: ARRunMode = .aligning
+    private(set) var viewMode: ARViewMode = .goToStart
     private var runStartedAt: Date?
     private var collectionTickSerial: UInt64 = 0
     private var collectionCheckSerial: UInt64 = 0
@@ -81,19 +86,43 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
     private var alignmentLocked = false
     private var consecutiveGoodFrames = 0
     private var scanStartedAt: Date?
-    /// How many consecutive GPS readings have placed the user beyond the start gate.
-    /// We require several before resetting an established lock so GPS jitter can't
-    /// knock out a good alignment on a single bad reading.
+    /// How many consecutive status ticks have placed the user outside the start gate.
+    /// Several are required before an established lock is dropped so one noisy
+    /// reading can't knock out a good alignment.
     private var consecutiveOutOfRangeGPS = 0
+    /// Cached by the status timer; the per-frame tracking score only runs inside the gate.
+    private var isWithinStartGate = false
 
     private var statusTimer: Timer?
     private var collectionTimer: Timer?
     private var lastStartPlacementDebugAt: TimeInterval = 0
 
-    /// GPS gate before AR relocalization begins. 3 m is roughly 10 ft, which is
-    /// as tight as we can reasonably ask from phone GPS without making the gate
-    /// impossible to satisfy outdoors.
-    private let startGateDistanceMeters: Double = 3
+    // MARK: Placement state
+    //
+    // The route is recorded in its own AR coordinate space. Until ARKit matches the
+    // recorded world map, the live session's space is unrelated, so the route is placed
+    // through the earth: recording space → east/north (RouteGeoRegistration) → live
+    // session (ARGeoFusion, from compass + GPS paired with ARKit's camera path). Once
+    // ARKit relocalizes, the live session *is* recording space and placement is exact.
+
+    private let registration: RouteGeoRegistration?
+    private var geoFusion = ARGeoFusion()
+    private var fusionEstimate: ARGeoFusion.Estimate?
+    private let compass = CompassHeadingProvider()
+    private var lastFusedGPSTimestamp: Date?
+    private var sawRelocalizing = false
+    private(set) var isRelocalized = false
+    /// Where the route should sit, and where it sits while easing toward that so
+    /// estimate refinements glide instead of jumping.
+    private var targetPose: RoutePose?
+    private var currentPose: RoutePose?
+    private var lastPoseFrameTime: TimeInterval?
+    private var placementUncertainty: Double?
+
+    /// Manual drag/pinch corrections accumulated in world space, so turning the phone
+    /// after a drag doesn't drag the route along with the camera.
+    private var manualWorldOffset: SIMD3<Float> = .zero
+    private var lastManualValues: SIMD3<Float> = .zero
 
     // Base Y offset applied to the route group so objects sit at chest height.
     // The manual alignment adds onto this baseline.
@@ -104,7 +133,7 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
         quest: Quest,
         dataStore: DataStore,
         locationService: LocationService,
-        onAlignmentUpdate: @escaping (ARAlignmentState, Double, Double?, Bool) -> Void,
+        onAlignmentUpdate: @escaping (ARAlignmentStatus) -> Void,
         onNearestItemDistance: @escaping (Double?) -> Void,
         onItemCollected: @escaping (UUID) -> Void,
         onDebugTick: @escaping (String) -> Void,
@@ -114,6 +143,7 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
         self.quest = quest
         self.dataStore = dataStore
         self.locationService = locationService
+        self.registration = RouteGeoRegistration(route: route)
         self.onAlignmentUpdate = onAlignmentUpdate
         self.onNearestItemDistance = onNearestItemDistance
         self.onItemCollected = onItemCollected
@@ -125,8 +155,9 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
         // (checkCollections, updateNearestItemDistance, buildCoinNodes, updateQuest)
         // is single-threaded on main — no dictionary races possible.
         statusTimer = Timer(timeInterval: 0.3, repeats: true) { [weak self] _ in
-            self?.updateAlignmentStatusFromGPS()
+            self?.updateAlignmentStatus()
             self?.updateNearestItemDistance()
+            self?.updateOverviewScaling()
         }
         RunLoop.main.add(statusTimer!, forMode: .common)
 
@@ -139,6 +170,7 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
     deinit {
         statusTimer?.invalidate()
         collectionTimer?.invalidate()
+        compass.stop()
     }
 
     // MARK: - Setup
@@ -152,20 +184,27 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
             arView.scene.rootNode.addChildNode(routeGroupNode)
         }
         if startGuidanceNode.parent == nil {
-            arView.scene.rootNode.addChildNode(startGuidanceNode)
+            routeGroupNode.addChildNode(startGuidanceNode)
             buildStartGuidanceBeacon()
         }
+        // Recorded positions are the phone at chest height; the beacon stands on the
+        // ground roughly 1.5 m below (the route group already sits baseRouteY lower).
+        let start = registration?.localStart ?? route.localTrack.first.map {
+            SIMD3(Float($0.x), Float($0.y), Float($0.z))
+        } ?? .zero
+        startGuidanceNode.simdPosition = start + SIMD3(0, -1.5 - baseRouteY, 0)
 
         // Shift the entire route (path + coins) down ~1 ft so objects
         // appear at chest/waist height rather than eye/head height.
         routeGroupNode.position.y = baseRouteY
 
+        compass.start()
         setupShadowLighting()
         buildRoutePath()
         buildCoinNodes(forceRebuild: true)
         buildBoxNodes(forceRebuild: true)
         setupArrowIndicator()
-        updateAlignmentStatusFromGPS()
+        updateAlignmentStatus()
         updateRouteNodeVisibility()
     }
 
@@ -230,13 +269,12 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
 
         switch newMode {
         case .running:
-            startGuidanceWorldPosition = nil
-            startGuidanceAnchorLocation = nil
             if previousMode != .realigning {
                 // Fresh run start — reset timing and tick counter
                 runStartedAt = Date()
                 collectionTickSerial = 0
             }
+            refreshOverviewEmphasis()
             // Freeze route transform so alignment remains stable during collection.
             frozenRouteWorldTransform = routeGroupNode.simdWorldTransform
             // Keep session delegate active for hand pose detection during running.
@@ -247,23 +285,45 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
             frozenRouteWorldTransform = nil
             // Restore frame callbacks for tracking updates.
             arView?.session.delegate = self
-            alignmentLocked = false
-            consecutiveGoodFrames = 0
-            consecutiveOutOfRangeGPS = 0
-            scanStartedAt = nil
-            startGuidanceWorldPosition = nil
-            startGuidanceAnchorLocation = nil
+            if newMode == .realigning { viewMode = .goToStart }
+            resetLock()
             alignmentState = .scanning
+            refreshOverviewEmphasis()
         }
 
         updateRouteNodeVisibility()
     }
 
+    func applyViewMode(_ newMode: ARViewMode) {
+        guard newMode != viewMode else { return }
+        viewMode = newMode
+        resetLock()
+        alignmentState = .moveToStart
+        refreshOverviewEmphasis()
+        updateRouteNodeVisibility()
+    }
+
+    private func resetLock() {
+        alignmentLocked = false
+        consecutiveGoodFrames = 0
+        consecutiveOutOfRangeGPS = 0
+        isWithinStartGate = false
+        scanStartedAt = nil
+    }
+
+    private var isAligning: Bool { runMode == .aligning || runMode == .realigning }
+    private var isPlaced: Bool { currentPose != nil }
+    private var isOverviewActive: Bool { isAligning && viewMode == .overview }
+    private var isLockedAtStart: Bool { alignmentLocked && alignmentState == .locked }
+
+    private var collectiblesVisible: Bool {
+        runMode == .running || (isPlaced && (isOverviewActive || isLockedAtStart))
+    }
+
     private func updateRouteNodeVisibility() {
         assert(Thread.isMainThread)
-        let showAlignedRoute = alignmentLocked && alignmentState == .locked
-        let showPath = showAlignedRoute && (runMode == .aligning || runMode == .realigning)
-        let showCollectibles = showAlignedRoute || runMode == .running
+        let showPath = isAligning && isPlaced && (isOverviewActive || isLockedAtStart)
+        let showCollectibles = collectiblesVisible
         for node in pathNodes {
             node.isHidden = !showPath
         }
@@ -273,9 +333,28 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
         for node in boxNodes.values {
             node.isHidden = !showCollectibles
         }
-        startGuidanceNode.isHidden =
-            !(runMode == .aligning || runMode == .realigning) ||
-            alignmentState == .locked
+        startGuidanceNode.isHidden = !(isAligning && isPlaced && (isOverviewActive || !isLockedAtStart))
+    }
+
+    /// In the overview the route may be far away, so the path is drawn thicker and
+    /// collectibles grow with distance to stay readable.
+    private func refreshOverviewEmphasis() {
+        let thickness: Float = isOverviewActive ? 3 : 1
+        for node in pathSegmentNodes {
+            node.simdScale = SIMD3(thickness, 1, thickness)
+        }
+        if !isOverviewActive {
+            for node in coinNodes.values { node.simdScale = SIMD3(repeating: 1) }
+            for node in boxNodes.values { node.simdScale = SIMD3(repeating: 1) }
+        }
+    }
+
+    private func updateOverviewScaling() {
+        guard isOverviewActive, let camera = arView?.pointOfView?.simdWorldPosition else { return }
+        for node in Array(coinNodes.values) + Array(boxNodes.values) {
+            let distance = simd_distance(camera, node.simdWorldPosition)
+            node.simdScale = SIMD3(repeating: min(6, max(1, distance / 12)))
+        }
     }
 
     func updateQuest(_ quest: Quest, dataStore: DataStore) {
@@ -290,6 +369,7 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
     private func buildRoutePath() {
         for node in pathNodes { node.removeFromParentNode() }
         pathNodes.removeAll()
+        pathSegmentNodes.removeAll()
 
         guard route.localTrack.count > 1 else { return }
 
@@ -303,6 +383,7 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
             let segment = pathSegmentNode(from: from, to: to)
             routeGroupNode.addChildNode(segment)
             pathNodes.append(segment)
+            pathSegmentNodes.append(segment)
         }
 
         let start = markerNode(color: UIColor(red: 0.2, green: 0.85, blue: 0.2, alpha: 0.9))
@@ -348,7 +429,7 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
                let local = item.resolvedLocalPosition(on: route) {
                 let coinNode = createCoinNode()
                 coinNode.simdPosition = local
-                coinNode.isHidden = alignmentState == .moveToStart
+                coinNode.isHidden = !collectiblesVisible
                 routeGroupNode.addChildNode(coinNode)
                 coinNodes[item.id] = coinNode
             }
@@ -371,7 +452,7 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
                let local = box.resolvedLocalPosition(on: route) {
                 let node = createBoxNode()
                 node.simdPosition = local
-                node.isHidden = alignmentState == .moveToStart
+                node.isHidden = !collectiblesVisible
                 routeGroupNode.addChildNode(node)
                 boxNodes[box.id] = node
             }
@@ -567,14 +648,14 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
         guard let arrow = arrowIndicatorNode,
               let cameraNode = arView?.pointOfView else { return }
 
-        if (runMode == .aligning || runMode == .realigning) && alignmentState != .locked {
-            guard let targetPosition = startGuidanceWorldPosition else {
+        if isAligning && !isLockedAtStart {
+            guard isPlaced else {
                 arrow.isHidden = true
                 return
             }
 
             arrow.isHidden = false
-            pointArrow(arrow, from: cameraNode, toward: targetPosition)
+            pointArrow(arrow, from: cameraNode, toward: startGuidanceNode.simdWorldPosition)
             return
         }
 
@@ -656,97 +737,308 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
         return mat
     }
 
-    // MARK: - Manual Alignment
+    // MARK: - Placement
 
-    /// Applies the user's manual position and rotation corrections to the route group.
-    /// Called every AR frame while in aligning/realigning mode so the adjustments
-    /// are visible in real-time as the user drags/rotates.
-    private func applyManualAlignment() {
-        guard let manual = manualAlignment else { return }
+    /// Recording space → live AR world: a yaw about +Y plus a translation.
+    private struct RoutePose {
+        var yaw: Float
+        var translation: SIMD3<Float>
 
-        // Convert camera-relative offsets to AR world-space coordinates so the
-        // route slides in the direction the user actually dragged regardless of
-        // which way the camera is facing.
-        //
-        //   manual.worldX  = "screen right" offset  (drag right → route goes right on screen)
-        //   manual.worldZ  = "screen depth" offset  (spread → closer, pinch → further)
-        //   manual.worldY  = vertical offset         (drag up → route goes up; Y is up in both spaces)
-        //
-        // We flatten the camera's right and forward vectors onto the horizontal
-        // plane so that tilting the phone doesn't cause vertical drift during
-        // a horizontal drag.
-        var posX: Float = manual.worldX
-        var posZ: Float = manual.worldZ
-
-        if let cam = arView?.session.currentFrame?.camera.transform {
-            // Camera's right vector is its X column; forward is -Z column (ARKit looks in -Z).
-            let rightFlat   = SIMD3<Float>( cam.columns.0.x, 0,  cam.columns.0.z)
-            let forwardFlat = SIMD3<Float>(-cam.columns.2.x, 0, -cam.columns.2.z)
-
-            // Guard against degenerate vectors (phone pointing nearly straight up/down).
-            if simd_length(rightFlat) > 0.001 && simd_length(forwardFlat) > 0.001 {
-                let r = simd_normalize(rightFlat)   * manual.worldX
-                let f = simd_normalize(forwardFlat) * manual.worldZ
-                posX = r.x + f.x
-                posZ = r.z + f.z
-            }
+        var matrix: simd_float4x4 {
+            var m = simd_float4x4(simd_quatf(angle: yaw, axis: SIMD3(0, 1, 0)))
+            m.columns.3 = SIMD4(translation, 1)
+            return m
         }
 
-        routeGroupNode.simdPosition = SIMD3<Float>(posX, baseRouteY + manual.worldY, posZ)
-        routeGroupNode.simdOrientation = simd_quatf(
-            angle: manual.rotationY,
-            axis: SIMD3<Float>(0, 1, 0)
+        func moved(toward target: RoutePose, fraction t: Float) -> RoutePose {
+            let dYaw = Float(PlanarGeo.normalizeAngle(Double(target.yaw - yaw)))
+            return RoutePose(
+                yaw: yaw + dYaw * t,
+                translation: simd_mix(translation, target.translation, SIMD3(repeating: t))
+            )
+        }
+
+        /// A refinement this large is a different answer, not a correction; snap to it.
+        func isFar(from other: RoutePose) -> Bool {
+            simd_distance(translation, other.translation) > 25
+                || abs(PlanarGeo.normalizeAngle(Double(yaw - other.yaw))) > .pi / 4
+        }
+    }
+
+    private static func translationMatrix(_ t: SIMD3<Float>) -> simd_float4x4 {
+        var m = matrix_identity_float4x4
+        m.columns.3 = SIMD4(t, 1)
+        return m
+    }
+
+    private var precisePose: RoutePose {
+        RoutePose(yaw: 0, translation: SIMD3(0, baseRouteY, 0))
+    }
+
+    private var placementQuality: ARPlacementQuality {
+        if isRelocalized { return .precise }
+        if isPlaced, let placementUncertainty {
+            return .approximate(uncertaintyMeters: placementUncertainty)
+        }
+        return .calibrating
+    }
+
+    /// While ARKit hunts for the world map it reports `relocalizing` but still tracks
+    /// motion in the session's own space, which is all the placement fusion needs.
+    private static func isUsableForPlacement(_ state: ARCamera.TrackingState) -> Bool {
+        switch state {
+        case .normal, .limited(.relocalizing): return true
+        default: return false
+        }
+    }
+
+    /// Feeds each new GPS fix, paired with where ARKit had the camera at that moment,
+    /// into the live-session registration.
+    private func ingestGPS(frame: ARFrame) {
+        guard !isRelocalized, let registration,
+              let location = locationService.currentLocation,
+              location.timestamp != lastFusedGPSTimestamp,
+              Date().timeIntervalSince(location.timestamp) < 2,
+              Self.isUsableForPlacement(frame.camera.trackingState) else { return }
+        lastFusedGPSTimestamp = location.timestamp
+        let camera = frame.camera.transform.columns.3
+        geoFusion.addGPS(
+            arPlan: PlanarGeo.plan(fromAR: SIMD3(camera.x, camera.y, camera.z)),
+            enu: registration.frame.enu(location.coordinate),
+            accuracy: location.horizontalAccuracy,
+            timestamp: location.timestamp
         )
+    }
+
+    private func ingestCompass(frame: ARFrame) {
+        guard !isRelocalized,
+              Self.isUsableForPlacement(frame.camera.trackingState),
+              let yaw = compass.arToENUYaw(
+                  cameraTransform: frame.camera.transform,
+                  frameTimestamp: frame.timestamp
+              ) else { return }
+        geoFusion.addCompass(yaw: yaw, time: frame.timestamp)
+    }
+
+    /// Recomputes where the route should sit. Runs on the status timer; the per-frame
+    /// update eases the visible route toward the result.
+    private func refreshPlacementTarget() {
+        guard let frame = arView?.session.currentFrame else { return }
+        ingestGPS(frame: frame)
+
+        if isRelocalized {
+            targetPose = precisePose
+            placementUncertainty = 0
+            return
+        }
+        guard let registration, let estimate = geoFusion.estimate() else {
+            fusionEstimate = nil
+            return
+        }
+        fusionEstimate = estimate
+
+        let plan = ARGeoFusion.routeToAR(localToENU: registration.localToENU, arToENU: estimate.arToENU)
+        let xz = PlanarGeo.arXZ(fromPlan: plan.translation)
+        let vertical = verticalOffset(for: plan, camera: frame.camera.transform)
+        targetPose = RoutePose(
+            yaw: Float(plan.yaw),
+            translation: SIMD3(xz.x, baseRouteY + vertical, xz.y)
+        )
+        let startPlan = plan.apply(PlanarGeo.plan(fromAR: registration.localStart))
+        placementUncertainty = sqrt(
+            pow(estimate.sigma(at: startPlan), 2) + pow(registration.startSigmaMeters, 2)
+        )
+    }
+
+    /// The recording and live sessions put y = 0 at different heights. Match the route
+    /// point nearest the user to the phone's current height, as it was when recorded.
+    private func verticalOffset(for plan: PlanarTransform, camera: simd_float4x4) -> Float {
+        let cameraPosition = camera.columns.3
+        let cameraPlan = PlanarGeo.plan(fromAR: SIMD3(cameraPosition.x, cameraPosition.y, cameraPosition.z))
+        var nearestY: Double?
+        var nearestDistance = Double.infinity
+        for sample in route.localTrack {
+            let d = simd_distance(plan.apply(SIMD2(sample.x, -sample.z)), cameraPlan)
+            if d < nearestDistance {
+                nearestDistance = d
+                nearestY = sample.y
+            }
+        }
+        guard let nearestY else { return 0 }
+        return cameraPosition.y - Float(nearestY)
+    }
+
+    /// Per frame: ease toward the target placement and apply manual corrections.
+    private func updateRouteTransform(frame: ARFrame) {
+        if runMode == .running, let frozen = frozenRouteWorldTransform {
+            routeGroupNode.simdWorldTransform = frozen
+            return
+        }
+        updateManualOffset(camera: frame.camera.transform)
+
+        if let target = targetPose {
+            let wasPlaced = isPlaced
+            if let current = currentPose, !current.isFar(from: target), let last = lastPoseFrameTime {
+                let dt = Float(max(0, min(0.1, frame.timestamp - last)))
+                currentPose = current.moved(toward: target, fraction: 1 - exp(-dt / 0.6))
+            } else {
+                currentPose = target
+            }
+            if !wasPlaced {
+                updateRouteNodeVisibility()
+                refreshOverviewEmphasis()
+            }
+        }
+        lastPoseFrameTime = frame.timestamp
+
+        guard let pose = currentPose else { return }
+        routeGroupNode.simdTransform = composedTransform(pose: pose)
+    }
+
+    /// Placement, then the user's manual rotation about the route start (so the start
+    /// beacon stays put while the rest of the route swings), then the manual shift.
+    private func composedTransform(pose: RoutePose) -> simd_float4x4 {
+        let base = pose.matrix
+        let pivotLocal = registration?.localStart ?? .zero
+        let pivot4 = base * SIMD4(pivotLocal, 1)
+        let pivot = SIMD3(pivot4.x, pivot4.y, pivot4.z)
+        let rotation = simd_float4x4(simd_quatf(
+            angle: manualAlignment?.rotationY ?? 0,
+            axis: SIMD3(0, 1, 0)
+        ))
+        return Self.translationMatrix(manualWorldOffset + pivot)
+            * rotation
+            * Self.translationMatrix(-pivot)
+            * base
+    }
+
+    /// Gestures report camera-relative offsets ("drag right", "pinch farther"). Convert
+    /// each change into world space at the moment it happens and accumulate it.
+    private func updateManualOffset(camera: simd_float4x4) {
+        guard let manual = manualAlignment else { return }
+        guard manual.hasAdjustment else {
+            manualWorldOffset = .zero
+            lastManualValues = .zero
+            return
+        }
+        let values = SIMD3(manual.worldX, manual.worldY, manual.worldZ)
+        let delta = values - lastManualValues
+        guard delta != .zero else { return }
+
+        // Camera's right vector is its X column; forward is -Z column (ARKit looks in -Z).
+        // Flattened so tilting the phone doesn't cause vertical drift during a drag.
+        let rightFlat = SIMD3<Float>(camera.columns.0.x, 0, camera.columns.0.z)
+        let forwardFlat = SIMD3<Float>(-camera.columns.2.x, 0, -camera.columns.2.z)
+        guard simd_length(rightFlat) > 0.001, simd_length(forwardFlat) > 0.001 else { return }
+
+        lastManualValues = values
+        manualWorldOffset += simd_normalize(rightFlat) * delta.x
+            + simd_normalize(forwardFlat) * delta.z
+            + SIMD3(0, delta.y, 0)
+    }
+
+    private func didRelocalize() {
+        isRelocalized = true
+        geoFusion.reset()
+        fusionEstimate = nil
+        // Manual corrections compensated for GPS error that no longer exists.
+        manualAlignment?.reset()
+        manualWorldOffset = .zero
+        lastManualValues = .zero
+        targetPose = precisePose
+        currentPose = precisePose
+        placementUncertainty = 0
+        routeGroupNode.simdTransform = composedTransform(pose: precisePose)
+        if runMode == .running {
+            frozenRouteWorldTransform = routeGroupNode.simdWorldTransform
+        }
+        updateRouteNodeVisibility()
+        refreshOverviewEmphasis()
+        locationService.logRunEvent("[Placement] world map relocalized — precise placement")
     }
 
     // MARK: - Alignment
 
-    private func updateAlignmentStatusFromGPS() {
-        guard runMode == .aligning || runMode == .realigning else { return }
-        let distance = distanceToRouteStart()
+    /// Distance the user must be within to align. Precise placement can be trusted
+    /// from farther away; a lock gets extra room before it is dropped.
+    private func startGateMeters(locked: Bool) -> Double {
+        (isRelocalized ? 8 : 5) + (locked ? 3 : 0)
+    }
 
-        if let distance, distance > startGateDistanceMeters {
-            consecutiveOutOfRangeGPS += 1
-            // Require 3 consecutive out-of-range GPS readings before resetting a
-            // lock — GPS can jitter 20-40 m so a single bad fix must not undo
-            // good alignment.
-            if consecutiveOutOfRangeGPS >= 3 {
-                alignmentState = .moveToStart
-                alignmentConfidence = min(alignmentConfidence, 0.2)
-                alignmentLocked = false
-                consecutiveGoodFrames = 0
-                scanStartedAt = nil
-            }
-            publishAlignment(distance: distance)
+    private func updateAlignmentStatus() {
+        guard isAligning else { return }
+        refreshPlacementTarget()
+        updateRouteNodeVisibility()
+
+        let distance = runMode == .realigning ? distanceToNearestRoutePoint() : distanceToRouteStart()
+
+        guard viewMode == .goToStart else {
+            resetLock()
+            alignmentState = .moveToStart
+            publishAlignment(distance: distanceToRouteStart())
             return
         }
-        consecutiveOutOfRangeGPS = 0
 
-        if !alignmentLocked {
-            if scanStartedAt == nil {
-                scanStartedAt = Date()
+        // The gate is measured in AR space against the placed route, so it is only
+        // meaningful once the route is placed.
+        let isNear = isPlaced && (distance.map { $0 <= startGateMeters(locked: alignmentLocked) } ?? false)
+        isWithinStartGate = isNear
+
+        if isNear {
+            consecutiveOutOfRangeGPS = 0
+            if !alignmentLocked {
+                if scanStartedAt == nil { scanStartedAt = Date() }
+                if alignmentState == .moveToStart { alignmentState = .scanning }
             }
-            alignmentState = .scanning
+        } else {
+            consecutiveOutOfRangeGPS += 1
+            if !alignmentLocked || consecutiveOutOfRangeGPS >= 3 {
+                alignmentState = .moveToStart
+                alignmentConfidence = min(alignmentConfidence, 0.2)
+                resetLock()
+            }
         }
 
         publishAlignment(distance: distance)
     }
 
     private func publishAlignment(distance: Double?) {
+        let status = ARAlignmentStatus(
+            state: alignmentState,
+            confidence: alignmentConfidence,
+            distanceToStart: distance,
+            ready: viewMode == .goToStart && alignmentLocked,
+            placement: placementQuality
+        )
         DispatchQueue.main.async {
-            self.onAlignmentUpdate(
-                self.alignmentState,
-                self.alignmentConfidence,
-                distance,
-                self.alignmentLocked
-            )
+            self.onAlignmentUpdate(status)
         }
     }
 
+    /// Horizontal metres to the route start: measured in AR space against the placed
+    /// beacon when there is one, otherwise from GPS to the registered start.
     private func distanceToRouteStart() -> Double? {
+        if isPlaced, let camera = arView?.session.currentFrame?.camera.transform.columns.3 {
+            let start = startGuidanceNode.simdWorldPosition
+            return Double(simd_distance(SIMD2(camera.x, camera.z), SIMD2(start.x, start.z)))
+        }
         guard let current = locationService.currentLocation,
-              let start = route.startLocation else { return nil }
+              let start = registration?.startLocation ?? route.startLocation else { return nil }
         return current.distance(from: start)
+    }
+
+    /// Realigning happens mid-run, so the gate is the nearest point of the route.
+    private func distanceToNearestRoutePoint() -> Double? {
+        guard isPlaced, let camera = arView?.session.currentFrame?.camera.transform.columns.3 else {
+            return nil
+        }
+        let transform = routeGroupNode.simdWorldTransform
+        var nearest = Float.infinity
+        for sample in route.localTrack {
+            let world = transform * SIMD4(Float(sample.x), Float(sample.y), Float(sample.z), 1)
+            nearest = min(nearest, simd_distance(SIMD2(camera.x, camera.z), SIMD2(world.x, world.z)))
+        }
+        return nearest.isFinite ? Double(nearest) : nil
     }
 
     // MARK: - ARSCNViewDelegate (plane anchors → shadow catchers)
@@ -793,8 +1085,26 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
         shadowPlaneNodes.removeValue(forKey: planeAnchor.identifier)
     }
 
+    func session(_ session: ARSession, cameraDidChangeTrackingState camera: ARCamera) {
+        switch camera.trackingState {
+        case .limited(.relocalizing):
+            sawRelocalizing = true
+        case .normal:
+            // A session started from a world map reports `relocalizing` until it
+            // matches the map; reaching `normal` afterwards means it adopted the
+            // recording's coordinate space.
+            if expectsRelocalization, sawRelocalizing, !isRelocalized {
+                didRelocalize()
+            }
+        default:
+            break
+        }
+    }
+
     func session(_ session: ARSession, didUpdate frame: ARFrame) {
-        updateStartGuidanceBeacon(frame: frame)
+        ingestCompass(frame: frame)
+        updateRouteTransform(frame: frame)
+        publishStartPlacementDebugIfNeeded(frame: frame)
         updateArrowDirection()
 
         if runMode == .running {
@@ -805,14 +1115,7 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
             }
             return
         }
-        guard runMode == .aligning || runMode == .realigning else { return }
-
-        // Apply manual position/rotation corrections every frame so the
-        // AR view updates in real-time as the user adjusts.
-        applyManualAlignment()
-
-        guard (distanceToRouteStart() ?? 0) <= startGateDistanceMeters else { return }
-        guard !alignmentLocked else { return }
+        guard isAligning, viewMode == .goToStart, isWithinStartGate, !alignmentLocked else { return }
 
         // --- Feature density score ---
         let featureCount = Double(frame.rawFeaturePoints?.points.count ?? 0)
@@ -820,50 +1123,42 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
         let featureScore = min(1.0, featureCount / 300.0)
 
         // --- Tracking state score ---
+        // Before ARKit matches the world map it reports `relocalizing` while still
+        // tracking motion normally; the route is GPS-placed then, so that counts.
         let trackingScore: Double
-        let isTrackingNormal: Bool
+        let isTrackingUsable: Bool
         switch frame.camera.trackingState {
         case .normal:
             trackingScore = 1.0
-            isTrackingNormal = true
+            isTrackingUsable = true
         case .limited(let reason):
-            isTrackingNormal = false
             switch reason {
-            case .relocalizing:         trackingScore = 0.65
-            case .excessiveMotion:      trackingScore = 0.40
-            case .insufficientFeatures: trackingScore = 0.30
-            case .initializing:         trackingScore = 0.35
-            @unknown default:           trackingScore = 0.30
+            case .relocalizing:
+                trackingScore = expectsRelocalization ? 0.9 : 0.65
+                isTrackingUsable = expectsRelocalization
+            case .excessiveMotion:      trackingScore = 0.40; isTrackingUsable = false
+            case .insufficientFeatures: trackingScore = 0.30; isTrackingUsable = false
+            case .initializing:         trackingScore = 0.35; isTrackingUsable = false
+            @unknown default:           trackingScore = 0.30; isTrackingUsable = false
             }
         case .notAvailable:
             trackingScore = 0
-            isTrackingNormal = false
+            isTrackingUsable = false
         }
 
         // --- World mapping status score ---
         let mappingScore: Double
-        let isMappingGood: Bool
         switch frame.worldMappingStatus {
-        case .mapped:
-            mappingScore = 1.0
-            isMappingGood = true
-        case .extending:
-            mappingScore = 0.8
-            isMappingGood = true
-        case .limited:
-            mappingScore = 0.45
-            isMappingGood = false
-        case .notAvailable:
-            mappingScore = 0.2
-            isMappingGood = false
-        @unknown default:
-            mappingScore = 0.3
-            isMappingGood = false
+        case .mapped:       mappingScore = 1.0
+        case .extending:    mappingScore = 0.8
+        case .limited:      mappingScore = 0.45
+        case .notAvailable: mappingScore = 0.2
+        @unknown default:   mappingScore = 0.3
         }
 
         // --- Raw composite confidence ---
         let rawConfidence = max(0.0, min(1.0,
-            (featureScore * 0.35) + (trackingScore * 0.35) + (mappingScore * 0.30)
+            (featureScore * 0.4) + (trackingScore * 0.4) + (mappingScore * 0.2)
         ))
 
         // --- EMA smoothing (α=0.25) to damp transient tracking blips ---
@@ -872,17 +1167,14 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
         alignmentConfidence = smoothedConfidence
 
         // --- Consecutive-good-frame counter ---
-        // Increment when tracking is normal, mapping is good, and smoothed
-        // confidence clears 0.70. On catastrophic loss hard-reset to 0.
-        // On mild degradation hold the counter (don't decay) so a brief
-        // glitch doesn't undo accumulated progress.
-        if isTrackingNormal && isMappingGood && smoothedConfidence >= 0.70 {
+        // Increment when tracking is usable and smoothed confidence clears 0.65.
+        // On catastrophic loss hard-reset to 0. On mild degradation hold the
+        // counter (don't decay) so a brief glitch doesn't undo accumulated progress.
+        if isTrackingUsable && smoothedConfidence >= 0.65 {
             consecutiveGoodFrames += 1
-        } else if !isTrackingNormal || smoothedConfidence < 0.40 {
-            // Catastrophic: tracking unavailable or severely low confidence.
+        } else if !isTrackingUsable || smoothedConfidence < 0.40 {
             consecutiveGoodFrames = 0
         }
-        // else: mild degradation — hold counter, don't increment or decrement.
 
         // --- State transitions ---
         // Require 15 consecutive good frames (≈0.25 s at 60 fps) to lock.
@@ -1157,176 +1449,56 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
         }
     }
 
-    private func updateStartGuidanceBeacon(frame: ARFrame) {
-        guard runMode == .aligning || runMode == .realigning,
-              alignmentState != .locked else {
-            startGuidanceNode.isHidden = true
-            startGuidanceWorldPosition = nil
-            startGuidanceAnchorLocation = nil
-            publishStartPlacementDebugIfNeeded(frame: frame, status: "inactive")
-            return
-        }
-
-        guard let current = locationService.currentLocation,
-              let start = route.startLocation else {
-            startGuidanceNode.isHidden = true
-            startGuidanceWorldPosition = nil
-            startGuidanceAnchorLocation = nil
-            publishStartPlacementDebugIfNeeded(frame: frame, status: "missing GPS/start")
-            return
-        }
-
-        if current.distance(from: start) <= startGateDistanceMeters {
-            startGuidanceNode.isHidden = true
-            startGuidanceWorldPosition = nil
-            startGuidanceAnchorLocation = nil
-            publishStartPlacementDebugIfNeeded(
-                frame: frame,
-                current: current,
-                start: start,
-                status: "inside GPS gate - marker hidden"
-            )
-            return
-        }
-
-        let shouldResolve = shouldResolveStartGuidanceAnchor(from: current)
-        if shouldResolve {
-            startGuidanceWorldPosition = resolvedStartGuidanceWorldPosition(
-                frame: frame,
-                current: current,
-                start: start
-            )
-            startGuidanceAnchorLocation = current
-        }
-
-        guard let worldPosition = startGuidanceWorldPosition else {
-            startGuidanceNode.isHidden = true
-            publishStartPlacementDebugIfNeeded(
-                frame: frame,
-                current: current,
-                start: start,
-                status: "resolve failed",
-                resolvedThisFrame: shouldResolve
-            )
-            return
-        }
-
-        startGuidanceNode.simdPosition = worldPosition
-        startGuidanceNode.isHidden = false
-        publishStartPlacementDebugIfNeeded(
-            frame: frame,
-            current: current,
-            start: start,
-            status: "visible",
-            resolvedThisFrame: shouldResolve
-        )
-    }
-
-    private func shouldResolveStartGuidanceAnchor(from current: CLLocation) -> Bool {
-        guard let anchor = startGuidanceAnchorLocation,
-              startGuidanceWorldPosition != nil else { return true }
-        return current.distance(from: anchor) > 2.0
-    }
-
-    private func resolvedStartGuidanceWorldPosition(
-        frame: ARFrame,
-        current: CLLocation,
-        start: CLLocation
-    ) -> SIMD3<Float>? {
-        let distance = current.distance(from: start)
-        let bearing = ARCoordinator.bearingDegrees(
-            from: current.coordinate,
-            to: start.coordinate
-        )
-        let relativeBearing = (bearing - headingDegrees + 360)
-            .truncatingRemainder(dividingBy: 360)
-        let angle = Float(relativeBearing * .pi / 180)
-        let visibleDistance = Float(min(distance, 60.0))
-
-        let camera = frame.camera.transform
-        let cameraPosition = SIMD3<Float>(
-            camera.columns.3.x,
-            camera.columns.3.y,
-            camera.columns.3.z
-        )
-        let rightFlat = SIMD3<Float>(camera.columns.0.x, 0, camera.columns.0.z)
-        let forwardFlat = SIMD3<Float>(-camera.columns.2.x, 0, -camera.columns.2.z)
-        guard simd_length(rightFlat) > 0.001,
-              simd_length(forwardFlat) > 0.001 else {
-            return nil
-        }
-
-        let right = simd_normalize(rightFlat)
-        let forward = simd_normalize(forwardFlat)
-        let horizontalOffset =
-            right * (sin(angle) * visibleDistance) +
-            forward * (cos(angle) * visibleDistance)
-
-        return SIMD3<Float>(
-            cameraPosition.x + horizontalOffset.x,
-            cameraPosition.y - 1.5,
-            cameraPosition.z + horizontalOffset.z
-        )
-    }
-
-    private func publishStartPlacementDebugIfNeeded(
-        frame: ARFrame,
-        current: CLLocation? = nil,
-        start: CLLocation? = nil,
-        status: String,
-        resolvedThisFrame: Bool = false
-    ) {
-        guard frame.timestamp - lastStartPlacementDebugAt >= 0.5 else { return }
+    private func publishStartPlacementDebugIfNeeded(frame: ARFrame) {
+        guard isAligning, frame.timestamp - lastStartPlacementDebugAt >= 0.5 else { return }
         lastStartPlacementDebugAt = frame.timestamp
 
-        let camera = frame.camera.transform
-        let cameraPosition = SIMD3<Float>(
-            camera.columns.3.x,
-            camera.columns.3.y,
-            camera.columns.3.z
-        )
-
-        let current = current ?? locationService.currentLocation
-        let start = start ?? route.startLocation
-        let distance = current.flatMap { current in start.map { current.distance(from: $0) } }
-        let bearing = current.flatMap { current in
-            start.map {
-                ARCoordinator.bearingDegrees(
-                    from: current.coordinate,
-                    to: $0.coordinate
-                )
-            }
-        }
-        let relativeBearing = bearing.map {
-            ($0 - headingDegrees + 360).truncatingRemainder(dividingBy: 360)
-        }
-        let anchorShift = current.flatMap { current in
-            startGuidanceAnchorLocation.map { current.distance(from: $0) }
+        let placement: String
+        switch placementQuality {
+        case .calibrating: placement = "calibrating"
+        case .approximate(let meters): placement = String(format: "GPS estimate ±%.1fm", meters)
+        case .precise: placement = "precise (world map)"
         }
 
+        let registrationLine = registration.map {
+            String(
+                format: "route reg: start ±%.1fm yaw ±%.1f° pairs %d compass %@",
+                $0.startSigmaMeters, $0.yawSigma * 180 / .pi, $0.gpsPairCount,
+                route.compassYawRadians == nil ? "no" : "yes"
+            )
+        } ?? "route reg: unavailable"
+        let fusionLine = fusionEstimate.map {
+            String(
+                format: "live fit: gps %d yaw ±%.1f° (gps heading %@) pos ±%.1fm",
+                $0.gpsCount, $0.yawSigma * 180 / .pi, $0.usedGPSHeading ? "yes" : "no",
+                $0.translationSigma
+            )
+        } ?? "live fit: waiting for GPS + compass"
+        let poseLine = currentPose.map {
+            String(format: "route pose: yaw %.1f° t %@", Double($0.yaw) * 180 / .pi, Self.vectorString($0.translation))
+        } ?? "route pose: nil"
+
+        let camera = frame.camera.transform.columns.3
+        let current = locationService.currentLocation
         let lines = [
-            "START PLACEMENT DEBUG",
-            "status: \(status) resolve: \(resolvedThisFrame ? "yes" : "no")",
+            "PLACEMENT DEBUG",
+            "view: \(viewMode.rawValue) placement: \(placement)",
+            "world map: \(expectsRelocalization ? "loaded" : "none") relocalized: \(isRelocalized ? "yes" : "no")",
             "align: \(alignmentState.rawValue) conf: \(String(format: "%.0f%%", alignmentConfidence * 100)) locked: \(alignmentLocked ? "yes" : "no")",
-            "current: \(Self.locationString(current))",
-            "recorded start: \(Self.locationString(start))",
-            "dist: \(Self.distanceString(distance)) gate: \(String(format: "%.1fm", startGateDistanceMeters)) GPS acc: \(Self.accuracyString(current))",
-            "heading: \(String(format: "%.1f", headingDegrees)) bearing: \(Self.degreesString(bearing)) rel: \(Self.degreesString(relativeBearing))",
-            "recorded start heading: \(Self.routeStartHeadingString(route))",
-            "anchor move: \(Self.distanceString(anchorShift))",
-            "camera world: \(Self.vectorString(cameraPosition))",
-            "marker world: \(Self.vectorString(startGuidanceWorldPosition))"
+            "dist to start: \(Self.distanceString(distanceToRouteStart())) gate: \(String(format: "%.1fm", startGateMeters(locked: alignmentLocked)))",
+            registrationLine,
+            fusionLine,
+            "current: \(Self.locationString(current)) GPS acc: \(Self.accuracyString(current))",
+            "registered start: \(Self.locationString(registration?.startLocation))",
+            "first fix: \(Self.locationString(route.startLocation))",
+            poseLine,
+            "manual: \(Self.vectorString(manualWorldOffset)) rot \(String(format: "%.1f°", Double(manualAlignment?.rotationY ?? 0) * 180 / .pi))",
+            "camera world: \(Self.vectorString(SIMD3(camera.x, camera.y, camera.z)))"
         ]
 
         DispatchQueue.main.async {
             self.onStartPlacementDebugUpdate(lines.joined(separator: "\n"))
         }
-
-        #if DEBUG
-        if resolvedThisFrame || status != "visible" {
-            print("[ARRunner][StartPlacement] \(lines.joined(separator: " | "))")
-        }
-        #endif
     }
 
     private static func locationString(_ location: CLLocation?) -> String {
@@ -1351,15 +1523,6 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
     private static func degreesString(_ degrees: Double?) -> String {
         guard let degrees else { return "nil" }
         return String(format: "%.1f°", degrees)
-    }
-
-    private static func routeStartHeadingString(_ route: RecordedRoute) -> String {
-        guard let heading = route.startHeadingDegrees else { return "nil" }
-        let source = (route.startHeadingIsTrueNorth ?? false) ? "true" : "mag"
-        let accuracy = route.startHeadingAccuracy.map {
-            String(format: " ±%.1f°", $0)
-        } ?? ""
-        return String(format: "%.1f°%@ %@", heading, accuracy, source)
     }
 
     private static func vectorString(_ vector: SIMD3<Float>?) -> String {
@@ -1504,3 +1667,4 @@ extension ARCoordinator {
         coinNodes[item.id] == nil
     }
 }
+

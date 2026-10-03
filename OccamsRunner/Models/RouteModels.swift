@@ -175,6 +175,12 @@ struct RecordedRoute: Codable, Identifiable {
     var startHeadingAccuracy: Double?
     var startHeadingTimestamp: Date?
     var startHeadingIsTrueNorth: Bool?
+    /// Compass-derived rotation from the recording's AR plan frame to east/north
+    /// (radians, counter-clockwise), averaged over the whole recording.
+    /// Optional so routes recorded before compass capture still decode cleanly.
+    var compassYawRadians: Double?
+    /// Mean resultant length of the per-frame compass yaw samples (1 = all agreed).
+    var compassYawConsistency: Double?
 
     /// Convenience map points for existing map-driven views.
     var points: [RoutePoint] {
@@ -252,6 +258,8 @@ struct RecordedRoute: Codable, Identifiable {
         self.startHeadingAccuracy = nil
         self.startHeadingTimestamp = nil
         self.startHeadingIsTrueNorth = nil
+        self.compassYawRadians = nil
+        self.compassYawConsistency = nil
         self.captureQuality = RouteCaptureQuality(
             matchedSampleRatio: 0,
             averageFeaturePoints: 0,
@@ -294,7 +302,9 @@ struct RecordedRoute: Codable, Identifiable {
         startHeadingDegrees: Double? = nil,
         startHeadingAccuracy: Double? = nil,
         startHeadingTimestamp: Date? = nil,
-        startHeadingIsTrueNorth: Bool? = nil
+        startHeadingIsTrueNorth: Bool? = nil,
+        compassYawRadians: Double? = nil,
+        compassYawConsistency: Double? = nil
     ) {
         self.id = UUID()
         self.name = name
@@ -310,6 +320,8 @@ struct RecordedRoute: Codable, Identifiable {
         self.startHeadingAccuracy = startHeadingAccuracy
         self.startHeadingTimestamp = startHeadingTimestamp
         self.startHeadingIsTrueNorth = startHeadingIsTrueNorth
+        self.compassYawRadians = compassYawRadians
+        self.compassYawConsistency = compassYawConsistency
     }
 
     // Custom decoder so routes saved before `recordingMode` was added
@@ -331,6 +343,8 @@ struct RecordedRoute: Codable, Identifiable {
         startHeadingAccuracy = try c.decodeIfPresent(Double.self,      forKey: .startHeadingAccuracy)
         startHeadingTimestamp = try c.decodeIfPresent(Date.self,       forKey: .startHeadingTimestamp)
         startHeadingIsTrueNorth = try c.decodeIfPresent(Bool.self,     forKey: .startHeadingIsTrueNorth)
+        compassYawRadians  = try c.decodeIfPresent(Double.self,        forKey: .compassYawRadians)
+        compassYawConsistency = try c.decodeIfPresent(Double.self,     forKey: .compassYawConsistency)
     }
 
     func geoSample(atProgress progress: Double) -> GeoRouteSample? {
