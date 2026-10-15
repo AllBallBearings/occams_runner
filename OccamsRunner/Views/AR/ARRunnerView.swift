@@ -53,6 +53,11 @@ struct ARRunnerView: View {
     @State private var runDistanceKm: Double = 0
     @State private var lastRunLocation: CLLocation?
 
+    // Quest timer: accumulates only while in .running mode; frozen on completion.
+    @State private var timerAccumulated: TimeInterval = 0
+    @State private var timerSegmentStart: Date?
+    @State private var finalQuestTime: TimeInterval?
+
     private let panSensitivity: Float   = 0.004
     private let depthSensitivity: Float = 4.0
     private let maxLateral: Float = 3.0
@@ -138,9 +143,18 @@ struct ARRunnerView: View {
         }
         .onChange(of: runMode) { mode in
             if mode == .running {
-                runDistanceKm = 0
+                // Only reset distance on a fresh start, not when resuming after realign.
+                if timerAccumulated == 0 && timerSegmentStart == nil {
+                    runDistanceKm = 0
+                }
                 lastRunLocation = locationService.currentLocation
+                startQuestTimer()
+            } else {
+                pauseQuestTimer()
             }
+        }
+        .onChange(of: showingCompletionAlert) { done in
+            if done { stopQuestTimer() }
         }
         .onReceive(dataStore.$quests) { _ in
             if liveQuest.isComplete { showingCompletionAlert = true }
@@ -210,6 +224,8 @@ struct ARRunnerView: View {
                         .kerning(1.5)
                     
                     Spacer()
+
+                    questTimerLabel
                     
                     HStack(spacing: 4) {
                         Image(systemName: "antenna.radiowaves.left.and.right")
@@ -310,6 +326,48 @@ struct ARRunnerView: View {
                     lineWidth: 1.5)
         )
         .shadow(color: Color.black.opacity(0.3), radius: 15, x: 0, y: 8)
+    }
+
+    // MARK: - Quest Timer
+
+    private var questTimerLabel: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            Text(Self.formatDuration(elapsedQuestTime(at: context.date)))
+                .font(.system(size: 14, weight: .bold, design: .monospaced))
+                .foregroundColor(.white)
+        }
+    }
+
+    private func elapsedQuestTime(at date: Date) -> TimeInterval {
+        if let finalQuestTime { return finalQuestTime }
+        guard let start = timerSegmentStart else { return timerAccumulated }
+        return timerAccumulated + max(0, date.timeIntervalSince(start))
+    }
+
+    private func startQuestTimer() {
+        guard finalQuestTime == nil, timerSegmentStart == nil, !liveQuest.isComplete else { return }
+        timerSegmentStart = Date()
+    }
+
+    private func pauseQuestTimer() {
+        guard let start = timerSegmentStart else { return }
+        timerAccumulated += Date().timeIntervalSince(start)
+        timerSegmentStart = nil
+    }
+
+    private func stopQuestTimer() {
+        guard finalQuestTime == nil else { return }
+        pauseQuestTimer()
+        // Only report a time if the timer actually ran this session.
+        if timerAccumulated > 0 { finalQuestTime = timerAccumulated }
+    }
+
+    static func formatDuration(_ interval: TimeInterval) -> String {
+        let total = Int(interval)
+        let h = total / 3600, m = (total % 3600) / 60, s = total % 60
+        return h > 0
+            ? String(format: "%d:%02d:%02d", h, m, s)
+            : String(format: "%02d:%02d", m, s)
     }
 
     // MARK: - Running Bottom HUD
@@ -647,6 +705,7 @@ struct ARRunnerView: View {
                     QuestCompleteCard(
                         quest: liveQuest,
                         route: route,
+                        completionTime: finalQuestTime,
                         onClaim: {
                             dataStore.clearPausedSession(for: quest.id)
                             dismiss()
@@ -713,6 +772,7 @@ struct ARRunnerView: View {
 private struct QuestCompleteCard: View {
     let quest: Quest
     let route: RecordedRoute?
+    let completionTime: TimeInterval?
     let onClaim: () -> Void
 
     @State private var starsIn = false
@@ -785,6 +845,14 @@ private struct QuestCompleteCard: View {
                     label: "DISTANCE",
                     value: String(format: "%.1fkm", (route?.totalDistanceMeters ?? 0) / 1000),
                     color: .cyan)
+            }
+
+            if let completionTime {
+                statTile(
+                    icon: "timer",
+                    label: "TIME",
+                    value: ARRunnerView.formatDuration(completionTime),
+                    color: .green)
             }
 
             // Claim Rewards button
