@@ -111,6 +111,7 @@ struct QuestDetailView: View {
     let quest: Quest
 
     @State private var showingARView = false
+    @State private var confirmingReverse = false
 
     // Design constants
     private let surface    = Color(red: 0.76, green: 0.78, blue: 0.88)
@@ -331,6 +332,21 @@ struct QuestDetailView: View {
                 }
             }
 
+            Button(action: {
+                if currentQuest.collectedItems > 0 { confirmingReverse = true } else { reverseDirection() }
+            }) {
+                neuButton(label: currentQuest.isReversed ? "Direction: End → Start (tap to flip)"
+                                                         : "Direction: Start → End (tap to flip)",
+                          icon: "arrow.left.arrow.right", iconColor: indigo)
+            }
+            .confirmationDialog("Reverse this quest?", isPresented: $confirmingReverse,
+                                titleVisibility: .visible) {
+                Button("Reverse and Reset Progress", role: .destructive) { reverseDirection() }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("The quest will start from the other end of the route and collected coins will be reset.")
+            }
+
             if currentQuest.collectedItems > 0 {
                 Button(action: resetProgress) {
                     neuButton(label: "Reset Progress", icon: "arrow.counterclockwise",
@@ -382,6 +398,11 @@ struct QuestDetailView: View {
     private func resumeRun() {
         dataStore.clearPausedSession(for: quest.id)
         showingARView = true
+    }
+
+    private func reverseDirection() {
+        dataStore.clearPausedSession(for: quest.id)
+        dataStore.reverseQuest(questId: quest.id)
     }
 
     private func resetProgress() {

@@ -11,6 +11,7 @@ struct QuestEditorView: View {
     @State private var questName = ""
     @State private var coinIntervalFeet: Double = 10
     @State private var generatedItems: [QuestItem] = []
+    @State private var startAtEnd = false
 
     private struct PreviewMarker: Identifiable {
         let id: UUID
@@ -21,6 +22,14 @@ struct QuestEditorView: View {
         Form {
             Section("Quest Details") {
                 TextField("Quest Name", text: $questName)
+            }
+
+            Section {
+                Toggle("Start at the end of the route", isOn: $startAtEnd)
+            } header: {
+                Text("Direction")
+            } footer: {
+                Text("Run the route backwards — handy if you finished recording at the spot you'd like to begin from.")
             }
 
             Section("Coin Placement") {
@@ -117,12 +126,13 @@ struct QuestEditorView: View {
 
     private func createQuest() {
         let boxes = QuestGenerator.generateBoxes(from: generatedItems)
-        let quest = Quest(
+        var quest = Quest(
             name: questName,
             routeId: route.id,
             items: generatedItems,
             boxes: boxes
         )
+        if startAtEnd { quest.reverseDirection() }
         dataStore.saveQuest(quest)
         isPresented = false
     }

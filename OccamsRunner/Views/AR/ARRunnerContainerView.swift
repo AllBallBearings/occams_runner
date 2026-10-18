@@ -10,6 +10,8 @@ struct ARRunnerContainerView: UIViewRepresentable {
     let dataStore: DataStore
     let locationService: LocationService
     let runMode: ARRunMode
+    /// Bumped by the parent to force a fresh relocalization attempt.
+    let retryToken: Int
     let headingDegrees: Double
     /// Shared state object that carries user-applied manual alignment corrections.
     let manualAlignment: ManualAlignmentState
@@ -28,6 +30,20 @@ struct ARRunnerContainerView: UIViewRepresentable {
         arView.autoenablesDefaultLighting = true
         arView.automaticallyUpdatesLighting = true
 
+        let config = makeConfiguration()
+        arView.session.run(config, options: [.resetTracking, .removeExistingAnchors])
+
+        context.coordinator.arView = arView
+        context.coordinator.lastRetryToken = retryToken
+        // Wire the manual alignment state before the initial scene is built.
+        context.coordinator.manualAlignment = manualAlignment
+        context.coordinator.headingDegrees = headingDegrees
+        context.coordinator.configureInitialScene()
+
+        return arView
+    }
+
+    private func makeConfiguration() -> ARWorldTrackingConfiguration {
         let config = ARWorldTrackingConfiguration()
         config.worldAlignment = .gravity
         // Horizontal plane detection feeds the shadow-catcher plane nodes the
@@ -41,19 +57,14 @@ struct ARRunnerContainerView: UIViewRepresentable {
            let worldMap = try? NSKeyedUnarchiver.unarchivedObject(ofClass: ARWorldMap.self, from: decrypted) {
             config.initialWorldMap = worldMap
         }
-
-        arView.session.run(config, options: [.resetTracking, .removeExistingAnchors])
-
-        context.coordinator.arView = arView
-        // Wire the manual alignment state before the initial scene is built.
-        context.coordinator.manualAlignment = manualAlignment
-        context.coordinator.headingDegrees = headingDegrees
-        context.coordinator.configureInitialScene()
-
-        return arView
+        return config
     }
 
     func updateUIView(_ uiView: ARSCNView, context: Context) {
+        if context.coordinator.lastRetryToken != retryToken {
+            context.coordinator.lastRetryToken = retryToken
+            context.coordinator.restartAlignment(with: makeConfiguration())
+        }
         context.coordinator.applyRunMode(runMode)
 
         // Fix 3: Refresh callbacks on every render pass so the coordinator always

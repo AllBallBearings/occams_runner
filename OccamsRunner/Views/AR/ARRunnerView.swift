@@ -47,6 +47,7 @@ struct ARRunnerView: View {
     @State private var alignmentReady = false
 
     @State private var manualAlignment = ManualAlignmentState()
+    @State private var retryToken = 0
 
     // Run tracking
     @StateObject private var headingManager = HeadingManager()
@@ -83,6 +84,7 @@ struct ARRunnerView: View {
                         dataStore: dataStore,
                         locationService: locationService,
                         runMode: runMode,
+                        retryToken: retryToken,
                         headingDegrees: headingManager.degrees,
                         manualAlignment: manualAlignment,
                         onAlignmentUpdate: { state, confidence, distance, ready in
@@ -562,6 +564,16 @@ struct ARRunnerView: View {
                     }
                 }
 
+                Button(action: retryAlignment) {
+                    Label("NOT LINING UP? TRY AGAIN", systemImage: "arrow.clockwise")
+                        .font(.system(size: 11, weight: .black))
+                        .padding(.horizontal, 16).padding(.vertical, 8)
+                        .background(.ultraThinMaterial)
+                        .environment(\.colorScheme, .dark)
+                        .clipShape(Capsule())
+                        .overlay(Capsule().stroke(Color.white.opacity(0.2), lineWidth: 1))
+                }
+
                 Button(action: { runMode = .running }) {
                     HStack {
                         Text(runMode == .realigning ? "RESUME QUEST" : "START QUEST")
@@ -675,6 +687,18 @@ struct ARRunnerView: View {
                     .clipShape(Capsule())
             }
         }
+    }
+
+    // MARK: - Retry Alignment
+
+    /// Clears manual nudges and has ARKit start placing the route again from scratch.
+    private func retryAlignment() {
+        manualAlignment.reset()
+        alignmentConfidence = 0
+        alignmentReady = false
+        alignmentState = .scanning
+        retryToken += 1
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
     }
 
     // MARK: - Dismiss / Pause

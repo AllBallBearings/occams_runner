@@ -58,6 +58,7 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
         return r
     }()
     private var lastHandPoseTime: TimeInterval = 0
+    var lastRetryToken = 0
     private let handPoseInterval: TimeInterval = 0.1  // 10 fps
 
     private var runMode: ARRunMode = .aligning
@@ -276,6 +277,26 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
         startGuidanceNode.isHidden =
             !(runMode == .aligning || runMode == .realigning) ||
             alignmentState == .locked
+    }
+
+    /// Drops the current alignment and asks ARKit to relocalize against the saved
+    /// world map from scratch. Collected coins are untouched.
+    func restartAlignment(with config: ARWorldTrackingConfiguration) {
+        guard let arView else { return }
+        alignmentLocked = false
+        consecutiveGoodFrames = 0
+        consecutiveOutOfRangeGPS = 0
+        smoothedConfidence = 0
+        alignmentConfidence = 0
+        scanStartedAt = nil
+        startGuidanceWorldPosition = nil
+        startGuidanceAnchorLocation = nil
+        frozenRouteWorldTransform = nil
+        for node in shadowPlaneNodes.values { node.removeFromParentNode() }
+        shadowPlaneNodes.removeAll()
+        alignmentState = .scanning
+        arView.session.run(config, options: [.resetTracking, .removeExistingAnchors])
+        publishAlignment(distance: distanceToRouteStart())
     }
 
     func updateQuest(_ quest: Quest, dataStore: DataStore) {
@@ -745,7 +766,7 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
 
     private func distanceToRouteStart() -> Double? {
         guard let current = locationService.currentLocation,
-              let start = route.startLocation else { return nil }
+              let start = quest.startLocation(on: route) else { return nil }
         return current.distance(from: start)
     }
 
@@ -1168,7 +1189,7 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
         }
 
         guard let current = locationService.currentLocation,
-              let start = route.startLocation else {
+              let start = quest.startLocation(on: route) else {
             startGuidanceNode.isHidden = true
             startGuidanceWorldPosition = nil
             startGuidanceAnchorLocation = nil
@@ -1287,7 +1308,7 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
         )
 
         let current = current ?? locationService.currentLocation
-        let start = start ?? route.startLocation
+        let start = start ?? quest.startLocation(on: route)
         let distance = current.flatMap { current in start.map { current.distance(from: $0) } }
         let bearing = current.flatMap { current in
             start.map {

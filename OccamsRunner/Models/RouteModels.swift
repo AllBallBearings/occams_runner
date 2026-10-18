@@ -425,7 +425,7 @@ enum QuestItemType: String, Codable, CaseIterable {
 struct QuestItem: Codable, Identifiable {
     let id: UUID
     let type: QuestItemType
-    let routeProgress: Double
+    var routeProgress: Double
     let verticalOffset: Double
     var collected: Bool
 
@@ -523,6 +523,9 @@ struct Quest: Codable, Identifiable {
     var items: [QuestItem]
     /// Punchable boxes placed at every 10th coin position.
     var boxes: [QuestBox]
+    /// When true the quest runs end-to-start: the route's last point is the quest start.
+    /// Item/box progress values are already flipped, so only start-point lookups need this.
+    var isReversed: Bool
 
     var totalItems: Int { items.count }
     var collectedItems: Int { items.filter { $0.collected }.count }
@@ -537,6 +540,7 @@ struct Quest: Codable, Identifiable {
         self.dateCreated = Date()
         self.items = items
         self.boxes = boxes
+        self.isReversed = false
     }
 
     // Custom decoder so quests saved before `boxes` was added still load.
@@ -548,6 +552,24 @@ struct Quest: Codable, Identifiable {
         dateCreated = try c.decode(Date.self,        forKey: .dateCreated)
         items       = try c.decode([QuestItem].self, forKey: .items)
         boxes       = try c.decodeIfPresent([QuestBox].self, forKey: .boxes) ?? []
+        isReversed  = try c.decodeIfPresent(Bool.self, forKey: .isReversed) ?? false
+    }
+
+    /// Where this quest begins: the route start, or the route end when reversed.
+    func startLocation(on route: RecordedRoute) -> CLLocation? {
+        isReversed ? route.geoTrack.last?.location : route.startLocation
+    }
+
+    /// Flip the quest so it starts at the other end of the route. Coins are mirrored along
+    /// the route, boxes are re-spaced from the new start, and progress is cleared.
+    mutating func reverseDirection() {
+        for i in items.indices {
+            items[i].routeProgress = 1 - items[i].routeProgress
+            items[i].collected = false
+        }
+        items.sort { $0.routeProgress < $1.routeProgress }
+        boxes = QuestGenerator.generateBoxes(from: items)
+        isReversed.toggle()
     }
 
     /// Reset all items to uncollected for a fresh run.
