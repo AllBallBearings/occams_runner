@@ -48,6 +48,7 @@ struct ARRunnerView: View {
 
     @State private var manualAlignment = ManualAlignmentState()
     @State private var retryToken = 0
+    @State private var adjustMode: AlignmentAdjustMode?
 
     // Run tracking
     @StateObject private var headingManager = HeadingManager()
@@ -60,7 +61,7 @@ struct ARRunnerView: View {
     @State private var finalQuestTime: TimeInterval?
 
     private let panSensitivity: Float   = 0.004
-    private let depthSensitivity: Float = 4.0
+    private let rotateSensitivity: Float = 0.008  // radians per point
     private let maxLateral: Float = 3.0
     private let maxVertical: Float = 2.0
     private let maxDepth:   Float = 5.0
@@ -101,7 +102,7 @@ struct ARRunnerView: View {
                     .allowsHitTesting(false)
                     .ignoresSafeArea()
 
-                    if runMode == .aligning || runMode == .realigning {
+                    if (runMode == .aligning || runMode == .realigning) && adjustMode != nil {
                         alignmentGestureLayer
                     }
 
@@ -144,6 +145,7 @@ struct ARRunnerView: View {
             lastRunLocation = loc
         }
         .onChange(of: runMode) { mode in
+            adjustMode = nil
             if mode == .running {
                 // Only reset distance on a fresh start, not when resuming after realign.
                 if timerAccumulated == 0 && timerSegmentStart == nil {
@@ -178,34 +180,44 @@ struct ARRunnerView: View {
         Color.clear
             .contentShape(Rectangle())
             .ignoresSafeArea()
-            .simultaneousGesture(
-                DragGesture(minimumDistance: 8)
+            .gesture(
+                DragGesture(minimumDistance: 4)
                     .onChanged { v in
-                        let dx = Float(v.translation.width)  * panSensitivity
-                        let dy = Float(-v.translation.height) * panSensitivity
-                        manualAlignment.worldX = (manualAlignment.baseX + dx)
-                            .clamped(to: -maxLateral...maxLateral)
-                        manualAlignment.worldY = (manualAlignment.baseY + dy)
-                            .clamped(to: -maxVertical...maxVertical)
+                        guard let mode = adjustMode else { return }
+                        let dx = Float(v.translation.width)
+                        let dy = Float(-v.translation.height)  // up is positive
+                        switch mode {
+                        case .shift:
+                            manualAlignment.worldX = (manualAlignment.baseX + dx * panSensitivity)
+                                .clamped(to: -maxLateral...maxLateral)
+                        case .depth:
+                            manualAlignment.worldZ = (manualAlignment.baseZ + dy * panSensitivity)
+                                .clamped(to: -maxDepth...maxDepth)
+                        case .height:
+                            manualAlignment.worldY = (manualAlignment.baseY + dy * panSensitivity)
+                                .clamped(to: -maxVertical...maxVertical)
+                        case .rotate:
+                            manualAlignment.rotationY = manualAlignment.baseRotation - dx * rotateSensitivity
+                        }
                     }
                     .onEnded { _ in manualAlignment.commitGesture() }
             )
-            .simultaneousGesture(
-                RotationGesture(minimumAngleDelta: .degrees(2))
-                    .onChanged { angle in
-                        manualAlignment.rotationY = manualAlignment.baseRotation + Float(angle.radians)
-                    }
-                    .onEnded { _ in manualAlignment.commitGesture() }
-            )
-            .simultaneousGesture(
-                MagnificationGesture(minimumScaleDelta: 0.02)
-                    .onChanged { scale in
-                        let delta = -Float(scale - 1.0) * depthSensitivity
-                        manualAlignment.worldZ = (manualAlignment.baseZ + delta)
-                            .clamped(to: -maxDepth...maxDepth)
-                    }
-                    .onEnded { _ in manualAlignment.commitGesture() }
-            )
+    }
+
+    private func adjustModeButton(_ mode: AlignmentAdjustMode) -> some View {
+        let selected = adjustMode == mode
+        return Button(action: { adjustMode = selected ? nil : mode }) {
+            VStack(spacing: 4) {
+                Image(systemName: mode.icon).font(.system(size: 16, weight: .bold))
+                Text(mode.label)
+                    .font(.system(size: 8, weight: .black))
+                    .multilineTextAlignment(.center)
+            }
+            .frame(width: 78, height: 54)
+            .foregroundColor(selected ? .black : .white.opacity(0.8))
+            .background(selected ? Color.cyan : Color.white.opacity(0.12))
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+        }
     }
 
     // MARK: - Top HUD Card
@@ -546,10 +558,13 @@ struct ARRunnerView: View {
         ZStack(alignment: .bottomLeading) {
             // Centered action controls
             VStack(spacing: 20) {
-                HStack(spacing: 16) {
-                    alignmentHint(icon: "arrow.up.and.down.and.arrow.left.and.right", label: "SHIFT")
-                    alignmentHint(icon: "arrow.up.left.and.arrow.down.right", label: "DEPTH")
-                    alignmentHint(icon: "arrow.2.circlepath", label: "ROTATE")
+                VStack(spacing: 8) {
+                    HStack(spacing: 8) {
+                        ForEach(AlignmentAdjustMode.allCases, id: \.self) { adjustModeButton($0) }
+                    }
+                    Text(adjustMode?.instruction ?? "Pick an adjustment, then drag on the screen")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(.white.opacity(0.75))
                 }
 
                 if manualAlignment.hasAdjustment {
@@ -605,16 +620,6 @@ struct ARRunnerView: View {
             .padding(.bottom, 50)
 
         }
-    }
-
-    private func alignmentHint(icon: String, label: String) -> some View {
-        VStack(spacing: 4) {
-            Image(systemName: icon)
-                .font(.system(size: 14))
-            Text(label)
-                .font(.system(size: 8, weight: .black))
-        }
-        .foregroundColor(.white.opacity(0.5))
     }
 
     private var alignmentStateInstruction: String {
@@ -697,6 +702,7 @@ struct ARRunnerView: View {
         alignmentConfidence = 0
         alignmentReady = false
         alignmentState = .scanning
+        adjustMode = nil
         retryToken += 1
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
     }
