@@ -23,6 +23,15 @@ enum RecordingMode: String, Codable, CaseIterable {
         }
     }
 
+    /// During a run, only coins and boxes within this horizontal radius of the runner
+    /// (ahead or behind) are drawn. Tune freely.
+    var visibilityRadiusMeters: Double {
+        switch self {
+        case .tight: return 6.096   // 20 ft
+        case .vast:  return 45.72   // 50 yd
+        }
+    }
+
     /// CLLocationManager distanceFilter (metres).
     var distanceFilter: Double {
         switch self {

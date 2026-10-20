@@ -376,6 +376,30 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
             node.isHidden = !showCollectibles
         }
         startGuidanceNode.isHidden = !(isAligning && isPlaced && (isOverviewActive || !isLockedAtStart))
+        applyVisibilityWindow()
+    }
+
+    /// While running, hide coins and boxes outside the recording mode's radius around
+    /// the runner so a long route doesn't fill the view with distant objects.
+    private func applyVisibilityWindow() {
+        guard runMode == .running,
+              let camera = arView?.pointOfView?.worldPosition else { return }
+        let radius = Float(route.recordingMode.visibilityRadiusMeters)
+        let radiusSquared = radius * radius
+
+        func inWindow(_ node: SCNNode) -> Bool {
+            let p = node.worldPosition
+            let dx = p.x - camera.x, dz = p.z - camera.z
+            return dx * dx + dz * dz <= radiusSquared
+        }
+        for node in coinNodes.values {
+            let hidden = !inWindow(node)
+            if node.isHidden != hidden { node.isHidden = hidden }
+        }
+        for node in boxNodes.values {
+            let hidden = !inWindow(node)
+            if node.isHidden != hidden { node.isHidden = hidden }
+        }
     }
 
     /// In the overview the route may be far away, so the path is drawn thicker and
@@ -650,6 +674,7 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
         }
 
         onNearestItemDistance(nearest)
+        applyVisibilityWindow()
         updateArrowDirection()
     }
 
