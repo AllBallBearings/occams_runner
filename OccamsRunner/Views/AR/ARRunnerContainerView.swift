@@ -10,12 +10,12 @@ struct ARRunnerContainerView: UIViewRepresentable {
     let dataStore: DataStore
     let locationService: LocationService
     let runMode: ARRunMode
+    let viewMode: ARViewMode
     /// Bumped by the parent to force a fresh relocalization attempt.
     let retryToken: Int
-    let headingDegrees: Double
     /// Shared state object that carries user-applied manual alignment corrections.
     let manualAlignment: ManualAlignmentState
-    let onAlignmentUpdate: (ARAlignmentState, Double, Double?, Bool) -> Void
+    let onAlignmentUpdate: (ARAlignmentStatus) -> Void
     let onNearestItemDistance: (Double?) -> Void
     let onItemCollected: (UUID) -> Void
     let onDebugTick: (String) -> Void
@@ -30,20 +30,21 @@ struct ARRunnerContainerView: UIViewRepresentable {
         arView.autoenablesDefaultLighting = true
         arView.automaticallyUpdatesLighting = true
 
-        let config = makeConfiguration()
+        let config = makeConfiguration(for: context.coordinator)
+
         arView.session.run(config, options: [.resetTracking, .removeExistingAnchors])
 
         context.coordinator.arView = arView
         context.coordinator.lastRetryToken = retryToken
         // Wire the manual alignment state before the initial scene is built.
         context.coordinator.manualAlignment = manualAlignment
-        context.coordinator.headingDegrees = headingDegrees
+        context.coordinator.applyViewMode(viewMode)
         context.coordinator.configureInitialScene()
 
         return arView
     }
 
-    private func makeConfiguration() -> ARWorldTrackingConfiguration {
+    private func makeConfiguration(for coordinator: ARCoordinator) -> ARWorldTrackingConfiguration {
         let config = ARWorldTrackingConfiguration()
         config.worldAlignment = .gravity
         // Horizontal plane detection feeds the shadow-catcher plane nodes the
@@ -56,6 +57,7 @@ struct ARRunnerContainerView: UIViewRepresentable {
            let decrypted = locationService.decryptWorldMapData(encrypted),
            let worldMap = try? NSKeyedUnarchiver.unarchivedObject(ofClass: ARWorldMap.self, from: decrypted) {
             config.initialWorldMap = worldMap
+            coordinator.expectsRelocalization = true
         }
         return config
     }
@@ -63,9 +65,10 @@ struct ARRunnerContainerView: UIViewRepresentable {
     func updateUIView(_ uiView: ARSCNView, context: Context) {
         if context.coordinator.lastRetryToken != retryToken {
             context.coordinator.lastRetryToken = retryToken
-            context.coordinator.restartAlignment(with: makeConfiguration())
+            context.coordinator.restartAlignment(with: makeConfiguration(for: context.coordinator))
         }
         context.coordinator.applyRunMode(runMode)
+        context.coordinator.applyViewMode(viewMode)
 
         // Fix 3: Refresh callbacks on every render pass so the coordinator always
         // holds closures that close over the current @State / @EnvironmentObject
@@ -81,7 +84,6 @@ struct ARRunnerContainerView: UIViewRepresentable {
         // Keep the manual alignment reference in sync (same instance in practice,
         // but explicit assignment ensures correctness across any future refactors).
         context.coordinator.manualAlignment = manualAlignment
-        context.coordinator.headingDegrees = headingDegrees
 
         // Always pull the live quest from dataStore rather than using the
         // struct-captured snapshot — the snapshot goes stale the moment any

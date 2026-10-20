@@ -8,6 +8,7 @@
 
 ## User settings
 xcuserdata/
+settings.json
 
 ## Obj-C/Swift specific
 *.hmap
@@ -64,3 +65,4 @@ fastlane/report.xml
 fastlane/Preview.html
 fastlane/screenshots/**/*.png
 fastlane/test_output
+.vscode/settings.json
