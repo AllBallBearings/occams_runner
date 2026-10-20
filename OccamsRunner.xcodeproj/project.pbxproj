@@ -29,6 +29,7 @@
 		A10020 /* ARRunnerContainerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20020 /* ARRunnerContainerView.swift */; };
 		A10021 /* ARCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20021 /* ARCoordinator.swift */; };
 		A10022 /* CollectionEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20022 /* CollectionEngine.swift */; };
+		A10090 /* GeoRegistration.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20090 /* GeoRegistration.swift */; };
 		A10023 /* ManualAlignmentState.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20023 /* ManualAlignmentState.swift */; };
 		A10024 /* SplashScreenView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20024 /* SplashScreenView.swift */; };
 		A10025 /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20025 /* HomeView.swift */; };
@@ -40,6 +41,7 @@
 		C10002 /* QuestGeneratorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20002 /* QuestGeneratorTests.swift */; };
 		C10003 /* DataStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20003 /* DataStoreTests.swift */; };
 		C10004 /* ARCoordinatorLogicTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20004 /* ARCoordinatorLogicTests.swift */; };
+		C10090 /* GeoRegistrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20090 /* GeoRegistrationTests.swift */; };
 		C10005 /* FixtureLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20005 /* FixtureLoader.swift */; };
 		C10006 /* CollectionStateMachineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20006 /* CollectionStateMachineTests.swift */; };
 		C10007 /* CollectionIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20007 /* CollectionIntegrationTests.swift */; };
@@ -101,6 +103,7 @@
 		A20020 /* ARRunnerContainerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ARRunnerContainerView.swift; sourceTree = "<group>"; };
 		A20021 /* ARCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ARCoordinator.swift; sourceTree = "<group>"; };
 		A20022 /* CollectionEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CollectionEngine.swift; sourceTree = "<group>"; };
+		A20090 /* GeoRegistration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GeoRegistration.swift; sourceTree = "<group>"; };
 		A20023 /* ManualAlignmentState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManualAlignmentState.swift; sourceTree = "<group>"; };
 		A20024 /* SplashScreenView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SplashScreenView.swift; sourceTree = "<group>"; };
 		A20025 /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
@@ -114,6 +117,7 @@
 		C20002 /* QuestGeneratorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuestGeneratorTests.swift; sourceTree = "<group>"; };
 		C20003 /* DataStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DataStoreTests.swift; sourceTree = "<group>"; };
 		C20004 /* ARCoordinatorLogicTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ARCoordinatorLogicTests.swift; sourceTree = "<group>"; };
+		C20090 /* GeoRegistrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GeoRegistrationTests.swift; sourceTree = "<group>"; };
 		C20005 /* FixtureLoader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FixtureLoader.swift; sourceTree = "<group>"; };
 		C20006 /* CollectionStateMachineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CollectionStateMachineTests.swift; sourceTree = "<group>"; };
 		C20007 /* CollectionIntegrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CollectionIntegrationTests.swift; sourceTree = "<group>"; };
@@ -235,6 +239,7 @@
 				A20005 /* DataStore.swift */,
 				A20006 /* QuestGenerator.swift */,
 				A20022 /* CollectionEngine.swift */,
+				A20090 /* GeoRegistration.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -294,6 +299,7 @@
 				C20002 /* QuestGeneratorTests.swift */,
 				C20003 /* DataStoreTests.swift */,
 				C20004 /* ARCoordinatorLogicTests.swift */,
+				C20090 /* GeoRegistrationTests.swift */,
 				C20006 /* CollectionStateMachineTests.swift */,
 				C20007 /* CollectionIntegrationTests.swift */,
 				C50002 /* TestHelpers */,
@@ -466,6 +472,7 @@
 				A10021 /* ARCoordinator.swift in Sources */,
 				A10029 /* ARAssetPreviewView.swift in Sources */,
 				A10022 /* CollectionEngine.swift in Sources */,
+				A10090 /* GeoRegistration.swift in Sources */,
 				A10023 /* ManualAlignmentState.swift in Sources */,
 				A10024 /* SplashScreenView.swift in Sources */,
 				A10025 /* HomeView.swift in Sources */,
@@ -483,6 +490,7 @@
 				C10002 /* QuestGeneratorTests.swift in Sources */,
 				C10003 /* DataStoreTests.swift in Sources */,
 				C10004 /* ARCoordinatorLogicTests.swift in Sources */,
+				C10090 /* GeoRegistrationTests.swift in Sources */,
 				C10006 /* CollectionStateMachineTests.swift in Sources */,
 				C10007 /* CollectionIntegrationTests.swift in Sources */,
 				C10005 /* FixtureLoader.swift in Sources */,

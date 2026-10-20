@@ -10,10 +10,10 @@ struct ARRunnerContainerView: UIViewRepresentable {
     let dataStore: DataStore
     let locationService: LocationService
     let runMode: ARRunMode
-    let headingDegrees: Double
+    let viewMode: ARViewMode
     /// Shared state object that carries user-applied manual alignment corrections.
     let manualAlignment: ManualAlignmentState
-    let onAlignmentUpdate: (ARAlignmentState, Double, Double?, Bool) -> Void
+    let onAlignmentUpdate: (ARAlignmentStatus) -> Void
     let onNearestItemDistance: (Double?) -> Void
     let onItemCollected: (UUID) -> Void
     let onDebugTick: (String) -> Void
@@ -40,6 +40,7 @@ struct ARRunnerContainerView: UIViewRepresentable {
            let decrypted = locationService.decryptWorldMapData(encrypted),
            let worldMap = try? NSKeyedUnarchiver.unarchivedObject(ofClass: ARWorldMap.self, from: decrypted) {
             config.initialWorldMap = worldMap
+            context.coordinator.expectsRelocalization = true
         }
 
         arView.session.run(config, options: [.resetTracking, .removeExistingAnchors])
@@ -47,7 +48,7 @@ struct ARRunnerContainerView: UIViewRepresentable {
         context.coordinator.arView = arView
         // Wire the manual alignment state before the initial scene is built.
         context.coordinator.manualAlignment = manualAlignment
-        context.coordinator.headingDegrees = headingDegrees
+        context.coordinator.applyViewMode(viewMode)
         context.coordinator.configureInitialScene()
 
         return arView
@@ -55,6 +56,7 @@ struct ARRunnerContainerView: UIViewRepresentable {
 
     func updateUIView(_ uiView: ARSCNView, context: Context) {
         context.coordinator.applyRunMode(runMode)
+        context.coordinator.applyViewMode(viewMode)
 
         // Fix 3: Refresh callbacks on every render pass so the coordinator always
         // holds closures that close over the current @State / @EnvironmentObject
@@ -70,7 +72,6 @@ struct ARRunnerContainerView: UIViewRepresentable {
         // Keep the manual alignment reference in sync (same instance in practice,
         // but explicit assignment ensures correctness across any future refactors).
         context.coordinator.manualAlignment = manualAlignment
-        context.coordinator.headingDegrees = headingDegrees
 
         // Always pull the live quest from dataStore rather than using the
         // struct-captured snapshot — the snapshot goes stale the moment any

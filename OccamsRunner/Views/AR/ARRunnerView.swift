@@ -4,26 +4,6 @@ import SceneKit
 import CoreLocation
 import MapKit
 
-// MARK: - Heading Manager
-
-private final class HeadingManager: NSObject, ObservableObject, CLLocationManagerDelegate {
-    @Published var degrees: Double = 0
-    private let manager = CLLocationManager()
-
-    override init() {
-        super.init()
-        manager.delegate = self
-        if CLLocationManager.headingAvailable() {
-            manager.startUpdatingHeading()
-        }
-    }
-
-    func locationManager(_ manager: CLLocationManager, didUpdateHeading newHeading: CLHeading) {
-        let d = newHeading.trueHeading >= 0 ? newHeading.trueHeading : newHeading.magneticHeading
-        DispatchQueue.main.async { self.degrees = d }
-    }
-}
-
 // MARK: - AR Runner View
 
 struct ARRunnerView: View {
@@ -37,6 +17,7 @@ struct ARRunnerView: View {
     @State private var showingPauseDialog = false
     @State private var nearestItemDistance: Double?
     @State private var runMode: ARRunMode = .aligning
+    @State private var viewMode: ARViewMode = .goToStart
     @State private var debugTickLog: String = ""
     @State private var startPlacementDebugLog: String = ""
     @State private var showStartPlacementDebug = false
@@ -45,11 +26,11 @@ struct ARRunnerView: View {
     @State private var alignmentConfidence: Double = 0
     @State private var distanceToStart: Double?
     @State private var alignmentReady = false
+    @State private var placement: ARPlacementQuality = .calibrating
 
     @State private var manualAlignment = ManualAlignmentState()
 
     // Run tracking
-    @StateObject private var headingManager = HeadingManager()
     @State private var runDistanceKm: Double = 0
     @State private var lastRunLocation: CLLocation?
 
@@ -78,13 +59,14 @@ struct ARRunnerView: View {
                         dataStore: dataStore,
                         locationService: locationService,
                         runMode: runMode,
-                        headingDegrees: headingManager.degrees,
+                        viewMode: viewMode,
                         manualAlignment: manualAlignment,
-                        onAlignmentUpdate: { state, confidence, distance, ready in
-                            alignmentState     = state
-                            alignmentConfidence = confidence
-                            distanceToStart    = distance
-                            alignmentReady     = ready
+                        onAlignmentUpdate: { status in
+                            alignmentState      = status.state
+                            alignmentConfidence = status.confidence
+                            distanceToStart     = status.distanceToStart
+                            alignmentReady      = status.ready
+                            placement           = status.placement
                         },
                         onNearestItemDistance: { nearest in nearestItemDistance = nearest },
                         onItemCollected:       { itemId in handleCollection(itemId: itemId) },
@@ -219,7 +201,10 @@ struct ARRunnerView: View {
                     }
                     .foregroundColor(alignmentConfidence >= 0.75 ? .green : .orange)
                     
-                    Button(action: { runMode = .realigning }) {
+                    Button(action: {
+                        viewMode = .goToStart
+                        runMode = .realigning
+                    }) {
                         Image(systemName: "location.north.line")
                             .font(.system(size: 14, weight: .bold))
                             .padding(8)
@@ -239,29 +224,23 @@ struct ARRunnerView: View {
                 // ── Alignment detail ────────────────────────────────
                 HStack(alignment: .top) {
                     VStack(alignment: .leading, spacing: 6) {
-                        Text(alignmentState.rawValue.uppercased())
+                        Text(alignmentHeadline)
                             .font(.system(size: 14, weight: .black))
                             .foregroundColor(.white)
                             .kerning(1.2)
                         
                         if let distanceToStart {
-                            let feet = distanceToStart * 3.281
-                            let distanceLabel = feet >= 1320
-                                ? String(format: "%.1f mi to start", feet / 5280)
-                                : String(format: "%.0f ft to start", feet)
-                            Label(distanceLabel, systemImage: "mappin.and.ellipse")
+                            Label(distanceToStartLabel(distanceToStart), systemImage: "mappin.and.ellipse")
                                 .font(.caption).fontWeight(.bold)
                                 .foregroundColor(.white.opacity(0.7))
                         }
+
+                        placementBadge
                         
                         HStack(spacing: 12) {
-                            Text(String(format: "Confidence: %.0f%%", alignmentConfidence * 100))
-                                .foregroundColor(alignmentReady ? .green : .orange)
-
-                            if let distanceToStart,
-                               distanceToStart <= 3 {
-                                Text("START: OK")
-                                    .foregroundColor(.green)
+                            if viewMode == .goToStart {
+                                Text(String(format: "Confidence: %.0f%%", alignmentConfidence * 100))
+                                    .foregroundColor(alignmentReady ? .green : .orange)
                             }
                             
                             if let accuracy = locationService.currentLocation?.horizontalAccuracy {
@@ -293,6 +272,15 @@ struct ARRunnerView: View {
                             .foregroundColor(.white.opacity(0.5))
                             .padding(8)
                     }
+                }
+
+                if runMode == .aligning {
+                    Picker("View", selection: $viewMode) {
+                        ForEach(ARViewMode.allCases) { mode in
+                            Text(mode.title).tag(mode)
+                        }
+                    }
+                    .pickerStyle(.segmented)
                 }
             }
         }
@@ -504,31 +492,61 @@ struct ARRunnerView: View {
                     }
                 }
 
-                Button(action: { runMode = .running }) {
-                    HStack {
-                        Text(runMode == .realigning ? "RESUME QUEST" : "START QUEST")
-                        Image(systemName: "chevron.right")
+                if viewMode == .overview {
+                    Button(action: { viewMode = .goToStart }) {
+                        HStack {
+                            Text("GO TO START")
+                            Image(systemName: "figure.walk")
+                        }
+                        .font(.system(size: 18, weight: .black))
+                        .kerning(1.5)
+                        .padding(.horizontal, 40).padding(.vertical, 20)
+                        .background(
+                            LinearGradient(colors: [Color.orange, Color(red: 0.9, green: 0.35, blue: 0)], startPoint: .top, endPoint: .bottom)
+                        )
+                        .foregroundColor(.white)
+                        .clipShape(Capsule())
+                        .shadow(color: .orange.opacity(0.4), radius: 15, x: 0, y: 8)
                     }
-                    .font(.system(size: 18, weight: .black))
-                    .kerning(1.5)
-                    .padding(.horizontal, 40).padding(.vertical, 20)
-                    .background(
-                        alignmentReady
-                        ? LinearGradient(colors: [Color.green, Color(red: 0, green: 0.7, blue: 0.3)], startPoint: .top, endPoint: .bottom)
-                        : LinearGradient(colors: [Color.gray.opacity(0.3), Color.gray.opacity(0.2)], startPoint: .top, endPoint: .bottom)
-                    )
-                    .foregroundColor(.white.opacity(alignmentReady ? 1.0 : 0.5))
-                    .clipShape(Capsule())
-                    .shadow(color: alignmentReady ? .green.opacity(0.4) : .clear, radius: 15, x: 0, y: 8)
-                }
-                .disabled(!alignmentReady)
 
-                if !alignmentReady {
-                    Text(alignmentStateInstruction)
+                    Text(overviewInstruction)
                         .font(.system(size: 12, weight: .bold))
                         .multilineTextAlignment(.center)
                         .foregroundColor(.white.opacity(0.7))
                         .padding(.horizontal, 40)
+                } else {
+                    Button(action: { runMode = .running }) {
+                        HStack {
+                            Text(runMode == .realigning ? "RESUME QUEST" : "START QUEST")
+                            Image(systemName: "chevron.right")
+                        }
+                        .font(.system(size: 18, weight: .black))
+                        .kerning(1.5)
+                        .padding(.horizontal, 40).padding(.vertical, 20)
+                        .background(
+                            alignmentReady
+                            ? LinearGradient(colors: [Color.green, Color(red: 0, green: 0.7, blue: 0.3)], startPoint: .top, endPoint: .bottom)
+                            : LinearGradient(colors: [Color.gray.opacity(0.3), Color.gray.opacity(0.2)], startPoint: .top, endPoint: .bottom)
+                        )
+                        .foregroundColor(.white.opacity(alignmentReady ? 1.0 : 0.5))
+                        .clipShape(Capsule())
+                        .shadow(color: alignmentReady ? .green.opacity(0.4) : .clear, radius: 15, x: 0, y: 8)
+                    }
+                    .disabled(!alignmentReady)
+
+                    if !alignmentReady {
+                        Text(alignmentStateInstruction)
+                            .font(.system(size: 12, weight: .bold))
+                            .multilineTextAlignment(.center)
+                            .foregroundColor(.white.opacity(0.7))
+                            .padding(.horizontal, 40)
+                    } else if case .approximate = placement {
+                        Text("GPS PLACEMENT - DRAG OR ROTATE TO FINE-TUNE")
+                            .font(.system(size: 11, weight: .bold))
+                            .multilineTextAlignment(.center)
+                            .foregroundColor(.white.opacity(0.7))
+                            .padding(.horizontal, 40)
+                    }
                 }
             }
             .frame(maxWidth: .infinity)
@@ -548,18 +566,63 @@ struct ARRunnerView: View {
     }
 
     private var alignmentStateInstruction: String {
-        if let distanceToStart,
-           distanceToStart <= 3,
-           alignmentState != .locked {
-            return "AT START - KEEP SCANNING"
+        if placement == .calibrating {
+            return "CALIBRATING - HOLD THE PHONE UP AND WALK A FEW STEPS"
         }
 
         switch alignmentState {
-        case .moveToStart: return "FOLLOW ORANGE MARKER TO START"
+        case .moveToStart:
+            return runMode == .realigning
+                ? "WALK BACK TO THE ROUTE"
+                : "FOLLOW ORANGE MARKER TO START"
         case .scanning:    return "HOLD AT START - SCAN SLOWLY"
         case .lowConfidence: return "LOW CONFIDENCE - KEEP SCANNING"
         case .locked:      return ""
         }
+    }
+
+    private var overviewInstruction: String {
+        switch placement {
+        case .calibrating:
+            return "CALIBRATING - HOLD THE PHONE UP AND WALK A FEW STEPS"
+        case .approximate:
+            return "LOOK AROUND TO FIND THE ROUTE - IT SHARPENS AS YOU MOVE"
+        case .precise:
+            return "SCENE MATCHED - ROUTE SHOWN EXACTLY WHERE YOU RECORDED IT"
+        }
+    }
+
+    private var alignmentHeadline: String {
+        if viewMode == .overview { return "ROUTE PREVIEW" }
+        if runMode == .realigning, alignmentState == .moveToStart { return "RETURN TO ROUTE" }
+        return alignmentState.rawValue.uppercased()
+    }
+
+    private func distanceToStartLabel(_ meters: Double) -> String {
+        let feet = meters * 3.281
+        let target = runMode == .realigning ? "to route" : "to start"
+        return feet >= 1320
+            ? String(format: "%.1f mi %@", feet / 5280, target)
+            : String(format: "%.0f ft %@", feet, target)
+    }
+
+    private var placementBadge: some View {
+        let (text, color): (String, Color) = {
+            switch placement {
+            case .calibrating:
+                return ("CALIBRATING POSITION", .orange)
+            case .approximate(let meters):
+                return (String(format: "GPS PLACEMENT ±%.0f FT", meters * 3.281), .yellow)
+            case .precise:
+                return ("PRECISE - SCENE MATCHED", .green)
+            }
+        }()
+        return Text(text)
+            .font(.system(size: 8, weight: .black))
+            .foregroundColor(color)
+            .padding(.horizontal, 6).padding(.vertical, 2)
+            .background(color.opacity(0.12))
+            .clipShape(Capsule())
     }
 
     // MARK: - Debug Overlay

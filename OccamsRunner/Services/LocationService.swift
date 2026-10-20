@@ -136,6 +136,16 @@ class LocationService: NSObject, ObservableObject {
     label: "occamsrunner.precisecapture", qos: .userInitiated)
   private var worldMapTimer: Timer?
 
+  // MARK: - Compass yaw capture
+  //
+  // Every tracked AR frame pairs the camera's AR-space heading with its compass
+  // heading. Averaged over the recording this gives the rotation from recording space
+  // to east/north, which anchors the route's orientation at replay even when GPS is
+  // too noisy to resolve it. Only touched on `arCaptureQueue`.
+
+  private let compass = CompassHeadingProvider()
+  private var compassYawMean = CircularMean()
+
   // MARK: - Init
 
   override init() {
@@ -197,6 +207,8 @@ class LocationService: NSObject, ObservableObject {
     altimeter.stopRelativeAltitudeUpdates()
     resetAltitudeState()
     beginAltimeterUpdates()
+    arCaptureQueue.async { self.compassYawMean = CircularMean() }
+    compass.start()
     startPreciseCapture()
     recordStartLocationIfAvailable()
   }
@@ -213,6 +225,7 @@ class LocationService: NSObject, ObservableObject {
     )
     captureWorldMapSnapshot()
     stopPreciseCapture()
+    compass.stop()
   }
 
   func buildRecordedRoute(name: String) -> RecordedRoute? {
@@ -295,6 +308,11 @@ class LocationService: NSObject, ObservableObject {
     }
 
     preciseCaptureStatus = "Capture quality passed. Route is ready for precise replay."
+    let compassMean = arCaptureQueue.sync { compassYawMean }
+    let hasCompassYaw = compassMean.count >= 30
+    logDebug(
+      "Compass yaw samples=\(compassMean.count) consistency=\(String(format: "%.2f", compassMean.consistency))"
+    )
     logDebug(
       "Route saved as precise-ready. name=\(name), geoSamples=\(geoTrack.count), localSamples=\(localTrack.count)"
     )
@@ -308,7 +326,9 @@ class LocationService: NSObject, ObservableObject {
       encryptedWorldMapData: lastEncryptedWorldMapData,
       captureQuality: quality,
       preciseEnabled: true,
-      recordingMode: recordingMode
+      recordingMode: recordingMode,
+      compassYawRadians: hasCompassYaw ? compassMean.mean : nil,
+      compassYawConsistency: hasCompassYaw ? compassMean.consistency : nil
     )
   }
 
@@ -723,6 +743,12 @@ extension LocationService: ARSessionDelegate {
     let position = SIMD3<Float>(transform.columns.3.x, transform.columns.3.y, transform.columns.3.z)
     let featureCount = frame.rawFeaturePoints?.points.count ?? 0
     let tracking = trackingScore(frame.camera.trackingState)
+
+    if tracking >= 1.0,
+      let yaw = compass.arToENUYaw(cameraTransform: transform, frameTimestamp: frame.timestamp)
+    {
+      compassYawMean.add(yaw)
+    }
 
     let sample = LocalFrameSample(
       // ARFrame timestamp is not wall-clock time; use capture receipt time
