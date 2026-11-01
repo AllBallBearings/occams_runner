@@ -189,9 +189,9 @@ struct RouteDetailView: View {
             ("Distance",
              String(format: "%.2f mi", route.totalDistanceMiles),
              "figure.run", teal),
-            ("Duration",
-             formatDuration(route.durationSeconds),
-             "clock", indigo),
+            route.source == .drawn
+                ? ("Source", "Drawn", "pencil.and.outline", indigo)
+                : ("Duration", formatDuration(route.durationSeconds), "clock", indigo),
             (route.netElevationChangeMeters >= 0 ? "Elev. Gain" : "Elev. Loss",
              String(format: "%.0f ft", abs(route.netElevationChangeMeters) * 3.281),
              route.netElevationChangeMeters >= 0 ? "arrow.up.right" : "arrow.down.right",

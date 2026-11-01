@@ -111,6 +111,7 @@ struct QuestDetailView: View {
     let quest: Quest
 
     @State private var showingARView = false
+    @State private var confirmingReverse = false
 
     // Design constants
     private let surface    = Color(red: 0.76, green: 0.78, blue: 0.88)
@@ -188,6 +189,7 @@ struct QuestDetailView: View {
 
                     progressSection
                     statsSection
+                    collectionModeSection
                     actionButtons
 
                     Spacer(minLength: 20)
@@ -310,6 +312,35 @@ struct QuestDetailView: View {
         .shadow(color: shadowLift.opacity(0.40), radius: 8, x: -3, y: -3)
     }
 
+    // MARK: - Collection Mode
+
+    private var collectionModeSection: some View {
+        let mode = Binding(
+            get: { currentQuest.collectionMode },
+            set: { dataStore.setCollectionMode(questId: quest.id, mode: $0) }
+        )
+
+        return VStack(alignment: .leading, spacing: 10) {
+            Text("COLLECTION")
+                .font(.system(size: 10, weight: .black))
+                .foregroundColor(darkText.opacity(0.40))
+                .kerning(0.8)
+            Picker("Collection", selection: mode) {
+                ForEach(CollectionMode.allCases) { Text($0.displayName).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            Text(currentQuest.collectionMode.summary)
+                .font(.caption)
+                .foregroundColor(darkText.opacity(0.55))
+        }
+        .padding(18)
+        .background(surface)
+        .clipShape(RoundedRectangle(cornerRadius: 18))
+        .shadow(color: shadowDark, radius: 12, x: 6, y: 6)
+        .shadow(color: shadowLift.opacity(0.40), radius: 10, x: -4, y: -4)
+        .padding(.horizontal, 16)
+    }
+
     // MARK: - Actions
 
     private var actionButtons: some View {
@@ -329,6 +360,21 @@ struct QuestDetailView: View {
                     accentButton(label: "Start AR Run", icon: "arkit",
                                  colors: [teal, Color(red: 0.10, green: 0.52, blue: 0.58)])
                 }
+            }
+
+            Button(action: {
+                if currentQuest.collectedItems > 0 { confirmingReverse = true } else { reverseDirection() }
+            }) {
+                neuButton(label: currentQuest.isReversed ? "Direction: End → Start (tap to flip)"
+                                                         : "Direction: Start → End (tap to flip)",
+                          icon: "arrow.left.arrow.right", iconColor: indigo)
+            }
+            .confirmationDialog("Reverse this quest?", isPresented: $confirmingReverse,
+                                titleVisibility: .visible) {
+                Button("Reverse and Reset Progress", role: .destructive) { reverseDirection() }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("The quest will start from the other end of the route and collected coins will be reset.")
             }
 
             if currentQuest.collectedItems > 0 {
@@ -382,6 +428,11 @@ struct QuestDetailView: View {
     private func resumeRun() {
         dataStore.clearPausedSession(for: quest.id)
         showingARView = true
+    }
+
+    private func reverseDirection() {
+        dataStore.clearPausedSession(for: quest.id)
+        dataStore.reverseQuest(questId: quest.id)
     }
 
     private func resetProgress() {

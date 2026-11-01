@@ -187,6 +187,18 @@ final class RouteModelsTests: XCTestCase {
         XCTAssertEqual(quest.collectedItems, 1)
     }
 
+    func test_quest_reverseDirection_mirrorsProgressAndClearsCollection() {
+        var items = [0.1, 0.5, 0.9].map { QuestItem(type: .coin, routeProgress: $0) }
+        items[0].collected = true
+        var quest = Quest(name: "Q", routeId: UUID(), items: items)
+        quest.reverseDirection()
+        XCTAssertTrue(quest.isReversed)
+        XCTAssertEqual(quest.items.map(\.routeProgress), [0.1, 0.5, 0.9].map { 1 - $0 }.sorted())
+        XCTAssertEqual(quest.collectedItems, 0)
+        quest.reverseDirection()
+        XCTAssertFalse(quest.isReversed)
+    }
+
     func test_quest_collectedPoints_sumsByItemType() {
         let items = (0..<3).map { _ in
             QuestItem(type: .coin, routeProgress: 0.5)

@@ -114,6 +114,16 @@ struct RecordRunView: View {
             .navigationTitle("Record Run")
             .navigationBarTitleDisplayMode(.inline)
             .toolbarColorScheme(.dark, for: .navigationBar)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    if !locationService.isRecording {
+                        NavigationLink(destination: DrawRouteView()) {
+                            Label("Draw Route", systemImage: "pencil.and.outline")
+                        }
+                        .accessibilityIdentifier("drawRouteButton")
+                    }
+                }
+            }
             .sheet(isPresented: $showingSaveSheet) {
                 saveRouteSheet
             }

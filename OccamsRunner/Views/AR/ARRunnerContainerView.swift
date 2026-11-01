@@ -11,6 +11,8 @@ struct ARRunnerContainerView: UIViewRepresentable {
     let locationService: LocationService
     let runMode: ARRunMode
     let viewMode: ARViewMode
+    /// Bumped by the parent to force a fresh relocalization attempt.
+    let retryToken: Int
     /// Shared state object that carries user-applied manual alignment corrections.
     let manualAlignment: ManualAlignmentState
     let onAlignmentUpdate: (ARAlignmentStatus) -> Void
@@ -28,6 +30,21 @@ struct ARRunnerContainerView: UIViewRepresentable {
         arView.autoenablesDefaultLighting = true
         arView.automaticallyUpdatesLighting = true
 
+        let config = makeConfiguration(for: context.coordinator)
+
+        arView.session.run(config, options: [.resetTracking, .removeExistingAnchors])
+
+        context.coordinator.arView = arView
+        context.coordinator.lastRetryToken = retryToken
+        // Wire the manual alignment state before the initial scene is built.
+        context.coordinator.manualAlignment = manualAlignment
+        context.coordinator.applyViewMode(viewMode)
+        context.coordinator.configureInitialScene()
+
+        return arView
+    }
+
+    private func makeConfiguration(for coordinator: ARCoordinator) -> ARWorldTrackingConfiguration {
         let config = ARWorldTrackingConfiguration()
         config.worldAlignment = .gravity
         // Horizontal plane detection feeds the shadow-catcher plane nodes the
@@ -40,21 +57,16 @@ struct ARRunnerContainerView: UIViewRepresentable {
            let decrypted = locationService.decryptWorldMapData(encrypted),
            let worldMap = try? NSKeyedUnarchiver.unarchivedObject(ofClass: ARWorldMap.self, from: decrypted) {
             config.initialWorldMap = worldMap
-            context.coordinator.expectsRelocalization = true
+            coordinator.expectsRelocalization = true
         }
-
-        arView.session.run(config, options: [.resetTracking, .removeExistingAnchors])
-
-        context.coordinator.arView = arView
-        // Wire the manual alignment state before the initial scene is built.
-        context.coordinator.manualAlignment = manualAlignment
-        context.coordinator.applyViewMode(viewMode)
-        context.coordinator.configureInitialScene()
-
-        return arView
+        return config
     }
 
     func updateUIView(_ uiView: ARSCNView, context: Context) {
+        if context.coordinator.lastRetryToken != retryToken {
+            context.coordinator.lastRetryToken = retryToken
+            context.coordinator.restartAlignment(with: makeConfiguration(for: context.coordinator))
+        }
         context.coordinator.applyRunMode(runMode)
         context.coordinator.applyViewMode(viewMode)
 

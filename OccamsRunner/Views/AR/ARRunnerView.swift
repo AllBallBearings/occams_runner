@@ -29,13 +29,20 @@ struct ARRunnerView: View {
     @State private var placement: ARPlacementQuality = .calibrating
 
     @State private var manualAlignment = ManualAlignmentState()
+    @State private var retryToken = 0
+    @State private var adjustMode: AlignmentAdjustMode?
 
     // Run tracking
     @State private var runDistanceKm: Double = 0
     @State private var lastRunLocation: CLLocation?
 
+    // Quest timer: accumulates only while in .running mode; frozen on completion.
+    @State private var timerAccumulated: TimeInterval = 0
+    @State private var timerSegmentStart: Date?
+    @State private var finalQuestTime: TimeInterval?
+
     private let panSensitivity: Float   = 0.004
-    private let depthSensitivity: Float = 4.0
+    private let rotateSensitivity: Float = 0.008  // radians per point
     private let maxLateral: Float = 3.0
     private let maxVertical: Float = 2.0
     private let maxDepth:   Float = 5.0
@@ -50,7 +57,7 @@ struct ARRunnerView: View {
     var body: some View {
         ZStack {
             if let route {
-                if route.encryptedWorldMapData == nil {
+                if !route.canRunInAR {
                     noARDataView
                 } else {
                     ARRunnerContainerView(
@@ -60,6 +67,7 @@ struct ARRunnerView: View {
                         locationService: locationService,
                         runMode: runMode,
                         viewMode: viewMode,
+                        retryToken: retryToken,
                         manualAlignment: manualAlignment,
                         onAlignmentUpdate: { status in
                             alignmentState      = status.state
@@ -76,7 +84,7 @@ struct ARRunnerView: View {
                     .allowsHitTesting(false)
                     .ignoresSafeArea()
 
-                    if runMode == .aligning || runMode == .realigning {
+                    if (runMode == .aligning || runMode == .realigning) && adjustMode != nil {
                         alignmentGestureLayer
                     }
 
@@ -119,10 +127,20 @@ struct ARRunnerView: View {
             lastRunLocation = loc
         }
         .onChange(of: runMode) { mode in
+            adjustMode = nil
             if mode == .running {
-                runDistanceKm = 0
+                // Only reset distance on a fresh start, not when resuming after realign.
+                if timerAccumulated == 0 && timerSegmentStart == nil {
+                    runDistanceKm = 0
+                }
                 lastRunLocation = locationService.currentLocation
+                startQuestTimer()
+            } else {
+                pauseQuestTimer()
             }
+        }
+        .onChange(of: showingCompletionAlert) { done in
+            if done { stopQuestTimer() }
         }
         .onReceive(dataStore.$quests) { _ in
             if liveQuest.isComplete { showingCompletionAlert = true }
@@ -144,34 +162,44 @@ struct ARRunnerView: View {
         Color.clear
             .contentShape(Rectangle())
             .ignoresSafeArea()
-            .simultaneousGesture(
-                DragGesture(minimumDistance: 8)
+            .gesture(
+                DragGesture(minimumDistance: 4)
                     .onChanged { v in
-                        let dx = Float(v.translation.width)  * panSensitivity
-                        let dy = Float(-v.translation.height) * panSensitivity
-                        manualAlignment.worldX = (manualAlignment.baseX + dx)
-                            .clamped(to: -maxLateral...maxLateral)
-                        manualAlignment.worldY = (manualAlignment.baseY + dy)
-                            .clamped(to: -maxVertical...maxVertical)
+                        guard let mode = adjustMode else { return }
+                        let dx = Float(v.translation.width)
+                        let dy = Float(-v.translation.height)  // up is positive
+                        switch mode {
+                        case .shift:
+                            manualAlignment.worldX = (manualAlignment.baseX + dx * panSensitivity)
+                                .clamped(to: -maxLateral...maxLateral)
+                        case .depth:
+                            manualAlignment.worldZ = (manualAlignment.baseZ + dy * panSensitivity)
+                                .clamped(to: -maxDepth...maxDepth)
+                        case .height:
+                            manualAlignment.worldY = (manualAlignment.baseY + dy * panSensitivity)
+                                .clamped(to: -maxVertical...maxVertical)
+                        case .rotate:
+                            manualAlignment.rotationY = manualAlignment.baseRotation - dx * rotateSensitivity
+                        }
                     }
                     .onEnded { _ in manualAlignment.commitGesture() }
             )
-            .simultaneousGesture(
-                RotationGesture(minimumAngleDelta: .degrees(2))
-                    .onChanged { angle in
-                        manualAlignment.rotationY = manualAlignment.baseRotation + Float(angle.radians)
-                    }
-                    .onEnded { _ in manualAlignment.commitGesture() }
-            )
-            .simultaneousGesture(
-                MagnificationGesture(minimumScaleDelta: 0.02)
-                    .onChanged { scale in
-                        let delta = -Float(scale - 1.0) * depthSensitivity
-                        manualAlignment.worldZ = (manualAlignment.baseZ + delta)
-                            .clamped(to: -maxDepth...maxDepth)
-                    }
-                    .onEnded { _ in manualAlignment.commitGesture() }
-            )
+    }
+
+    private func adjustModeButton(_ mode: AlignmentAdjustMode) -> some View {
+        let selected = adjustMode == mode
+        return Button(action: { adjustMode = selected ? nil : mode }) {
+            VStack(spacing: 4) {
+                Image(systemName: mode.icon).font(.system(size: 16, weight: .bold))
+                Text(mode.label)
+                    .font(.system(size: 8, weight: .black))
+                    .multilineTextAlignment(.center)
+            }
+            .frame(width: 78, height: 54)
+            .foregroundColor(selected ? .black : .white.opacity(0.8))
+            .background(selected ? Color.cyan : Color.white.opacity(0.12))
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+        }
     }
 
     // MARK: - Top HUD Card
@@ -192,6 +220,8 @@ struct ARRunnerView: View {
                         .kerning(1.5)
                     
                     Spacer()
+
+                    questTimerLabel
                     
                     HStack(spacing: 4) {
                         Image(systemName: "antenna.radiowaves.left.and.right")
@@ -298,6 +328,48 @@ struct ARRunnerView: View {
                     lineWidth: 1.5)
         )
         .shadow(color: Color.black.opacity(0.3), radius: 15, x: 0, y: 8)
+    }
+
+    // MARK: - Quest Timer
+
+    private var questTimerLabel: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            Text(Self.formatDuration(elapsedQuestTime(at: context.date)))
+                .font(.system(size: 14, weight: .bold, design: .monospaced))
+                .foregroundColor(.white)
+        }
+    }
+
+    private func elapsedQuestTime(at date: Date) -> TimeInterval {
+        if let finalQuestTime { return finalQuestTime }
+        guard let start = timerSegmentStart else { return timerAccumulated }
+        return timerAccumulated + max(0, date.timeIntervalSince(start))
+    }
+
+    private func startQuestTimer() {
+        guard finalQuestTime == nil, timerSegmentStart == nil, !liveQuest.isComplete else { return }
+        timerSegmentStart = Date()
+    }
+
+    private func pauseQuestTimer() {
+        guard let start = timerSegmentStart else { return }
+        timerAccumulated += Date().timeIntervalSince(start)
+        timerSegmentStart = nil
+    }
+
+    private func stopQuestTimer() {
+        guard finalQuestTime == nil else { return }
+        pauseQuestTimer()
+        // Only report a time if the timer actually ran this session.
+        if timerAccumulated > 0 { finalQuestTime = timerAccumulated }
+    }
+
+    static func formatDuration(_ interval: TimeInterval) -> String {
+        let total = Int(interval)
+        let h = total / 3600, m = (total % 3600) / 60, s = total % 60
+        return h > 0
+            ? String(format: "%d:%02d:%02d", h, m, s)
+            : String(format: "%02d:%02d", m, s)
     }
 
     // MARK: - Running Bottom HUD
@@ -474,10 +546,15 @@ struct ARRunnerView: View {
         ZStack(alignment: .bottomLeading) {
             // Centered action controls
             VStack(spacing: 20) {
-                HStack(spacing: 16) {
-                    alignmentHint(icon: "arrow.up.and.down.and.arrow.left.and.right", label: "SHIFT")
-                    alignmentHint(icon: "arrow.up.left.and.arrow.down.right", label: "DEPTH")
-                    alignmentHint(icon: "arrow.2.circlepath", label: "ROTATE")
+                if viewMode != .overview {
+                    VStack(spacing: 8) {
+                        HStack(spacing: 8) {
+                            ForEach(AlignmentAdjustMode.allCases, id: \.self) { adjustModeButton($0) }
+                        }
+                        Text(adjustMode?.instruction ?? "Pick an adjustment, then drag on the screen")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundColor(.white.opacity(0.75))
+                    }
                 }
 
                 if manualAlignment.hasAdjustment {
@@ -515,6 +592,16 @@ struct ARRunnerView: View {
                         .foregroundColor(.white.opacity(0.7))
                         .padding(.horizontal, 40)
                 } else {
+                    Button(action: retryAlignment) {
+                        Label("NOT LINING UP? TRY AGAIN", systemImage: "arrow.clockwise")
+                            .font(.system(size: 11, weight: .bold))
+                            .padding(.horizontal, 16).padding(.vertical, 8)
+                            .background(.ultraThinMaterial)
+                            .environment(\.colorScheme, .dark)
+                            .clipShape(Capsule())
+                            .overlay(Capsule().stroke(Color.white.opacity(0.2), lineWidth: 1))
+                    }
+
                     Button(action: { runMode = .running }) {
                         HStack {
                             Text(runMode == .realigning ? "RESUME QUEST" : "START QUEST")
@@ -541,7 +628,7 @@ struct ARRunnerView: View {
                             .foregroundColor(.white.opacity(0.7))
                             .padding(.horizontal, 40)
                     } else if case .approximate = placement {
-                        Text("GPS PLACEMENT - DRAG OR ROTATE TO FINE-TUNE")
+                        Text("GPS PLACEMENT - PICK AN ADJUSTMENT ABOVE TO FINE-TUNE")
                             .font(.system(size: 11, weight: .bold))
                             .multilineTextAlignment(.center)
                             .foregroundColor(.white.opacity(0.7))
@@ -553,16 +640,6 @@ struct ARRunnerView: View {
             .padding(.bottom, 50)
 
         }
-    }
-
-    private func alignmentHint(icon: String, label: String) -> some View {
-        VStack(spacing: 4) {
-            Image(systemName: icon)
-                .font(.system(size: 14))
-            Text(label)
-                .font(.system(size: 8, weight: .black))
-        }
-        .foregroundColor(.white.opacity(0.5))
     }
 
     private var alignmentStateInstruction: String {
@@ -682,6 +759,20 @@ struct ARRunnerView: View {
         }
     }
 
+    // MARK: - Retry Alignment
+
+    /// Clears manual nudges and has ARKit start placing the route again from scratch.
+    private func retryAlignment() {
+        manualAlignment.reset()
+        alignmentConfidence = 0
+        alignmentReady = false
+        alignmentState = .scanning
+        placement = .calibrating
+        adjustMode = nil
+        retryToken += 1
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+    }
+
     // MARK: - Dismiss / Pause
 
     private func handleDismissTap() {
@@ -710,6 +801,7 @@ struct ARRunnerView: View {
                     QuestCompleteCard(
                         quest: liveQuest,
                         route: route,
+                        completionTime: finalQuestTime,
                         onClaim: {
                             dataStore.clearPausedSession(for: quest.id)
                             dismiss()
@@ -776,6 +868,7 @@ struct ARRunnerView: View {
 private struct QuestCompleteCard: View {
     let quest: Quest
     let route: RecordedRoute?
+    let completionTime: TimeInterval?
     let onClaim: () -> Void
 
     @State private var starsIn = false
@@ -848,6 +941,14 @@ private struct QuestCompleteCard: View {
                     label: "DISTANCE",
                     value: String(format: "%.1fkm", (route?.totalDistanceMeters ?? 0) / 1000),
                     color: .cyan)
+            }
+
+            if let completionTime {
+                statTile(
+                    icon: "timer",
+                    label: "TIME",
+                    value: ARRunnerView.formatDuration(completionTime),
+                    color: .green)
             }
 
             // Claim Rewards button

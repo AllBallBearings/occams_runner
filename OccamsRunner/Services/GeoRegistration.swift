@@ -353,9 +353,13 @@ struct RouteGeoRegistration {
     }
 
     var startLocation: CLLocation {
-        let coordinate = startCoordinate
-        return CLLocation(
-            coordinate: coordinate,
+        location(atLocal: localStart)
+    }
+
+    /// Earth position of any point in recording space (e.g. the route end for a reversed quest).
+    func location(atLocal point: SIMD3<Float>) -> CLLocation {
+        CLLocation(
+            coordinate: frame.coordinate(localToENU.apply(PlanarGeo.plan(fromAR: point))),
             altitude: 0,
             horizontalAccuracy: startSigmaMeters,
             verticalAccuracy: -1,

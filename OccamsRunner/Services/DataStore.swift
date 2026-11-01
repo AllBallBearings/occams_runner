@@ -111,9 +111,22 @@ class DataStore: ObservableObject {
         persist(quests, to: questsURL)
     }
 
+    func reverseQuest(questId: UUID) {
+        guard let qi = quests.firstIndex(where: { $0.id == questId }) else { return }
+        quests[qi].reverseDirection()
+        persist(quests, to: questsURL)
+    }
+
     func resetQuestProgress(questId: UUID) {
         guard let qi = quests.firstIndex(where: { $0.id == questId }) else { return }
         quests[qi].resetProgress()
+        persist(quests, to: questsURL)
+    }
+
+    func setCollectionMode(questId: UUID, mode: CollectionMode) {
+        guard let qi = quests.firstIndex(where: { $0.id == questId }),
+              quests[qi].collectionMode != mode else { return }
+        quests[qi].collectionMode = mode
         persist(quests, to: questsURL)
     }
 

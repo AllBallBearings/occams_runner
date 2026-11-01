@@ -436,4 +436,254 @@ final class CollectionIntegrationTests: XCTestCase {
         XCTAssertFalse(log.contains("noNode"), "No items should be missing nodes")
         XCTAssertFalse(log.contains("pending"), "No items should be pending")
     }
+
+    // MARK: - Body Touch Mode
+
+    /// Runs the coordinator along +X at walking pace with the phone `phoneHeight`
+    /// above the coins and `lateral` metres to the side of the route.
+    private func walkRoute(_ coord: ARCoordinator, fromX: Float, toX: Float,
+                           lateral: Float, phoneHeight: Float = 0.3) {
+        let step: Float = 0.35   // 1.4 m/s at the 0.25 s collection tick
+        var x = fromX
+        var time: TimeInterval = 0
+        while x <= toX {
+            coord.performCollectionTick(cameraPosition: cameraAt(x, phoneHeight, lateral),
+                                        cameraForward: SCNVector3(1, 0, 0),
+                                        time: time)
+            x += step
+            time += 0.25
+        }
+    }
+
+    func test_bodyTouch_collectsEveryCoinWhenRunningThrough() {
+        let route = makeDualTrackRoute(pointCount: 11)
+        var quest = makeQuest(routeId: route.id, coinCount: 3)
+        quest.collectionMode = .bodyTouch
+        store.saveRoute(route)
+        store.saveQuest(quest)
+
+        let coord = makeCoordinator(route: route, quest: quest)
+        coord.testBuildCoinNodes(forceRebuild: true)
+        walkRoute(coord, fromX: -2, toX: 12, lateral: 0)
+
+        XCTAssertEqual(collectedCallbackIds, quest.items.map(\.id))
+        XCTAssertTrue(store.quests.first(where: { $0.id == quest.id })!.isComplete)
+    }
+
+    func test_bodyTouch_passingBesideCoins_collectsNothing() {
+        let route = makeDualTrackRoute(pointCount: 11)
+        var quest = makeQuest(routeId: route.id, coinCount: 3)
+        quest.collectionMode = .bodyTouch
+        store.saveRoute(route)
+        store.saveQuest(quest)
+
+        let coord = makeCoordinator(route: route, quest: quest)
+        coord.testBuildCoinNodes(forceRebuild: true)
+        walkRoute(coord, fromX: -2, toX: 12, lateral: 0.5)
+
+        XCTAssertTrue(collectedCallbackIds.isEmpty)
+        XCTAssertEqual(coord.testCoinNodeCount, 3)
+    }
+
+    /// Same pass 0.25 m to the side: inside the body, outside the phone sphere.
+    func test_collectionMode_decidesLateralPass() {
+        let route = makeDualTrackRoute(pointCount: 11)
+        store.saveRoute(route)
+
+        var bodyQuest = makeQuest(routeId: route.id, coinCount: 3)
+        bodyQuest.collectionMode = .bodyTouch
+        store.saveQuest(bodyQuest)
+        let bodyCoord = makeCoordinator(route: route, quest: bodyQuest)
+        bodyCoord.testBuildCoinNodes(forceRebuild: true)
+        walkRoute(bodyCoord, fromX: -2, toX: 12, lateral: 0.25)
+        XCTAssertEqual(collectedCallbackIds.count, 3, "Body touch should take coins brushed at 0.25 m")
+
+        collectedCallbackIds = []
+        let phoneQuest = makeQuest(routeId: route.id, coinCount: 3)
+        store.saveQuest(phoneQuest)
+        let phoneCoord = makeCoordinator(route: route, quest: phoneQuest)
+        phoneCoord.testBuildCoinNodes(forceRebuild: true)
+        walkRoute(phoneCoord, fromX: -2, toX: 12, lateral: 0.25, phoneHeight: 0)
+        XCTAssertTrue(collectedCallbackIds.isEmpty, "Phone touch needs the phone within 0.15 m")
+    }
+
+    func test_bodyTouch_debugLogShowsBodyDistance() {
+        let route = makeDualTrackRoute(pointCount: 11)
+        var quest = makeQuest(routeId: route.id, coinCount: 2)
+        quest.collectionMode = .bodyTouch
+        store.saveRoute(route)
+        store.saveQuest(quest)
+
+        let coord = makeCoordinator(route: route, quest: quest)
+        coord.testBuildCoinNodes(forceRebuild: true)
+        coord.performCollectionTick(cameraPosition: cameraAt(50, 0.3, 0), time: 0)
+
+        XCTAssertTrue(debugLogs[0].contains("body h="))
+        XCTAssertTrue(debugLogs[0].contains("far"))
+    }
+
+    func test_setCollectionMode_persistsAcrossReload() {
+        let route = makeDualTrackRoute(pointCount: 11)
+        let quest = makeQuest(routeId: route.id, coinCount: 1)
+        store.saveRoute(route)
+        store.saveQuest(quest)
+        XCTAssertEqual(store.quests.first?.collectionMode, .phoneTouch)
+
+        store.setCollectionMode(questId: quest.id, mode: .bodyTouch)
+
+        let reloaded = DataStore(directory: tempDir)
+        XCTAssertEqual(reloaded.quests.first(where: { $0.id == quest.id })?.collectionMode, .bodyTouch)
+    }
+}
+
+// MARK: - Body Touch Geometry
+
+/// Pure tests for `BodyTouch` / `BodyTouchTracker`: the body is a cylinder trailing
+/// the phone, swept between 0.25 s ticks.
+final class BodyTouchGeometryTests: XCTestCase {
+
+    private let tick: TimeInterval = 0.25
+    /// Phone height; coins sit 0.3 m lower, like the AR route group places them.
+    private let phoneY: Float = 1.3
+    private var coinY: Float { phoneY - 0.3 }
+
+    /// Feeds the tracker a straight run along X and returns every sweep.
+    private func run(fromX: Float, toX: Float, speed: Float = 1.4, z: Float = 0,
+                     tracker: inout BodyTouchTracker) -> [BodyTouch.Sweep] {
+        let step = speed * Float(tick) * (toX >= fromX ? 1 : -1)
+        let count = Int((abs(toX - fromX) / abs(step)).rounded(.down))
+        return (0...count).map { i in
+            let x = fromX + Float(i) * step
+            return tracker.advance(camera: SIMD3(x, phoneY, z),
+                                   cameraForward: nil,
+                                   time: Double(i) * tick)
+        }
+    }
+
+    private func touched(_ sweeps: [BodyTouch.Sweep], _ coin: SIMD3<Float>) -> Bool {
+        sweeps.contains { BodyTouch.hitTest(sweep: $0, coin: coin).touches }
+    }
+
+    func test_passThrough_collects() {
+        var tracker = BodyTouchTracker()
+        let sweeps = run(fromX: 0, toX: 10, tracker: &tracker)
+        XCTAssertTrue(touched(sweeps, SIMD3(5, coinY, 0)))
+    }
+
+    func test_brushingCoinWithBody_collects() {
+        var tracker = BodyTouchTracker()
+        let sweeps = run(fromX: 0, toX: 10, z: 0.25, tracker: &tracker)
+        XCTAssertTrue(touched(sweeps, SIMD3(5, coinY, 0)))
+    }
+
+    /// Close enough to see the coin go by, not close enough to hit it.
+    func test_nearMiss_doesNotCollect() {
+        for offset: Float in [0.4, 0.5, 0.8] {
+            var tracker = BodyTouchTracker()
+            let sweeps = run(fromX: 0, toX: 10, z: offset, tracker: &tracker)
+            XCTAssertFalse(touched(sweeps, SIMD3(5, coinY, 0)), "collected at \(offset) m to the side")
+        }
+    }
+
+    func test_fastCrossingBetweenTicks_collects() {
+        var tracker = BodyTouchTracker()
+        // 9 m/s → 2.25 m per tick: phone samples at x = 0, 2.25, 4.5, 6.75, 9.
+        let sweeps = run(fromX: 0, toX: 9, speed: 9, tracker: &tracker)
+        let coin = SIMD3<Float>(5.6, coinY, 0)
+
+        let endpointsOnly = sweeps.contains {
+            BodyTouch.hitTest(sweep: .stationary($0.to), coin: coin).touches
+        }
+        XCTAssertFalse(endpointsOnly, "test setup: no single tick lands on the coin")
+        XCTAssertTrue(touched(sweeps, coin), "the sweep between ticks must catch it")
+    }
+
+    func test_reversedDirection_collectsAndBodyTrailsBehind() throws {
+        var tracker = BodyTouchTracker()
+        let sweeps = run(fromX: 10, toX: 0, tracker: &tracker)
+        XCTAssertTrue(touched(sweeps, SIMD3(5, coinY, 0)))
+
+        let heading = try XCTUnwrap(tracker.heading)
+        XCTAssertEqual(heading.x, -1, accuracy: 1e-4)
+        XCTAssertEqual(heading.y, 0, accuracy: 1e-4)
+        // Running toward −X, the body is on the +X side of the phone.
+        let last = sweeps.last!
+        XCTAssertEqual(last.to.x, 0.2 + BodyTouch.lagBehindCamera, accuracy: 1e-3)
+    }
+
+    func test_coinStraightAhead_notCollectedBeforePhoneReachesIt() {
+        var tracker = BodyTouchTracker()
+        // Stop with the phone 0.1 m short of the coin.
+        let sweeps = run(fromX: 0, toX: 4.9, tracker: &tracker)
+        XCTAssertFalse(touched(sweeps, SIMD3(5, coinY, 0)))
+    }
+
+    func test_verticalReach() {
+        var tracker = BodyTouchTracker()
+        let sweeps = run(fromX: 0, toX: 10, tracker: &tracker)
+        XCTAssertTrue(touched(sweeps, SIMD3(5, phoneY - BodyTouch.bottomBelowCamera, 0)), "at the feet")
+        XCTAssertTrue(touched(sweeps, SIMD3(5, phoneY + 0.2, 0)), "at the head")
+        XCTAssertFalse(touched(sweeps, SIMD3(5, phoneY + 0.5, 0)), "overhead")
+        XCTAssertFalse(touched(sweeps, SIMD3(5, phoneY - 2.0, 0)), "below the ground")
+    }
+
+    func test_trackingJump_doesNotSweepAcrossGap() {
+        var tracker = BodyTouchTracker()
+        _ = tracker.advance(camera: SIMD3(0, phoneY, 0), cameraForward: nil, time: 0)
+        let jump = tracker.advance(camera: SIMD3(10, phoneY, 0), cameraForward: nil, time: tick)
+        XCTAssertEqual(jump.from, jump.to)
+        XCTAssertFalse(BodyTouch.hitTest(sweep: jump, coin: SIMD3(5, coinY, 0)).touches)
+    }
+
+    func test_beforeMoving_bodyIsBehindPhoneFacing() {
+        var tracker = BodyTouchTracker()
+        // Camera looks toward −Z, so the body stands at +Z.
+        let sweep = tracker.advance(camera: SIMD3(0, phoneY, 0),
+                                    cameraForward: SIMD3(0, -0.2, -1), time: 0)
+        XCTAssertEqual(sweep.to.x, 0, accuracy: 1e-4)
+        XCTAssertEqual(sweep.to.z, BodyTouch.lagBehindCamera, accuracy: 1e-3)
+    }
+
+    func test_headingKeptWhileStandingStill() {
+        var tracker = BodyTouchTracker()
+        _ = run(fromX: 0, toX: 3, tracker: &tracker)
+        for i in 0..<8 {
+            _ = tracker.advance(camera: SIMD3(3, phoneY, 0), cameraForward: SIMD3(0, 0, 1),
+                                time: 10 + Double(i) * tick)
+        }
+        XCTAssertEqual(tracker.heading?.x ?? 0, 1, accuracy: 1e-4)
+    }
+
+    func test_reset_startsFreshSweep() {
+        var tracker = BodyTouchTracker()
+        _ = run(fromX: 0, toX: 3, tracker: &tracker)
+        tracker.reset()
+        XCTAssertNil(tracker.heading)
+        let sweep = tracker.advance(camera: SIMD3(20, phoneY, 0), cameraForward: nil, time: 100)
+        XCTAssertEqual(sweep, .stationary(SIMD3(20, phoneY, 0)))
+    }
+
+    // MARK: Quest persistence
+
+    func test_questDecode_withoutMode_defaultsToPhoneTouch() throws {
+        let quest = Quest(name: "Legacy", routeId: UUID(), items: [])
+        var json = try JSONSerialization.jsonObject(with: JSONEncoder().encode(quest)) as! [String: Any]
+        json.removeValue(forKey: "collectionMode")
+        let decoded = try JSONDecoder().decode(Quest.self, from: JSONSerialization.data(withJSONObject: json))
+        XCTAssertEqual(decoded.collectionMode, .phoneTouch)
+    }
+
+    func test_questDecode_unknownMode_defaultsToPhoneTouch() throws {
+        let quest = Quest(name: "Future", routeId: UUID(), items: [])
+        var json = try JSONSerialization.jsonObject(with: JSONEncoder().encode(quest)) as! [String: Any]
+        json["collectionMode"] = "milestone"
+        let decoded = try JSONDecoder().decode(Quest.self, from: JSONSerialization.data(withJSONObject: json))
+        XCTAssertEqual(decoded.collectionMode, .phoneTouch)
+    }
+
+    func test_questRoundTrip_keepsBodyTouch() throws {
+        let quest = Quest(name: "Body", routeId: UUID(), items: [], collectionMode: .bodyTouch)
+        let decoded = try JSONDecoder().decode(Quest.self, from: JSONEncoder().encode(quest))
+        XCTAssertEqual(decoded.collectionMode, .bodyTouch)
+    }
 }

@@ -62,6 +62,7 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
         return r
     }()
     private var lastHandPoseTime: TimeInterval = 0
+    var lastRetryToken = 0
     private let handPoseInterval: TimeInterval = 0.1  // 10 fps
 
     private var runMode: ARRunMode = .aligning
@@ -71,7 +72,16 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
     private var collectionCheckSerial: UInt64 = 0
     private var lastSkipReasonLogged: String?
     private var lastHeartbeatAt: Date = .distantPast
+    /// Body volume behind the phone, used when the quest collects by body touch.
+    private var bodyTracker = BodyTouchTracker()
     private var frozenRouteWorldTransform: simd_float4x4?
+    /// Live correction on top of the frozen route while running (see RouteRunMatcher).
+    private var runMatcher: RouteRunMatcher?
+    private var displayedRunCorrection = RouteRunMatcher.Correction()
+    private var lastRunMatchAt: Date?
+    private var lastRunCorrectionFrameTime: TimeInterval?
+    /// Survives realigning so the matcher picks the runner up where they left off.
+    private var lastRunProgressMeters: Float?
 
     private var alignmentState: ARAlignmentState = .moveToStart {
         didSet {
@@ -156,6 +166,7 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
         // is single-threaded on main — no dictionary races possible.
         statusTimer = Timer(timeInterval: 0.3, repeats: true) { [weak self] _ in
             self?.updateAlignmentStatus()
+            self?.updateRunMatcher()
             self?.updateNearestItemDistance()
             self?.updateOverviewScaling()
         }
@@ -189,9 +200,7 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
         }
         // Recorded positions are the phone at chest height; the beacon stands on the
         // ground roughly 1.5 m below (the route group already sits baseRouteY lower).
-        let start = registration?.localStart ?? route.localTrack.first.map {
-            SIMD3(Float($0.x), Float($0.y), Float($0.z))
-        } ?? .zero
+        let start = questStartLocal
         startGuidanceNode.simdPosition = start + SIMD3(0, -1.5 - baseRouteY, 0)
 
         // Shift the entire route (path + coins) down ~1 ft so objects
@@ -275,14 +284,18 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
                 collectionTickSerial = 0
             }
             refreshOverviewEmphasis()
-            // Freeze route transform so alignment remains stable during collection.
+            // Freeze route transform so alignment remains stable during collection;
+            // the run matcher then nudges it to follow the path the runner takes.
             frozenRouteWorldTransform = routeGroupNode.simdWorldTransform
+            startRunMatcher()
             // Keep session delegate active for hand pose detection during running.
             arView?.session.delegate = self
 
         case .aligning, .realigning:
             // Unfreeze route transform so AR alignment can adjust it.
             frozenRouteWorldTransform = nil
+            if let progress = runMatcher?.progressMeters { lastRunProgressMeters = progress }
+            runMatcher = nil
             // Restore frame callbacks for tracking updates.
             arView?.session.delegate = self
             if newMode == .realigning { viewMode = .goToStart }
@@ -300,6 +313,49 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
         resetLock()
         alignmentState = .moveToStart
         refreshOverviewEmphasis()
+        updateRouteNodeVisibility()
+    }
+
+    /// Quest start in recording space: the route's first point, or its last when the
+    /// quest runs in reverse.
+    private var questStartLocal: SIMD3<Float> {
+        let sample = quest.isReversed ? route.localTrack.last : route.localTrack.first
+        if let sample { return SIMD3(Float(sample.x), Float(sample.y), Float(sample.z)) }
+        return registration?.localStart ?? .zero
+    }
+
+    /// Earth position of the quest start (registered when possible, else the recorded fix).
+    private var questStartLocation: CLLocation? {
+        if let registration, !route.localTrack.isEmpty {
+            return registration.location(atLocal: questStartLocal)
+        }
+        return quest.startLocation(on: route)
+    }
+
+    /// Drops the current placement and has ARKit hunt for the saved world map from
+    /// scratch. Collected coins are untouched.
+    func restartAlignment(with config: ARWorldTrackingConfiguration) {
+        guard let arView else { return }
+        isRelocalized = false
+        sawRelocalizing = false
+        geoFusion.reset()
+        fusionEstimate = nil
+        lastFusedGPSTimestamp = nil
+        targetPose = nil
+        currentPose = nil
+        lastPoseFrameTime = nil
+        placementUncertainty = nil
+        manualWorldOffset = .zero
+        lastManualValues = .zero
+        manualAlignment?.reset()
+        smoothedConfidence = 0
+        alignmentConfidence = 0
+        frozenRouteWorldTransform = nil
+        resetLock()
+        alignmentState = .scanning
+        for node in shadowPlaneNodes.values { node.removeFromParentNode() }
+        shadowPlaneNodes.removeAll()
+        arView.session.run(config, options: [.resetTracking, .removeExistingAnchors])
         updateRouteNodeVisibility()
     }
 
@@ -334,6 +390,30 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
             node.isHidden = !showCollectibles
         }
         startGuidanceNode.isHidden = !(isAligning && isPlaced && (isOverviewActive || !isLockedAtStart))
+        applyVisibilityWindow()
+    }
+
+    /// While running, hide coins and boxes outside the recording mode's radius around
+    /// the runner so a long route doesn't fill the view with distant objects.
+    private func applyVisibilityWindow() {
+        guard runMode == .running,
+              let camera = arView?.pointOfView?.worldPosition else { return }
+        let radius = Float(route.recordingMode.visibilityRadiusMeters)
+        let radiusSquared = radius * radius
+
+        func inWindow(_ node: SCNNode) -> Bool {
+            let p = node.worldPosition
+            let dx = p.x - camera.x, dz = p.z - camera.z
+            return dx * dx + dz * dz <= radiusSquared
+        }
+        for node in coinNodes.values {
+            let hidden = !inWindow(node)
+            if node.isHidden != hidden { node.isHidden = hidden }
+        }
+        for node in boxNodes.values {
+            let hidden = !inWindow(node)
+            if node.isHidden != hidden { node.isHidden = hidden }
+        }
     }
 
     /// In the overview the route may be far away, so the path is drawn thicker and
@@ -584,8 +664,8 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
     }
 
     private func updateNearestItemDistance() {
-        if runMode == .running, let frozen = frozenRouteWorldTransform {
-            routeGroupNode.simdWorldTransform = frozen
+        if runMode == .running {
+            applyRunningRouteTransform()
         }
 
         guard let cameraNode = arView?.pointOfView else {
@@ -608,6 +688,7 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
         }
 
         onNearestItemDistance(nearest)
+        applyVisibilityWindow()
         updateArrowDirection()
     }
 
@@ -870,8 +951,14 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
 
     /// Per frame: ease toward the target placement and apply manual corrections.
     private func updateRouteTransform(frame: ARFrame) {
-        if runMode == .running, let frozen = frozenRouteWorldTransform {
-            routeGroupNode.simdWorldTransform = frozen
+        if runMode == .running, frozenRouteWorldTransform != nil {
+            if let target = runMatcher?.correction, let last = lastRunCorrectionFrameTime {
+                let dt = Float(max(0, min(0.1, frame.timestamp - last)))
+                displayedRunCorrection = displayedRunCorrection.moved(
+                    toward: target, fraction: 1 - exp(-dt / 0.5))
+            }
+            lastRunCorrectionFrameTime = frame.timestamp
+            applyRunningRouteTransform()
             return
         }
         updateManualOffset(camera: frame.camera.transform)
@@ -899,7 +986,7 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
     /// beacon stays put while the rest of the route swings), then the manual shift.
     private func composedTransform(pose: RoutePose) -> simd_float4x4 {
         let base = pose.matrix
-        let pivotLocal = registration?.localStart ?? .zero
+        let pivotLocal = questStartLocal
         let pivot4 = base * SIMD4(pivotLocal, 1)
         let pivot = SIMD3(pivot4.x, pivot4.y, pivot4.z)
         let rotation = simd_float4x4(simd_quatf(
@@ -937,6 +1024,69 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
             + SIMD3(0, delta.y, 0)
     }
 
+    // MARK: - Run Matching
+
+    /// Frozen placement plus the live correction that keeps the route under the runner.
+    private func applyRunningRouteTransform() {
+        guard let frozen = frozenRouteWorldTransform else { return }
+        routeGroupNode.simdWorldTransform = displayedRunCorrection.matrix * frozen
+    }
+
+    private func startRunMatcher() {
+        displayedRunCorrection = RouteRunMatcher.Correction()
+        lastRunCorrectionFrameTime = nil
+        lastRunMatchAt = nil
+        guard let frozen = frozenRouteWorldTransform else { runMatcher = nil; return }
+
+        let basePoints = route.localTrack.map { sample -> SIMD3<Float> in
+            let world = frozen * SIMD4(Float(sample.x), Float(sample.y), Float(sample.z), 1)
+            return SIMD3(world.x, world.y, world.z)
+        }
+        runMatcher = RouteRunMatcher(
+            basePoints: basePoints,
+            fractions: route.localTrack.map(\.progress),
+            config: .forMode(route.recordingMode, precise: isRelocalized),
+            isReversed: quest.isReversed,
+            defaultCameraHeight: -baseRouteY
+        )
+        guard let camera = arView?.session.currentFrame?.camera.transform.columns.3 else { return }
+        // Resolve the hint before the mutating call: collectedProgressHint() reads
+        // runMatcher, which would overlap the write access held by start(...).
+        let hint = lastRunProgressMeters ?? collectedProgressHint()
+        runMatcher?.start(camera: SIMD3(camera.x, camera.y, camera.z), hintProgress: hint)
+    }
+
+    /// Furthest collected coin in the direction of travel, for resumed runs.
+    private func collectedProgressHint() -> Float? {
+        guard let matcher = runMatcher else { return nil }
+        let currentQuest = dataStore.quests.first(where: { $0.id == quest.id }) ?? quest
+        let collected = currentQuest.items.filter(\.collected).map(\.routeProgress)
+        guard let furthest = quest.isReversed ? collected.min() : collected.max() else { return nil }
+        return matcher.arcLength(atFraction: furthest)
+    }
+
+    private func updateRunMatcher() {
+        guard runMode == .running, runMatcher != nil,
+              let frame = arView?.session.currentFrame,
+              case .normal = frame.camera.trackingState else {
+            lastRunMatchAt = nil
+            return
+        }
+        let now = Date()
+        let dt = lastRunMatchAt.map { Float(now.timeIntervalSince($0)) } ?? 0.3
+        lastRunMatchAt = now
+        let camera = frame.camera.transform.columns.3
+        runMatcher?.update(camera: SIMD3(camera.x, camera.y, camera.z), dt: dt)
+    }
+
+    private var runMatcherSummary: String {
+        guard let m = runMatcher else { return "match:off" }
+        let shift = m.correction.translation
+        return String(format: "match: prog %.0f/%.0fm yaw %.1f° shift (%.1f,%.1f,%.1f) rms %.2f",
+                      m.progressMeters, m.totalLength, m.correction.yaw * 180 / .pi,
+                      shift.x, shift.y, shift.z, m.lastResidualRMS)
+    }
+
     private func didRelocalize() {
         isRelocalized = true
         geoFusion.reset()
@@ -951,6 +1101,8 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
         routeGroupNode.simdTransform = composedTransform(pose: precisePose)
         if runMode == .running {
             frozenRouteWorldTransform = routeGroupNode.simdWorldTransform
+            if let progress = runMatcher?.progressMeters { lastRunProgressMeters = progress }
+            startRunMatcher()
         }
         updateRouteNodeVisibility()
         refreshOverviewEmphasis()
@@ -1023,7 +1175,7 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
             return Double(simd_distance(SIMD2(camera.x, camera.z), SIMD2(start.x, start.z)))
         }
         guard let current = locationService.currentLocation,
-              let start = registration?.startLocation ?? route.startLocation else { return nil }
+              let start = questStartLocation else { return nil }
         return current.distance(from: start)
     }
 
@@ -1208,6 +1360,8 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
         collectionCheckSerial &+= 1
 
         guard runMode == .running else {
+            // A pause or realign must not let the body sweep across the gap.
+            bodyTracker.reset()
             let reason = "skip:runMode=\(runMode)"
             if lastSkipReasonLogged != reason {
                 lastSkipReasonLogged = reason
@@ -1240,25 +1394,27 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
             return
         }
 
-        if let frozen = frozenRouteWorldTransform {
-            routeGroupNode.simdWorldTransform = frozen
-        }
+        applyRunningRouteTransform()
 
         if lastSkipReasonLogged != nil {
             lastSkipReasonLogged = nil
             logCollectionConsole("check#\(collectionCheckSerial) resumed", force: true)
         } else {
             logCollectionConsole(
-                "check#\(collectionCheckSerial) heartbeat tick=\(collectionTickSerial) nodes=\(coinNodes.count) pending=\(pendingCollectionIds.count)"
+                "check#\(collectionCheckSerial) heartbeat tick=\(collectionTickSerial) nodes=\(coinNodes.count) pending=\(pendingCollectionIds.count) \(runMatcherSummary)"
             )
         }
 
-        performCollectionTick(cameraPosition: cameraNode.worldPosition)
+        performCollectionTick(cameraPosition: cameraNode.worldPosition,
+                              cameraForward: cameraNode.worldFront)
     }
 
     /// Core collection logic. Uses CollectionEngine for pure geometry checks,
     /// then handles side effects (node removal, sound, dataStore, callbacks).
-    func performCollectionTick(cameraPosition: SCNVector3) {
+    /// `cameraForward` and `time` only feed body-touch tracking.
+    func performCollectionTick(cameraPosition: SCNVector3,
+                               cameraForward: SCNVector3? = nil,
+                               time: TimeInterval = ProcessInfo.processInfo.systemUptime) {
         collectionTickSerial &+= 1
         let currentQuest = dataStore.quests.first(where: { $0.id == quest.id }) ?? quest
 
@@ -1277,13 +1433,28 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
             coinWorldPositions[id] = node.worldPosition
         }
 
-        let result = CollectionEngine.evaluateCollections(
-            cameraPosition: cameraPosition,
-            items: currentQuest.items,
-            coinWorldPositions: coinWorldPositions,
-            pendingIds: pendingCollectionIds,
-            tickSerial: collectionTickSerial
-        )
+        let result: CollectionEngine.CollectionResult
+        switch currentQuest.collectionMode {
+        case .phoneTouch:
+            result = CollectionEngine.evaluateCollections(
+                cameraPosition: cameraPosition,
+                items: currentQuest.items,
+                coinWorldPositions: coinWorldPositions,
+                pendingIds: pendingCollectionIds,
+                tickSerial: collectionTickSerial
+            )
+        case .bodyTouch:
+            let sweep = bodyTracker.advance(camera: SIMD3(cameraPosition),
+                                            cameraForward: cameraForward.map { SIMD3($0) },
+                                            time: time)
+            result = CollectionEngine.evaluateBodyCollections(
+                sweep: sweep,
+                items: currentQuest.items,
+                coinWorldPositions: coinWorldPositions,
+                pendingIds: pendingCollectionIds,
+                tickSerial: collectionTickSerial
+            )
+        }
 
         // Log every tick so collection behaviour is visible in the debug log.
         let shouldPersistTick = !result.collectedItemIds.isEmpty || (collectionTickSerial % 4 == 0)
@@ -1301,6 +1472,9 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
         // CollectionEngine loop over items has already finished.
         for itemId in result.collectedItemIds {
             pendingCollectionIds.insert(itemId)
+            if let item = currentQuest.items.first(where: { $0.id == itemId }) {
+                runMatcher?.noteCollected(routeFraction: item.routeProgress)
+            }
             let node = coinNodes.removeValue(forKey: itemId)
 
             if let node, arView != nil {
