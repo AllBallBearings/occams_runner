@@ -72,6 +72,8 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
     private var collectionCheckSerial: UInt64 = 0
     private var lastSkipReasonLogged: String?
     private var lastHeartbeatAt: Date = .distantPast
+    /// Body volume behind the phone, used when the quest collects by body touch.
+    private var bodyTracker = BodyTouchTracker()
     private var frozenRouteWorldTransform: simd_float4x4?
     /// Live correction on top of the frozen route while running (see RouteRunMatcher).
     private var runMatcher: RouteRunMatcher?
@@ -1048,8 +1050,10 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
             defaultCameraHeight: -baseRouteY
         )
         guard let camera = arView?.session.currentFrame?.camera.transform.columns.3 else { return }
-        runMatcher?.start(camera: SIMD3(camera.x, camera.y, camera.z),
-                          hintProgress: lastRunProgressMeters ?? collectedProgressHint())
+        // Resolve the hint before the mutating call: collectedProgressHint() reads
+        // runMatcher, which would overlap the write access held by start(...).
+        let hint = lastRunProgressMeters ?? collectedProgressHint()
+        runMatcher?.start(camera: SIMD3(camera.x, camera.y, camera.z), hintProgress: hint)
     }
 
     /// Furthest collected coin in the direction of travel, for resumed runs.
@@ -1356,6 +1360,8 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
         collectionCheckSerial &+= 1
 
         guard runMode == .running else {
+            // A pause or realign must not let the body sweep across the gap.
+            bodyTracker.reset()
             let reason = "skip:runMode=\(runMode)"
             if lastSkipReasonLogged != reason {
                 lastSkipReasonLogged = reason
@@ -1399,12 +1405,16 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
             )
         }
 
-        performCollectionTick(cameraPosition: cameraNode.worldPosition)
+        performCollectionTick(cameraPosition: cameraNode.worldPosition,
+                              cameraForward: cameraNode.worldFront)
     }
 
     /// Core collection logic. Uses CollectionEngine for pure geometry checks,
     /// then handles side effects (node removal, sound, dataStore, callbacks).
-    func performCollectionTick(cameraPosition: SCNVector3) {
+    /// `cameraForward` and `time` only feed body-touch tracking.
+    func performCollectionTick(cameraPosition: SCNVector3,
+                               cameraForward: SCNVector3? = nil,
+                               time: TimeInterval = ProcessInfo.processInfo.systemUptime) {
         collectionTickSerial &+= 1
         let currentQuest = dataStore.quests.first(where: { $0.id == quest.id }) ?? quest
 
@@ -1423,13 +1433,28 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
             coinWorldPositions[id] = node.worldPosition
         }
 
-        let result = CollectionEngine.evaluateCollections(
-            cameraPosition: cameraPosition,
-            items: currentQuest.items,
-            coinWorldPositions: coinWorldPositions,
-            pendingIds: pendingCollectionIds,
-            tickSerial: collectionTickSerial
-        )
+        let result: CollectionEngine.CollectionResult
+        switch currentQuest.collectionMode {
+        case .phoneTouch:
+            result = CollectionEngine.evaluateCollections(
+                cameraPosition: cameraPosition,
+                items: currentQuest.items,
+                coinWorldPositions: coinWorldPositions,
+                pendingIds: pendingCollectionIds,
+                tickSerial: collectionTickSerial
+            )
+        case .bodyTouch:
+            let sweep = bodyTracker.advance(camera: SIMD3(cameraPosition),
+                                            cameraForward: cameraForward.map { SIMD3($0) },
+                                            time: time)
+            result = CollectionEngine.evaluateBodyCollections(
+                sweep: sweep,
+                items: currentQuest.items,
+                coinWorldPositions: coinWorldPositions,
+                pendingIds: pendingCollectionIds,
+                tickSerial: collectionTickSerial
+            )
+        }
 
         // Log every tick so collection behaviour is visible in the debug log.
         let shouldPersistTick = !result.collectedItemIds.isEmpty || (collectionTickSerial % 4 == 0)

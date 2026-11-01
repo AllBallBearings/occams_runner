@@ -189,6 +189,7 @@ struct QuestDetailView: View {
 
                     progressSection
                     statsSection
+                    collectionModeSection
                     actionButtons
 
                     Spacer(minLength: 20)
@@ -309,6 +310,35 @@ struct QuestDetailView: View {
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .shadow(color: shadowDark, radius: 10, x: 5, y: 5)
         .shadow(color: shadowLift.opacity(0.40), radius: 8, x: -3, y: -3)
+    }
+
+    // MARK: - Collection Mode
+
+    private var collectionModeSection: some View {
+        let mode = Binding(
+            get: { currentQuest.collectionMode },
+            set: { dataStore.setCollectionMode(questId: quest.id, mode: $0) }
+        )
+
+        return VStack(alignment: .leading, spacing: 10) {
+            Text("COLLECTION")
+                .font(.system(size: 10, weight: .black))
+                .foregroundColor(darkText.opacity(0.40))
+                .kerning(0.8)
+            Picker("Collection", selection: mode) {
+                ForEach(CollectionMode.allCases) { Text($0.displayName).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            Text(currentQuest.collectionMode.summary)
+                .font(.caption)
+                .foregroundColor(darkText.opacity(0.55))
+        }
+        .padding(18)
+        .background(surface)
+        .clipShape(RoundedRectangle(cornerRadius: 18))
+        .shadow(color: shadowDark, radius: 12, x: 6, y: 6)
+        .shadow(color: shadowLift.opacity(0.40), radius: 10, x: -4, y: -4)
+        .padding(.horizontal, 16)
     }
 
     // MARK: - Actions

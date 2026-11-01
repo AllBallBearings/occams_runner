@@ -41,6 +41,16 @@ enum RecordingMode: String, Codable, CaseIterable {
     }
 }
 
+// MARK: - Route Source
+
+/// How a route was created.
+enum RouteSource: String, Codable {
+    /// Recorded by running it: GPS plus an ARKit track and world map.
+    case recorded = "recorded"
+    /// Drawn on a map: GPS-only, with a local track derived from the drawn coordinates.
+    case drawn = "drawn"
+}
+
 // MARK: - Legacy-Friendly Route Point
 
 /// Lightweight geographic point used by map views and overlays.
@@ -190,6 +200,14 @@ struct RecordedRoute: Codable, Identifiable {
     var compassYawRadians: Double?
     /// Mean resultant length of the per-frame compass yaw samples (1 = all agreed).
     var compassYawConsistency: Double?
+    /// Recorded by running, or drawn on a map. Routes saved before this existed are recorded.
+    var source: RouteSource
+
+    /// Recorded routes need their world map for AR; drawn routes are placed by GPS and
+    /// compass from a local track that is the drawn path itself.
+    var canRunInAR: Bool {
+        encryptedWorldMapData != nil || (source == .drawn && localTrack.count > 1)
+    }
 
     /// Convenience map points for existing map-driven views.
     var points: [RoutePoint] {
@@ -269,6 +287,7 @@ struct RecordedRoute: Codable, Identifiable {
         self.startHeadingIsTrueNorth = nil
         self.compassYawRadians = nil
         self.compassYawConsistency = nil
+        self.source = .recorded
         self.captureQuality = RouteCaptureQuality(
             matchedSampleRatio: 0,
             averageFeaturePoints: 0,
@@ -313,11 +332,13 @@ struct RecordedRoute: Codable, Identifiable {
         startHeadingTimestamp: Date? = nil,
         startHeadingIsTrueNorth: Bool? = nil,
         compassYawRadians: Double? = nil,
-        compassYawConsistency: Double? = nil
+        compassYawConsistency: Double? = nil,
+        source: RouteSource = .recorded,
+        dateRecorded: Date = Date()
     ) {
         self.id = UUID()
         self.name = name
-        self.dateRecorded = Date()
+        self.dateRecorded = dateRecorded
         self.geoTrack = geoTrack
         self.localTrack = localTrack
         self.checkpoints = checkpoints
@@ -331,6 +352,7 @@ struct RecordedRoute: Codable, Identifiable {
         self.startHeadingIsTrueNorth = startHeadingIsTrueNorth
         self.compassYawRadians = compassYawRadians
         self.compassYawConsistency = compassYawConsistency
+        self.source = source
     }
 
     // Custom decoder so routes saved before `recordingMode` was added
@@ -354,6 +376,7 @@ struct RecordedRoute: Codable, Identifiable {
         startHeadingIsTrueNorth = try c.decodeIfPresent(Bool.self,     forKey: .startHeadingIsTrueNorth)
         compassYawRadians  = try c.decodeIfPresent(Double.self,        forKey: .compassYawRadians)
         compassYawConsistency = try c.decodeIfPresent(Double.self,     forKey: .compassYawConsistency)
+        source             = try c.decodeIfPresent(RouteSource.self,   forKey: .source) ?? .recorded
     }
 
     func geoSample(atProgress progress: Double) -> GeoRouteSample? {
@@ -549,6 +572,8 @@ struct Quest: Codable, Identifiable {
     /// When true the quest runs end-to-start: the route's last point is the quest start.
     /// Item/box progress values are already flipped, so only start-point lookups need this.
     var isReversed: Bool
+    /// How coins are collected on this quest's AR runs.
+    var collectionMode: CollectionMode
 
     var totalItems: Int { items.count }
     var collectedItems: Int { items.filter { $0.collected }.count }
@@ -556,7 +581,8 @@ struct Quest: Codable, Identifiable {
     var collectedPoints: Int { items.filter { $0.collected }.reduce(0) { $0 + $1.type.pointValue } }
     var isComplete: Bool { collectedItems == totalItems }
 
-    init(name: String, routeId: UUID, items: [QuestItem], boxes: [QuestBox] = []) {
+    init(name: String, routeId: UUID, items: [QuestItem], boxes: [QuestBox] = [],
+         collectionMode: CollectionMode = .phoneTouch) {
         self.id = UUID()
         self.name = name
         self.routeId = routeId
@@ -564,6 +590,7 @@ struct Quest: Codable, Identifiable {
         self.items = items
         self.boxes = boxes
         self.isReversed = false
+        self.collectionMode = collectionMode
     }
 
     // Custom decoder so quests saved before `boxes` was added still load.
@@ -576,6 +603,8 @@ struct Quest: Codable, Identifiable {
         items       = try c.decode([QuestItem].self, forKey: .items)
         boxes       = try c.decodeIfPresent([QuestBox].self, forKey: .boxes) ?? []
         isReversed  = try c.decodeIfPresent(Bool.self, forKey: .isReversed) ?? false
+        // `try?` so a mode written by a newer build doesn't fail the whole quest list.
+        collectionMode = (try? c.decodeIfPresent(CollectionMode.self, forKey: .collectionMode)) ?? .phoneTouch
     }
 
     /// Where this quest begins: the route start, or the route end when reversed.

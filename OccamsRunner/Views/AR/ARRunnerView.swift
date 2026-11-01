@@ -57,7 +57,7 @@ struct ARRunnerView: View {
     var body: some View {
         ZStack {
             if let route {
-                if route.encryptedWorldMapData == nil {
+                if !route.canRunInAR {
                     noARDataView
                 } else {
                     ARRunnerContainerView(
