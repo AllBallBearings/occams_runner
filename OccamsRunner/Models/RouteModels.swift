@@ -387,6 +387,20 @@ struct RecordedRoute: Codable, Identifiable {
         interpolateLocal(at: progress)
     }
 
+    /// Unit horizontal direction of the local track at `progress`, measured across
+    /// `windowMeters` either side to smooth out jitter. Nil if the track doesn't move.
+    func localDirection(atProgress progress: Double, windowMeters: Double = 1.5) -> SIMD3<Float>? {
+        var length = 0.0
+        for (a, b) in zip(localTrack, localTrack.dropFirst()) {
+            length += hypot(b.x - a.x, b.z - a.z)
+        }
+        guard length > 0,
+              let behind = localSample(atProgress: progress - windowMeters / length),
+              let ahead = localSample(atProgress: progress + windowMeters / length) else { return nil }
+        let direction = SIMD3<Float>(Float(ahead.x - behind.x), 0, Float(ahead.z - behind.z))
+        return simd_length(direction) > 0.001 ? simd_normalize(direction) : nil
+    }
+
     private func interpolateGeo(at progress: Double) -> GeoRouteSample? {
         guard !geoTrack.isEmpty else { return nil }
 
@@ -582,7 +596,7 @@ struct Quest: Codable, Identifiable {
     var isComplete: Bool { collectedItems == totalItems }
 
     init(name: String, routeId: UUID, items: [QuestItem], boxes: [QuestBox] = [],
-         collectionMode: CollectionMode = .phoneTouch) {
+         collectionMode: CollectionMode = .touch) {
         self.id = UUID()
         self.name = name
         self.routeId = routeId
@@ -604,7 +618,7 @@ struct Quest: Codable, Identifiable {
         boxes       = try c.decodeIfPresent([QuestBox].self, forKey: .boxes) ?? []
         isReversed  = try c.decodeIfPresent(Bool.self, forKey: .isReversed) ?? false
         // `try?` so a mode written by a newer build doesn't fail the whole quest list.
-        collectionMode = (try? c.decodeIfPresent(CollectionMode.self, forKey: .collectionMode)) ?? .phoneTouch
+        collectionMode = (try? c.decodeIfPresent(CollectionMode.self, forKey: .collectionMode)) ?? .touch
     }
 
     /// Where this quest begins: the route start, or the route end when reversed.

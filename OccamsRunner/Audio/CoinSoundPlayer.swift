@@ -15,7 +15,9 @@ final class CoinSoundPlayer {
         mixer = engine.mainMixerNode
         mixer.outputVolume = 1.0
         do {
-            try AVAudioSession.sharedInstance().setCategory(.ambient, options: .mixWithOthers)
+            // .playback, not .ambient: runners keep phones on silent, and the chime is
+            // their only sign of a coin collected without looking at the screen.
+            try AVAudioSession.sharedInstance().setCategory(.playback, options: .mixWithOthers)
             try AVAudioSession.sharedInstance().setActive(true)
             try engine.start()
         } catch {
@@ -66,6 +68,8 @@ final class CoinSoundPlayer {
         engine.connect(player, to: mixer, format: buffer.format)
 
         if !engine.isRunning {
+            // An interruption (e.g. a call) deactivates the session and stops the engine.
+            try? AVAudioSession.sharedInstance().setActive(true)
             try? engine.start()
         }
 
