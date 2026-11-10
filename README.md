@@ -70,7 +70,7 @@ OccamsRunner/
 │   ├── LocationService.swift    # GPS + barometer recording
 │   ├── DataStore.swift          # JSON persistence
 │   ├── QuestGenerator.swift     # Coin placement along routes
-│   └── CollectionEngine.swift   # 3D proximity detection (pure function)
+│   └── CollectionEngine.swift   # Touch sphere and Run plane detection (pure functions)
 ├── Views/
 │   ├── RecordRunView.swift       # Live GPS recording UI
 │   ├── RoutesListView.swift      # Saved routes list
@@ -151,7 +151,7 @@ CI runs on every push and pull request to `main` via GitHub Actions (macOS 15, i
 
 ## Roadmap
 
-- [ ] **Milestone Collection Mode** — A more forgiving collection geometry where each coin acts as a vertical plane (±2 ft left/right, ±2 ft up/down, no depth check), so runners collect coins as they pass through rather than requiring precise point matching.
+- [x] **Touch / Run Collection Modes** — Per quest: Touch needs the phone within 1 ft of a coin; Run collects a coin, with a chime, when the runner breaks an invisible vertical plane it sits on.
 
 ---
 

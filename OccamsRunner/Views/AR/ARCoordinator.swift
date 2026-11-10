@@ -72,8 +72,12 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
     private var collectionCheckSerial: UInt64 = 0
     private var lastSkipReasonLogged: String?
     private var lastHeartbeatAt: Date = .distantPast
-    /// Body volume behind the phone, used when the quest collects by body touch.
-    private var bodyTracker = BodyTouchTracker()
+    /// Phone movement relative to each coin, used when the quest collects in Run mode.
+    private var runGateTracker = RunGateTracker()
+    /// Route direction at each coin, in route-local space: the normal of its Run plane.
+    private var coinGateDirections: [UUID: SIMD3<Float>] = [:]
+    /// Plays the collection chime. Replaceable so tests can observe it.
+    var playCollectSound: () -> Void = { CoinSoundPlayer.shared.playCollect() }
     private var frozenRouteWorldTransform: simd_float4x4?
     /// Live correction on top of the frozen route while running (see RouteRunMatcher).
     private var runMatcher: RouteRunMatcher?
@@ -484,6 +488,7 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
         if forceRebuild {
             for node in coinNodes.values { node.removeFromParentNode() }
             coinNodes.removeAll()
+            coinGateDirections.removeAll()
         }
 
         for item in currentQuest.items {
@@ -512,6 +517,7 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
                 coinNode.isHidden = !collectiblesVisible
                 routeGroupNode.addChildNode(coinNode)
                 coinNodes[item.id] = coinNode
+                coinGateDirections[item.id] = route.localDirection(atProgress: item.routeProgress)
             }
         }
     }
@@ -1360,8 +1366,8 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
         collectionCheckSerial &+= 1
 
         guard runMode == .running else {
-            // A pause or realign must not let the body sweep across the gap.
-            bodyTracker.reset()
+            // A pause or realign must not let the phone sweep across the gap.
+            runGateTracker.reset()
             let reason = "skip:runMode=\(runMode)"
             if lastSkipReasonLogged != reason {
                 lastSkipReasonLogged = reason
@@ -1405,16 +1411,12 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
             )
         }
 
-        performCollectionTick(cameraPosition: cameraNode.worldPosition,
-                              cameraForward: cameraNode.worldFront)
+        performCollectionTick(cameraPosition: cameraNode.worldPosition)
     }
 
     /// Core collection logic. Uses CollectionEngine for pure geometry checks,
     /// then handles side effects (node removal, sound, dataStore, callbacks).
-    /// `cameraForward` and `time` only feed body-touch tracking.
-    func performCollectionTick(cameraPosition: SCNVector3,
-                               cameraForward: SCNVector3? = nil,
-                               time: TimeInterval = ProcessInfo.processInfo.systemUptime) {
+    func performCollectionTick(cameraPosition: SCNVector3) {
         collectionTickSerial &+= 1
         let currentQuest = dataStore.quests.first(where: { $0.id == quest.id }) ?? quest
 
@@ -1435,7 +1437,7 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
 
         let result: CollectionEngine.CollectionResult
         switch currentQuest.collectionMode {
-        case .phoneTouch:
+        case .touch:
             result = CollectionEngine.evaluateCollections(
                 cameraPosition: cameraPosition,
                 items: currentQuest.items,
@@ -1443,12 +1445,12 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
                 pendingIds: pendingCollectionIds,
                 tickSerial: collectionTickSerial
             )
-        case .bodyTouch:
-            let sweep = bodyTracker.advance(camera: SIMD3(cameraPosition),
-                                            cameraForward: cameraForward.map { SIMD3($0) },
-                                            time: time)
-            result = CollectionEngine.evaluateBodyCollections(
-                sweep: sweep,
+        case .run:
+            let sweeps = runGateTracker.advance(camera: SIMD3(cameraPosition),
+                                                coins: coinWorldPositions.mapValues { SIMD3($0) })
+            result = CollectionEngine.evaluateRunCollections(
+                sweeps: sweeps,
+                gateNormals: worldGateNormals(),
                 items: currentQuest.items,
                 coinWorldPositions: coinWorldPositions,
                 pendingIds: pendingCollectionIds,
@@ -1477,9 +1479,11 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
             }
             let node = coinNodes.removeValue(forKey: itemId)
 
-            if let node, arView != nil {
-                CoinSoundPlayer.shared.playCollect()
+            if node != nil {
+                playCollectSound()
+            }
 
+            if let node, arView != nil {
                 let scaleUp = SCNAction.scale(to: 2.0, duration: 0.2)
                 let fadeOut = SCNAction.fadeOut(duration: 0.3)
                 let group   = SCNAction.group([scaleUp, fadeOut])
@@ -1494,6 +1498,16 @@ class ARCoordinator: NSObject, ARSCNViewDelegate, ARSessionDelegate {
             #if DEBUG
             print("[ARRunner][Collect] t\(collectionTickSerial) item=\(itemId.uuidString.prefix(8)) nodes=\(coinNodes.count) pending=\(pendingCollectionIds.count)")
             #endif
+        }
+    }
+
+    /// Run plane normals in world space, following the route group's current rotation.
+    private func worldGateNormals() -> [UUID: SIMD2<Float>] {
+        let transform = routeGroupNode.simdWorldTransform
+        return coinGateDirections.compactMapValues { direction in
+            let world = transform * SIMD4(direction, 0)
+            let flat = SIMD2(world.x, world.z)
+            return simd_length(flat) > 0.001 ? simd_normalize(flat) : nil
         }
     }
 

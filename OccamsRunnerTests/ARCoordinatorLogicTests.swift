@@ -101,28 +101,28 @@ final class ARCoordinatorLogicTests: XCTestCase {
                        ARCoordinator.distance3D(b, a), accuracy: 1e-5)
     }
 
-    // MARK: - CollectionEngine radius (0.15m = half-foot)
+    // MARK: - CollectionEngine radius (1 ft)
 
     func test_collectionEngine_insideRadius_collects() {
         let camera = SCNVector3(0, 0, 0)
-        let coin = SCNVector3(0.10, 0, 0)
+        let coin = SCNVector3(0.25, 0, 0)
         XCTAssertLessThan(CollectionEngine.distance3D(camera, coin),
                           CollectionEngine.collectionRadius,
-                          "A coin at 0.10m should be inside the 0.15m collection radius")
+                          "A coin at 0.25m should be inside the 1 ft collection radius")
     }
 
     func test_collectionEngine_outsideRadius_doesNotCollect() {
         let camera = SCNVector3(0, 0, 0)
-        let coin = SCNVector3(0.20, 0, 0)
+        let coin = SCNVector3(0.35, 0, 0)
         XCTAssertGreaterThanOrEqual(CollectionEngine.distance3D(camera, coin),
                                     CollectionEngine.collectionRadius,
-                                    "A coin at 0.20m should be outside the 0.15m collection radius")
+                                    "A coin at 0.35m should be outside the 1 ft collection radius")
     }
 
     func test_collectionEngine_exactlyAtRadius_doesNotCollect() {
         let camera = SCNVector3(0, 0, 0)
-        let coin = SCNVector3(0.15, 0, 0)
-        // The condition is `< 0.15`, so exactly 0.15 is NOT collected
+        let coin = SCNVector3(CollectionEngine.collectionRadius, 0, 0)
+        // The condition is strictly less than, so exactly at the radius is NOT collected
         XCTAssertFalse(CollectionEngine.distance3D(camera, coin) < CollectionEngine.collectionRadius)
     }
 
